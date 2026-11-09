@@ -1,0 +1,55 @@
+{
+  "name": "@local/dsh-bots",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Bots for DeepSeek Harness: named AI teammates with persona, workspace, optional Docker VM, scheduling and desktop reminders.",
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "host/*.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-workspace"
+      ]
+    }
+  },
+  "license": "MIT",
+  "author": "lcf2212dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lcf2212dev/dsh-bits.git"
+  },
+  "homepage": "https://github.com/lcf2212dev/dsh-bits#readme",
+  "bugs": {
+    "url": "https://github.com/lcf2212dev/dsh-bits/issues"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "bots",
+    "ai-agent",
+    "docker",
+    "reminders"
+  ]
+}

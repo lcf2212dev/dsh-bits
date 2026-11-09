@@ -1,0 +1,4 @@
+- insert:
+    - id: bots
+      name: '@local/dsh-bots'
+      config: {}
