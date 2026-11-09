@@ -2,3 +2,10 @@ node_modules/
 *.log
 *.tmp
 .DS_Store
+
+# Dados locais do DSH (times criados — ex.: os do DSC —, harness packs, bots, sessões).
+# As equipes ficam em <botsRoot>/teams.json, fora do repositório; estas regras evitam
+# que uma cópia local (DSH_HOME apontando para o projeto) seja versionada por engano.
+/.dsh/
+/teams.json
+/harness/

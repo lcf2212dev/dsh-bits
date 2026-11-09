@@ -321,13 +321,15 @@ const ROUTES = Object.freeze([
   ['/api/bots.vm', ['POST']],
   ['/api/bots.images', ['GET']],
   ['/api/bots.docker', ['GET']],
+  ['/api/bots.catalog', ['GET']],
+  ['/api/bots.avatar', ['GET']],
 ]);
 
 // ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
 
-await test('registers exactly the seven contracted routes and returns a disposer', async () => {
+await test('registers exactly the nine contracted routes and returns a disposer', async () => {
   const app = setup();
   assert.equal(app.routes.size, ROUTES.length);
   for (const [routePath, methods] of ROUTES) {

@@ -330,15 +330,54 @@ async function probeDocker(deps) {
 
 /**
  * @param {Record<string, any>} body
- * @returns {{ name: unknown, emoji: unknown, color: unknown, instructions: unknown, vm: unknown }}
+ * @returns {Record<string, unknown>}
  */
 function pickCreateInput(body) {
-  return {
+  const input = {
     name: body.name,
     emoji: body.emoji,
     color: body.color,
     instructions: body.instructions,
     vm: body.vm,
+  };
+  if (body.character !== undefined) input.character = body.character;
+  return input;
+}
+
+/**
+ * Reject a character id the shipped catalog does not know. `null`/empty
+ * clears the character (legacy emoji avatar) and is always accepted; without
+ * a catalog dependency only the store's syntax check applies.
+ *
+ * @param {{ catalog?: any }} deps
+ * @param {unknown} character
+ * @throws coded `BOT_INVALID_CHARACTER`
+ */
+function assertKnownCharacter(deps, character) {
+  if (character === undefined || character === null || character === '') return;
+  const catalog = deps.catalog;
+  if (catalog === null || catalog === undefined || typeof catalog.has !== 'function') return;
+  if (!catalog.has(character)) {
+    throw codedError('BOT_INVALID_CHARACTER', `Unknown bit character "${String(character)}"`);
+  }
+}
+
+/**
+ * Public projection of one catalog bit.
+ *
+ * @param {Record<string, any>} bit
+ * @returns {Record<string, any>}
+ */
+function catalogBitView(bit) {
+  return {
+    id: bit.id,
+    name: bit.name,
+    group: bit.group ?? null,
+    emoji: bit.emoji,
+    color: bit.color,
+    summary: { ...bit.summary },
+    instructions: bit.instructions,
+    avatar: `/api/bots.avatar?id=${encodeURIComponent(bit.id)}`,
   };
 }
 
@@ -368,6 +407,7 @@ async function handleList(deps) {
  */
 async function handleCreate(deps, request) {
   const body = await readJsonBody(request);
+  assertKnownCharacter(deps, body.character);
   const record = await deps.store.create(pickCreateInput(body));
   if (typeof deps.onBotChanged === 'function') {
     try {
@@ -400,6 +440,7 @@ async function handleUpdate(deps, request) {
   if (!isPlainObject(body.patch)) {
     throw codedError('BAD_REQUEST', '"patch" is required and must be an object');
   }
+  assertKnownCharacter(deps, body.patch.character);
   const record = await deps.store.update(id, body.patch);
   if (typeof deps.onBotChanged === 'function') {
     try {
@@ -517,6 +558,63 @@ async function handleDocker(deps) {
   return success(await probeDocker(deps));
 }
 
+/**
+ * GET /api/bots.catalog
+ *
+ * @param {Record<string, any>} deps
+ * @returns {Promise<Response>}
+ */
+async function handleCatalog(deps) {
+  const catalog = deps.catalog;
+  if (catalog === null || catalog === undefined) {
+    return success({ version: 1, groups: [], bits: [], error: 'catalog unavailable' });
+  }
+  return success({
+    version: catalog.version ?? 1,
+    groups: Array.isArray(catalog.groups) ? catalog.groups.map((group) => ({ id: group.id, label: { ...group.label } })) : [],
+    bits: Array.isArray(catalog.bits) ? catalog.bits.map(catalogBitView) : [],
+    error: typeof catalog.error === 'string' ? catalog.error : null,
+  });
+}
+
+/**
+ * GET /api/bots.avatar?id=<bit id>
+ *
+ * Binary route for `<img src>`: answers WebP bytes, or a 404 for an unknown
+ * id so the browser `error` event lets the UI fall back to the emoji.
+ *
+ * @param {Record<string, any>} deps
+ * @param {Request} request
+ * @returns {Promise<Response>}
+ */
+async function handleAvatar(deps, request) {
+  let id = '';
+  try {
+    id = new URL(request.url, 'http://localhost').searchParams.get('id') ?? '';
+  } catch {
+    id = '';
+  }
+  const catalog = deps.catalog;
+  if (!id || catalog === null || catalog === undefined || typeof catalog.readAvatar !== 'function' || !catalog.has(id)) {
+    return new Response('Not found', { status: 404, headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' } });
+  }
+  let bytes;
+  try {
+    bytes = await catalog.readAvatar(id);
+  } catch (error) {
+    log(deps, `bots: avatar ${id} unavailable: ${messageOf(error)}`);
+    return new Response('Not found', { status: 404, headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' } });
+  }
+  return new Response(bytes, {
+    status: 200,
+    headers: {
+      'content-type': 'image/webp',
+      'cache-control': 'private, max-age=86400',
+      'x-content-type-options': 'nosniff',
+    },
+  });
+}
+
 // -----------------------------------------------------------------------------
 // Registration
 // -----------------------------------------------------------------------------
@@ -566,6 +664,7 @@ function defineRoute(deps, path, methods, handler) {
  *   ready: Promise<void>,
  *   ensureWorkspaceId: (record: Record<string, any>) => Promise<string | null>,
  *   onBotChanged?: (record: Record<string, any>) => void,
+ *   catalog?: ReturnType<typeof import('./catalog.js').loadBitCatalog>,
  *   log?: (message: string) => void,
  * }} deps
  *   `ready` resolves after the store is initialized; `ensureWorkspaceId` maps a
@@ -588,6 +687,8 @@ export function registerBotRoutes(ctx, deps) {
     defineRoute(deps, '/api/bots.vm', ['POST'], (request) => handleVm(deps, request)),
     defineRoute(deps, '/api/bots.images', ['GET'], () => handleImages(deps)),
     defineRoute(deps, '/api/bots.docker', ['GET'], () => handleDocker(deps)),
+    defineRoute(deps, '/api/bots.catalog', ['GET'], () => handleCatalog(deps)),
+    defineRoute(deps, '/api/bots.avatar', ['GET'], (request) => handleAvatar(deps, request)),
   ];
   const disposers = definitions.map((definition) => registry.register(definition));
   return () => {

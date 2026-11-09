@@ -38,6 +38,110 @@ Quando o bot tem VM:
 Sem VM, o bot é uma persona com área de trabalho própria rodando direto no seu ambiente
 (mesmo `bash` e ferramentas normais do Harness).
 
+## Bits: os personagens
+
+Todo bot nasce de um **bit**, um dos 52 personagens ilustrados do catálogo
+(`bits/catalog.json` + `bits/avatars/*.webp`). Ao clicar em **Novo bot**, a página abre a
+galeria de bits (com busca por função, nome ou habilidade, sem diferenciar acentos). Ao
+escolher um bit, o formulário já vem com o **nome** e a **descrição** pré-definidos daquele
+papel; os dois podem ser alterados. **Restaurar descrição padrão** volta ao texto original.
+
+| Grupo | Bits |
+|---|---|
+| Geral | Bit (mascote, colega genérico sem papel definido) |
+| Gestão e produto | Manager, Product Owner, Coordinator, Sub-coordinator, Systems Analyst, Product Analyst, User Researcher |
+| Workers (tarefas) | Scout, Researcher, Architect, Builder, Runner, Reviewer, Debugger, CI Triager, Writer |
+| Qualidade e testes | QA, Web Tester, Android Tester, iOS Tester |
+| Engenharia | Frontend, Backend, Android, iOS, Flutter, React Native, Cloud, SRE, Deployer, Integration, Performance, Database, Data Engineer, Data Scientist, LLM, Cybersecurity |
+| Design | UX Designer, UI Designer, Design System Expert, Accessibility Expert |
+| Negócio e crescimento | Growth Marketer, SEO Expert, Copywriter, i18n / Localization, CRM Specialist, Sales, Sales Assistant, Customer Success, Support, Finance Analyst, Privacy & Compliance |
+
+As descrições seguem o formato dos agentes do Claude Code (`~/.claude/agents`): uma frase
+com o papel, o método e os limites (o que o bit nunca faz, para quem ele repassa) e o
+fechamento *Report back in Portuguese (pt-BR) with …*. Os workers (scout, builder, reviewer,
+…) reaproveitam esses agentes quase literalmente; os demais seguem o mesmo estilo.
+
+- O bit escolhido define o avatar, a cor e o emoji do bot (o emoji aparece no prompt de
+  persona e nas notificações). Trocar de bit depois mantém o nome e a descrição se você os
+  tiver personalizado; caso contrário, eles acompanham o novo bit.
+- Bots criados antes dos bits continuam com o avatar de emoji; **Editar → Escolher bit** dá
+  um personagem a eles.
+- Limite atual: modelo, esforço e restrição de ferramentas por bit (ex.: Scout/Reviewer só
+  leitura) **ainda não são aplicados pelo plugin**; os limites estão apenas descritos nas
+  instruções.
+
+## Times de bits
+
+A aba **Times** (ao lado de **Bits**, no topo da página) monta **times de bits** e desenha
+o fluxo de trabalho entre eles num quadro editável.
+
+- **Membros**: cada membro é um bit do catálogo com nome, papel, modelo, provedor (conta),
+  esforço, acesso (somente leitura ou escrita), instruções e a lista de membros que ele
+  **pode lançar**. O campo **Provedor** vem da lista de provedores do perfil (a mesma do seletor
+  de modelo do chat, com os nomes das contas): escolhido, ele fixa em qual conta o modelo do
+  membro é resolvido; vazio, o membro herda a conta do agente que o chama.
+- **Fluxo**: um grafo com *Início*, *Etapa* (atribuída a um membro), *Decisão*, *PAUSA*
+  (decisão humana), *Fim*, *Fase* (moldura que agrupa etapas) e *Nota*. As conexões têm
+  rótulo e tipo: **sequência** (linha cheia), **retorno/correção** (tracejada laranja) e
+  **delegação** (pontilhada azul).
+- **Edição**: arraste elementos e membros da barra lateral para o quadro (ou clique para
+  adicionar no centro); arraste nós para mover (arrastar uma fase leva o que está dentro;
+  com Alt, só a moldura); arraste de uma das bolinhas de um nó até outro para conectar;
+  Shift + arrastar no fundo seleciona uma área; Delete exclui; Ctrl+D duplica;
+  Ctrl+Z / Ctrl+Shift+Z desfazem/refazem; setas movem; Ctrl+roda dá zoom; arrastar o fundo
+  move o quadro; duplo clique no fundo cria uma etapa. O painel da direita edita o item
+  selecionado (time, nó, conexão ou membro). Selecionar um membro destaca as etapas dele.
+- **Salvar**: botão **Salvar** ou Ctrl+S; sair com alterações pendentes pede confirmação.
+- **Modelos**: *Em branco* e *Engenharia (Claude Code)*, este feito a partir dos agentes de
+  `~/.claude/agents`, com os bits em **DeepSeek-V4.1-Flash** (esforços `low`, `high` e `max`;
+  `xhigh`→`max`, `medium`→`high`). Os modelos são arquivos `bits/teams/<id>.json`.
+- **Importar/Exportar**: cada time pode ser exportado como JSON (`*.team.json`) e importado
+  em outro perfil.
+
+Os times ficam em `<botsRoot>/teams.json`.
+
+## Times executáveis e harness
+
+Um time com **líder**, **repositório** e (opcionalmente) um **pacote de harness** roda de
+verdade no DeepSeek Harness:
+
+- **Harness transpilado:** o botão **Harness** da aba Times importa o harness de um
+  repositório (estilo GitHub Copilot / Claude Code: `AGENTS.md`, `.github/agents`,
+  `.github/skills`, `.github/instructions`, `.github/hooks`, `.github/scripts`, `.mcp.json`)
+  para `<botsRoot>/harness/<id>/`. O repositório pode até não ter mais o harness: o time o
+  carrega. Os comandos dos textos passam a apontar para o pacote, e patches ancorados fazem
+  os scripts funcionarem de fora do repositório (`DSH_HARNESS_PACK_ROOT`). **Criar time deste
+  harness** gera um time com um orquestrador e um membro por preset (persona, modelo, esforço,
+  somente leitura, quem cada um pode lançar e as skills que lê antes).
+- **Líder:** quem recebe o pedido. Com **Toda sessão neste workspace é do time** ligado, toda
+  sessão aberta no repositório (inclusive `worktrees/…`) é do líder. Um líder com acesso
+  somente leitura só orquestra: não tem terminal, escrita, busca nem web, e só lê o pacote do
+  harness e arquivos `.dsc/`.
+- **Delegação:** o líder chama `team_delegate({ member, task })`; o membro roda como agente
+  filho com a persona, o modelo e o esforço dele, as ferramentas do acesso dele, o guarda e
+  as skills do harness, e o relatório final volta como resultado. Um membro só lança quem
+  está em "pode lançar". Um membro que **representa outro time** executa o líder daquele time
+  (ex.: a validação), que delega aos membros dele. O **Provedor** do membro (o campo do
+  editor e `members[].provider` no time) fixa a conta em que o modelo é resolvido — útil
+  quando o perfil tem duas contas do mesmo provedor; sem ele vale a conta do líder e, na
+  falta dela, a ordem do perfil. O roster mostra a conta escolhida ao lado do modelo.
+- **Passagem:** `team_handoff` passa a sessão inteira ao líder de outro time (ex.: o líder
+  roteador entrega ao time de Implementação).
+- **Guarda:** antes de cada ferramenta de cada agente do time roda o hook do próprio harness
+  (o `git-guard.cjs`, no formato de evento do Claude Code), com `--read-only` para membros
+  de leitura. A negação chega ao modelo como "Regra do repositório: …".
+- **Contexto:** regras do `AGENTS.md`, conduta, roster, o **fluxo desenhado** (em texto, na
+  ordem das fases), glossário Copilot → DeepSeek Harness, skills (ferramenta `skill`, com o
+  diretório do pacote) e as instructions `applyTo`, anexadas quando um arquivo que casa é
+  lido ou editado.
+- **MCP:** os servidores do `.mcp.json` do pacote são montados só nos membros marcados.
+- **Hooks git:** na primeira sessão do líder, o instalador do harness confere os hooks git
+  do repositório (`install.mjs --auto`).
+- **Enviar pedido:** no card do time, **Enviar pedido** abre uma sessão no repositório com o
+  pedido no campo de mensagem (ex.: `implemente o AB 160047`). Em qualquer conversa, peça
+  "mande o AB 160047 para o time DSC": a ferramenta `team_send` cria a sessão do time e já a
+  inicia.
+
 ## Agendamentos e lembretes
 
 Todo bot pode **agendar tarefas** e **te lembrar de coisas** com notificação no seu computador:
@@ -140,6 +244,19 @@ bots-plugin/
 │   ├── routes.js       # rotas autenticadas /api/bots.* (Connection/Fetch)
 │   ├── agent.js        # persona, restrição do bash, ferramentas vm_bash e notify_user
 │   └── notify.js       # notificações de desktop (notify-send / gdbus)
+├── host/catalog.js     # catálogo de bits (carregamento, validação, avatares)
+├── host/teams.js       # TeamStore: times de bits (membros + fluxo), validação e gravação atômica
+├── host/team-routes.js # rotas /api/bots.teams* e carregador de modelos
+├── host/harness.js     # transpilador de harness → pacote (manifest, reescritas, patches)
+├── host/harness-routes.js # rotas de pacotes, time a partir do pacote, run e diagnóstico
+├── host/team-runtime.js   # times executáveis: líder, delegação, passagem, skills, guarda, MCP
+├── host/team-prompt.js    # textos do líder e dos membros (fluxo, roster, glossário)
+├── host/team-guard.js     # ponte para o hook do harness e políticas do líder
+├── host/team-bindings.js  # sessão → time/membro (durável)
+├── bits/
+│   ├── catalog.json    # 52 bits: nome, grupo, emoji, cor, resumo pt/en, descrição padrão
+│   ├── avatars/        # um avatar WebP 256×256 por bit
+│   └── teams/          # modelos de time (JSON)
 ├── client.js           # página Web (React via module loader, sem JSX/imports)
 ├── cordis.patch.yml    # linha do plugin no perfil
 ├── locale/{en,pt}.json # metadados de exibição do bundle
@@ -157,12 +274,17 @@ para bots com VM, restringe o shell do host e habilita `vm_bash`.
 cd bots-plugin
 node test/store.test.mjs     # registro durável: 22 checks
 node test/routes.test.mjs    # rotas HTTP: 26 checks
+node test/catalog.test.mjs   # catálogo de bits, campo character, rotas catalog/avatar
 node test/vm.test.mjs        # Docker real: 22 checks (usa ubuntu:24.04 local, limpa tudo)
 node test/vm-lifecycle.test.mjs  # Docker real: dispose pegajoso, tombstone de bot excluído
 node test/agent.test.mjs     # persona/vm_bash/notify_user/restrição/refresh ao vivo com contexto falso
 node test/notify.test.mjs    # notificações: argv seguro, fallback gdbus, sanitização
+node test/teams.test.mjs     # times: validação, persistência, rotas e modelos
+node test/harness.test.mjs   # transpilador (fixture + harness real do DSC, se existir)
+node test/team-runtime.test.mjs  # runtime com host falso: líder, delegação, guarda, passagem, skills, applyTo
+node test/visual-teams.mjs --width 1440 --height 900   # editor de fluxo no Chrome headless: mover, conectar, adicionar, excluir, desfazer, salvar
 node test/e2e-web.mjs        # E2E: perfil descartável isolado + host Web real + rotas + VM
-node test/visual.mjs --theme dark   # capturas reais (Chrome headless) em test/screenshots/
+node test/visual.mjs --theme dark   # capturas reais (Chrome headless) em test/screenshots/ + fluxo de criação pela UI
 ```
 
 O E2E cria um `DSH_HOME` temporário, instala o bundle, sobe o host Web real em uma porta

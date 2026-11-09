@@ -5,7 +5,10 @@
  * Boots a throwaway DSH Web host (isolated DSH_HOME, never the user's profile)
  * with this bundle, seeds sample bots through the real routes, then drives a
  * headless Chrome over the DevTools Protocol to capture screenshots of:
- *   1. the bot list, 2. the "New bot" dialog, 3. the delete confirmation.
+ *   1. the bot list, 2. the bit picker, 3. the filtered picker, 4. the form
+ *   prefilled from a bit, 5. the edit dialog, 6. the delete confirmation.
+ * It also creates one bot through the UI (with the VM switch on) and checks
+ * the saved record through the API.
  * Screenshots land in `test/screenshots/` (light or dark via --theme).
  *
  * Usage: node test/visual.mjs [--theme dark|light] [--width 1280] [--height 860]
@@ -185,27 +188,18 @@ async function main() {
   origin = new URL(tokenUrl).origin
 
   console.log('2/4 seed bots')
-  await api('/api/bots.create', {
-    name: 'Pesquisador',
-    emoji: '🔬',
-    color: '#2563eb',
-    instructions: 'Você é um pesquisador meticuloso. Cite fontes, compare evidências e resuma em português claro, com uma conclusão objetiva no final de cada resposta.',
-    vm: { enabled: true, image: 'ubuntu:24.04' },
-  })
-  await api('/api/bots.create', {
-    name: 'Escritor',
-    emoji: '✍️',
-    color: '#db2777',
-    instructions: 'Escreve textos curtos, revisa gramática e adapta o tom ao público.',
-    vm: { enabled: false },
-  })
-  await api('/api/bots.create', {
-    name: 'DevOps',
-    emoji: '🛠️',
-    color: '#059669',
-    instructions: '',
-    vm: { enabled: true, image: 'imagem-que-nao-existe:latest' },
-  })
+  const { bits } = await api('/api/bots.catalog')
+  assert.equal(bits.length, 52, 'catalog served by the real host')
+  const bit = (id) => bits.find((entry) => entry.id === id)
+  for (const [id, name, vm] of [
+    ['bit-scout', 'Scout', { enabled: true, image: 'ubuntu:24.04' }],
+    ['bit-product-owner', 'PO do App', { enabled: false }],
+    ['bit-sre', 'SRE', { enabled: true, image: 'imagem-que-nao-existe:latest' }],
+  ]) {
+    await api('/api/bots.create', { name, character: id, emoji: bit(id).emoji, color: bit(id).color, instructions: bit(id).instructions, vm })
+  }
+  // A bot created before bits existed keeps its emoji avatar.
+  await api('/api/bots.create', { name: 'Legado', emoji: '🦊', color: '#ea580c', instructions: 'Bot antigo, sem personagem.', vm: { enabled: false } })
 
   console.log('3/4 chrome')
   const cdpPort = await freePort()
@@ -227,7 +221,7 @@ async function main() {
   // Open the Bots panel from the sidebar entry (matched by its accessible label).
   await waitFor(cdp, `[...document.querySelectorAll('nav button, nav a, [role="button"], button')].some((el) => /^\\s*Bots\\s*$/.test(el.textContent || el.getAttribute('aria-label') || ''))`, 'Bots sidebar entry', 60000)
   await evaluate(cdp, `[...document.querySelectorAll('nav button, nav a, [role="button"], button')].find((el) => /^\\s*Bots\\s*$/.test(el.textContent || el.getAttribute('aria-label') || '')).click()`)
-  await waitFor(cdp, `document.querySelectorAll('.dsh-bots-card').length >= 3`, 'bot cards')
+  await waitFor(cdp, `document.querySelectorAll('.dsh-bots-card').length >= 4`, 'bot cards')
   // A fresh profile shows the host's one-time preview notice; dismiss it.
   await new Promise((resolve) => setTimeout(resolve, 800))
   for (let round = 0; round < 4; round += 1) {
@@ -239,28 +233,97 @@ async function main() {
     })()`)
     await new Promise((resolve) => setTimeout(resolve, 500))
   }
+  await waitFor(cdp, `[...document.querySelectorAll('.dsh-bots-card img')].length === 3 && [...document.querySelectorAll('.dsh-bots-card img')].every((img) => img.complete && img.naturalWidth > 0)`, 'card avatars loaded')
   await screenshot(cdp, '1-list')
 
+  // New bot -> bit picker.
   await evaluate(cdp, `[...document.querySelectorAll('.dsh-bots-toolbar button')].at(-1).click()`)
-  await waitFor(cdp, `document.querySelector('.dsh-bots-dialog')`, 'create dialog')
-  await screenshot(cdp, '2-create-dialog')
-  // Sanity: the dialog must paint an opaque surface over a dimmed backdrop.
+  await waitFor(cdp, `document.querySelectorAll('.dsh-bots-bit-tile').length === 52`, 'picker tiles')
+  await new Promise((resolve) => setTimeout(resolve, 1500))
+  await screenshot(cdp, '2-picker')
   const surfaces = await evaluate(cdp, `(() => {
     const dialog = getComputedStyle(document.querySelector('.dsh-bots-dialog'))
     const overlay = getComputedStyle(document.querySelector('.dsh-bots-overlay'))
-    const input = getComputedStyle(document.querySelector('.dsh-bots-dialog .dsh-bots-input'))
-    return { dialog: dialog.backgroundColor, overlay: overlay.backgroundColor, inputBorder: input.borderTopColor + ' ' + input.borderTopWidth }
+    return { dialog: dialog.backgroundColor, overlay: overlay.backgroundColor, focused: document.activeElement && document.activeElement.type }
   })()`)
   console.log('   computed', JSON.stringify(surfaces))
   assert.notEqual(surfaces.dialog, 'rgba(0, 0, 0, 0)', 'dialog surface is transparent')
   assert.notEqual(surfaces.overlay, 'rgba(0, 0, 0, 0)', 'overlay backdrop is transparent')
+  assert.equal(surfaces.focused, 'search', 'search field focused on open')
 
-  await evaluate(cdp, `document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`)
-  await evaluate(cdp, `document.querySelector('.dsh-bots-dialog') && document.querySelector('.dsh-bots-dialog').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`)
-  await waitFor(cdp, `!document.querySelector('.dsh-bots-dialog')`, 'dialog closed')
+  // Accent-insensitive search ("produto" matches pt summaries).
+  await evaluate(cdp, `(() => {
+    const input = document.querySelector('.dsh-bots-picker-search input')
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
+    setter.call(input, 'teste')
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  })()`)
+  await waitFor(cdp, `document.querySelectorAll('.dsh-bots-bit-tile').length > 0 && document.querySelectorAll('.dsh-bots-bit-tile').length < 52`, 'filtered tiles')
+  const filtered = await evaluate(cdp, `[...document.querySelectorAll('.dsh-bots-bit-name')].map((el) => el.textContent)`)
+  console.log('   search "teste" ->', filtered.join(', '))
+  assert.ok(filtered.includes('Web Tester') && filtered.includes('QA'), 'testers found')
+  await new Promise((resolve) => setTimeout(resolve, 800))
+  await screenshot(cdp, '3-picker-search')
+
+  // Pick the Product Owner: name + predefined description are prefilled.
+  await evaluate(cdp, `(() => {
+    const input = document.querySelector('.dsh-bots-picker-search input')
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
+    setter.call(input, '')
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  })()`)
+  await waitFor(cdp, `document.querySelectorAll('.dsh-bots-bit-tile').length === 52`, 'all tiles again')
+  await evaluate(cdp, `[...document.querySelectorAll('.dsh-bots-bit-tile')].find((el) => el.querySelector('.dsh-bots-bit-name').textContent === 'Product Owner').click()`)
+  await waitFor(cdp, `document.querySelector('#dsh-bots-name-input')`, 'form step')
+  const prefilled = await evaluate(cdp, `({ name: document.querySelector('#dsh-bots-name-input').value, description: document.querySelector('#dsh-bots-instructions-input').value, focused: document.activeElement && document.activeElement.id })`)
+  assert.equal(prefilled.name, 'Product Owner')
+  assert.equal(prefilled.description, bit('bit-product-owner').instructions)
+  assert.equal(prefilled.focused, 'dsh-bots-name-input')
+  await screenshot(cdp, '4-form-prefilled')
+
+  // Customize name, keep the description, turn the VM on and create.
+  await evaluate(cdp, `(() => {
+    const input = document.querySelector('#dsh-bots-name-input')
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
+    setter.call(input, 'PO Loja')
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    document.querySelector('.dsh-bots-vm-box [role="switch"]').click()
+  })()`)
+  await waitFor(cdp, `document.querySelector('#dsh-bots-image-input')`, 'vm image field')
+  await evaluate(cdp, `[...document.querySelectorAll('.dsh-bots-dialog-footer button')].at(-1).click()`)
+  await waitFor(cdp, `!document.querySelector('.dsh-bots-dialog')`, 'dialog closed after create', 30000)
+  const created = (await api('/api/bots.list')).bots.find((entry) => entry.name === 'PO Loja')
+  assert.ok(created, 'bot created through the UI')
+  assert.equal(created.character, 'bit-product-owner')
+  assert.equal(created.instructions, bit('bit-product-owner').instructions)
+  assert.equal(created.emoji, bit('bit-product-owner').emoji)
+  assert.equal(created.color, bit('bit-product-owner').color)
+  assert.equal(created.vm.enabled, true, 'VM switch is saved')
+  console.log('   created through UI:', created.name, created.character, 'vm', created.vm.enabled)
+
+  // Edit the legacy bot: no character yet, "Escolher bit" offered.
+  await waitFor(cdp, `document.querySelectorAll('.dsh-bots-card').length >= 5`, 'five cards')
+  await evaluate(cdp, `[...document.querySelectorAll('.dsh-bots-card')].find((card) => card.querySelector('.dsh-bots-name').textContent === 'Legado').querySelector('.dsh-bots-button-outline').click()`)
+  await waitFor(cdp, `document.querySelector('.dsh-bots-bit-hero')`, 'edit dialog')
+  await screenshot(cdp, '5-edit-legacy')
+  // Pick a bit for it: the custom name and description must be kept.
+  await evaluate(cdp, `document.querySelector('.dsh-bots-bit-hero button').click()`)
+  await waitFor(cdp, `document.querySelectorAll('.dsh-bots-bit-tile').length === 52`, 'picker from edit')
+  await evaluate(cdp, `[...document.querySelectorAll('.dsh-bots-bit-tile')].find((el) => el.querySelector('.dsh-bots-bit-name').textContent === 'Writer').click()`)
+  await waitFor(cdp, `document.querySelector('#dsh-bots-name-input')`, 'back to form')
+  const kept = await evaluate(cdp, `({ name: document.querySelector('#dsh-bots-name-input').value, description: document.querySelector('#dsh-bots-instructions-input').value, restore: !!document.querySelector('.dsh-bots-link-button') })`)
+  assert.equal(kept.name, 'Legado')
+  assert.equal(kept.description, 'Bot antigo, sem personagem.')
+  assert.equal(kept.restore, true, 'restore default offered')
+  await evaluate(cdp, `[...document.querySelectorAll('.dsh-bots-dialog-footer button')].at(-1).click()`)
+  await waitFor(cdp, `!document.querySelector('.dsh-bots-dialog')`, 'dialog closed after edit', 30000)
+  const legacy = (await api('/api/bots.list')).bots.find((entry) => entry.name === 'Legado')
+  assert.equal(legacy.character, 'bit-writer')
+  assert.equal(legacy.vm.enabled, false, 'VM stays off on edit')
+
   await evaluate(cdp, `[...document.querySelectorAll('.dsh-bots-card .dsh-bots-button-danger')][0].click()`)
   await waitFor(cdp, `document.querySelector('.dsh-bots-dialog')`, 'delete dialog')
-  await screenshot(cdp, '3-delete-dialog')
+  await screenshot(cdp, '6-delete-dialog')
   cdp.close()
   console.log('\nVISUAL DONE')
 }

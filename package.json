@@ -1,8 +1,8 @@
 {
   "name": "@local/dsh-bots",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "Bots for DeepSeek Harness: named AI teammates with persona, workspace, optional Docker VM, scheduling and desktop reminders.",
+  "description": "Bits for DeepSeek Harness: AI teammates with persona, workspace, optional Docker VM, reminders, and teams of bits with a visual flow editor.",
   "type": "module",
   "exports": {
     ".": "./index.js",
@@ -14,6 +14,9 @@
     "index.js",
     "host/*.js",
     "client.js",
+    "bits/catalog.json",
+    "bits/avatars/*.webp",
+    "bits/teams/*.json",
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg",
@@ -50,6 +53,8 @@
     "bots",
     "ai-agent",
     "docker",
-    "reminders"
+    "reminders",
+    "teams",
+    "flow-editor"
   ]
 }

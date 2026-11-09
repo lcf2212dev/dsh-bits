@@ -31,8 +31,10 @@ const DEFAULT_IMAGE = 'ubuntu:24.04';
 const MAX_NAME_LENGTH = 60;
 const MAX_INSTRUCTIONS_LENGTH = 20000;
 const MAX_EMOJI_CODE_POINTS = 8;
-const CREATE_FIELDS = new Set(['id', 'name', 'emoji', 'color', 'instructions', 'workspaceDir', 'vm']);
-const PATCH_FIELDS = new Set(['name', 'emoji', 'color', 'instructions', 'vm']);
+const CREATE_FIELDS = new Set(['id', 'name', 'character', 'emoji', 'color', 'instructions', 'workspaceDir', 'vm']);
+const PATCH_FIELDS = new Set(['name', 'character', 'emoji', 'color', 'instructions', 'vm']);
+/** Bit character id (`bit-...`); catalog membership is checked by the routes. */
+const CHARACTER_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const VM_FIELDS = new Set(['enabled', 'image']);
 /** Accent palette used when `color` is omitted; deterministic per bot id. */
 const COLOR_PALETTE = Object.freeze([
@@ -134,6 +136,21 @@ function normalizeEmoji(value, fallback) {
   const length = Array.from(value).length;
   if (length < 1 || length > MAX_EMOJI_CODE_POINTS) {
     invalidPatch(`emoji must contain 1-${MAX_EMOJI_CODE_POINTS} characters`);
+  }
+  return value;
+}
+
+/**
+ * @param {unknown} value
+ * @param {string | null} fallback used when `value` is `undefined`
+ * @returns {string | null} character id, or `null` for a bot without a character
+ * @throws coded `BOT_INVALID_PATCH`
+ */
+function normalizeCharacter(value, fallback) {
+  if (value === undefined) return fallback;
+  if (value === null || value === '') return null;
+  if (typeof value !== 'string' || !CHARACTER_PATTERN.test(value)) {
+    invalidPatch('character must be a lowercase bit id such as "bit-scout"');
   }
   return value;
 }
@@ -357,7 +374,7 @@ export class BotStore {
   /**
    * Validate, create and persist a bot record.
    *
-   * @param {{ id?: string, name: string, emoji?: string, color?: string,
+   * @param {{ id?: string, name: string, character?: string | null, emoji?: string, color?: string,
    *   instructions?: string, workspaceDir?: string,
    *   vm?: { enabled?: boolean, image?: string } }} [input]
    * @returns {Promise<Record<string, any>>} deep copy of the created record
@@ -372,7 +389,7 @@ export class BotStore {
    * Apply a partial patch and persist the updated record.
    *
    * @param {string} id
-   * @param {{ name?: string, emoji?: string, color?: string,
+   * @param {{ name?: string, character?: string | null, emoji?: string, color?: string,
    *   instructions?: string, vm?: { enabled?: boolean, image?: string } }} patch
    * @returns {Promise<Record<string, any>>} deep copy of the updated record
    * @throws coded `BOT_NOT_FOUND`, `BOT_INVALID_PATCH`, `BOT_INVALID_NAME`,
@@ -476,6 +493,7 @@ export class BotStore {
     const record = {
       id,
       name,
+      character: normalizeCharacter(input.character, null),
       emoji: normalizeEmoji(input.emoji, DEFAULT_EMOJI),
       color: normalizeColor(input.color, paletteColorFor(id)),
       instructions: normalizeInstructions(input.instructions),
@@ -517,6 +535,7 @@ export class BotStore {
     /** @type {Record<string, any>} */
     const next = { ...current, vm: { ...current.vm } };
     if (patch.name !== undefined) next.name = normalizeName(patch.name);
+    if (patch.character !== undefined) next.character = normalizeCharacter(patch.character, current.character ?? null);
     if (patch.emoji !== undefined) next.emoji = normalizeEmoji(patch.emoji, current.emoji);
     if (patch.color !== undefined) next.color = normalizeColor(patch.color, current.color);
     if (patch.instructions !== undefined) next.instructions = normalizeInstructions(patch.instructions);
@@ -676,6 +695,8 @@ export class BotStore {
       Array.from(raw.emoji).length <= MAX_EMOJI_CODE_POINTS
         ? raw.emoji
         : DEFAULT_EMOJI;
+    const character =
+      typeof raw.character === 'string' && CHARACTER_PATTERN.test(raw.character) ? raw.character : null;
     const color =
       typeof raw.color === 'string' && COLOR_PATTERN.test(raw.color)
         ? raw.color.toLowerCase()
@@ -690,6 +711,7 @@ export class BotStore {
     return {
       id,
       name,
+      character,
       emoji,
       color,
       instructions,

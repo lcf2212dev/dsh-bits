@@ -14,6 +14,7 @@
  */
 
 import fs from 'node:fs/promises'
+import { appendFileSync, mkdirSync, renameSync, statSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -22,6 +23,11 @@ import { BotVm } from './host/vm.js'
 import { registerBotRoutes } from './host/routes.js'
 import { installBotAgents } from './host/agent.js'
 import { createNotifier } from './host/notify.js'
+import { loadBitCatalog } from './host/catalog.js'
+import { TeamStore } from './host/teams.js'
+import { registerTeamRoutes, loadTeamTemplates } from './host/team-routes.js'
+import { installTeamRuntime } from './host/team-runtime.js'
+import { registerHarnessRoutes } from './host/harness-routes.js'
 import { fileURLToPath } from 'node:url'
 
 /** Services this bundle needs before it can activate. */
@@ -32,6 +38,10 @@ export const inject = [
   'agents',
   'workingDirectory',
   'systemPrompt',
+  'skills',
+  'subagents',
+  'llm',
+  'shellEnv',
 ]
 
 /** Plugin name used in diagnostics. */
@@ -75,20 +85,35 @@ function positiveInteger(value, fallback) {
 export function apply(ctx, config = {}) {
   const options = config !== null && typeof config === 'object' ? config : {}
   const logger = ctx.logger
-  const log = (message) => {
-    try {
-      logger?.warn?.(`bots: ${message}`)
-    } catch {
-      // Logging must never break the plugin.
-    }
-  }
-
   const defaultImage = typeof options.defaultImage === 'string' && options.defaultImage.trim().length > 0
     ? options.defaultImage.trim()
     : 'ubuntu:24.04'
   const botsRoot = typeof options.botsRoot === 'string' && options.botsRoot.trim().length > 0
     ? path.resolve(options.botsRoot)
     : path.join(resolveDshHome(), 'bots')
+  // Local log file: the host logger is not visible outside the app, and team
+  // runs need a trace the dev (and maintainers) can read.
+  const logFile = path.join(botsRoot, 'bits.log')
+  const log = (message) => {
+    try {
+      logger?.warn?.(`bots: ${message}`)
+    } catch {
+      // Logging must never break the plugin.
+    }
+    try {
+      mkdirSync(botsRoot, { recursive: true, mode: 0o700 })
+      try {
+        if (statSync(logFile).size > 2_000_000) renameSync(logFile, `${logFile}.1`)
+      } catch {
+        // No log yet.
+      }
+      appendFileSync(logFile, `${new Date().toISOString()} ${String(message).replace(/\n/g, '\n  ')}\n`, { mode: 0o600 })
+    } catch {
+      // Logging must never break the plugin.
+    }
+  }
+
+  log(`plugin loaded (pid ${process.pid})`)
 
   const store = new BotStore({ botsRoot, defaultImage })
   const vm = new BotVm({
@@ -98,7 +123,11 @@ export function apply(ctx, config = {}) {
     maxOutputBytes: positiveInteger(options.maxOutputBytes, 65536),
   })
 
+  const teams = new TeamStore({ botsRoot })
   const ready = store.init()
+  // Separate readiness: a broken teams.json must never block the bots.
+  const teamsReady = teams.init()
+  teamsReady.catch((error) => log(`team store init failed: ${error instanceof Error ? error.message : String(error)}`))
 
   /**
    * Ensure one bot's directory exists and is registered as a Harness
@@ -131,9 +160,80 @@ export function apply(ctx, config = {}) {
     return typeof id === 'string' ? id : String(id)
   }
 
+  /**
+   * Register any directory as a Harness workspace (idempotent) and return its id.
+   *
+   * @param {string} directory absolute directory.
+   * @param {string} title workspace title used when it is created.
+   * @returns {Promise<string | null>} workspace id or null.
+   */
+  async function ensureDirectoryWorkspace(directory, title) {
+    let canonical = directory
+    try {
+      canonical = await fs.realpath(directory)
+    } catch {
+      throw Object.assign(new Error(`Diretório não encontrado: ${directory}`), { code: 'TEAM_NO_WORKSPACE' })
+    }
+    try {
+      const existing = ctx.workspaceRegistry.list().find((workspace) => workspace.path === canonical)
+      if (existing) return typeof existing.id === 'string' ? existing.id : String(existing.id)
+    } catch {
+      // Fall through to create.
+    }
+    const workspace = await ctx.workspaceRegistry.create(canonical, title)
+    if (!workspace) return null
+    return typeof workspace.id === 'string' ? workspace.id : String(workspace.id)
+  }
+
+  const pluginDir = path.dirname(fileURLToPath(import.meta.url))
   const notifier = createNotifier({
-    icon: path.join(path.dirname(fileURLToPath(import.meta.url)), 'icon.svg'),
+    icon: path.join(pluginDir, 'icon.svg'),
   })
+
+  // Bit characters (picker, default instructions, avatars) shipped with the bundle.
+  const catalog = loadBitCatalog(path.join(pluginDir, 'bits'))
+  if (catalog.error !== null) log(`bit catalog unavailable: ${catalog.error}`)
+
+  // Runnable teams: lead/member personas, delegation, harness skills, guard and MCP.
+  let teamRuntime = null
+  try {
+    teamRuntime = installTeamRuntime(ctx, { teams, teamsReady, botsRoot, log })
+  } catch (error) {
+    log(`team runtime installation failed: ${error instanceof Error ? error.message : String(error)}`)
+  }
+  // Team mutations re-apply live agents of that team (roster, lead, launches, restrictions).
+  for (const method of ['create', 'update', 'remove']) {
+    const original = teams[method].bind(teams)
+    teams[method] = async (...args) => {
+      const result = await original(...args)
+      try {
+        if (method === 'remove' && teamRuntime) await teamRuntime.bindings.forgetTeam(result.id)
+        if (teamRuntime) teamRuntime.refreshTeam(method === 'remove' ? null : result.id)
+      } catch (error) {
+        log(`team runtime refresh failed: ${error instanceof Error ? error.message : String(error)}`)
+      }
+      return result
+    }
+  }
+
+  // Teams of bits: durable flow graphs edited by the Web page.
+  let disposeTeamRoutes = () => {}
+  let disposeHarnessRoutes = () => {}
+  try {
+    const templates = loadTeamTemplates(path.join(pluginDir, 'bits', 'teams'), (message) => log(`team template skipped: ${message}`))
+    disposeTeamRoutes = registerTeamRoutes(ctx, { teams, ready: teamsReady, catalog, templates, llm: ctx.llm, log }) ?? (() => {})
+    disposeHarnessRoutes = registerHarnessRoutes(ctx, {
+      teams,
+      ready: teamsReady,
+      botsRoot,
+      runtime: teamRuntime,
+      catalog,
+      ensureDirectoryWorkspace,
+      log,
+    }) ?? (() => {})
+  } catch (error) {
+    log(`team route registration failed: ${error instanceof Error ? error.message : String(error)}`)
+  }
 
   const disposeAgents = installBotAgents(ctx, { store, vm, ready, log, notifier })
 
@@ -149,6 +249,7 @@ export function apply(ctx, config = {}) {
         if (refreshed > 0) log(`refreshed ${refreshed} live agent(s) for bot ${record.id}`)
       },
       defaultImage,
+      catalog,
       log,
     }) ?? (() => {})
   } catch (error) {
@@ -236,6 +337,21 @@ export function apply(ctx, config = {}) {
   }
 
   ctx.effect(() => () => {
+    try {
+      disposeHarnessRoutes()
+    } catch (error) {
+      log(`harness route disposal failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    try {
+      if (teamRuntime) teamRuntime.dispose()
+    } catch (error) {
+      log(`team runtime disposal failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    try {
+      disposeTeamRoutes()
+    } catch (error) {
+      log(`team route disposal failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
     try {
       disposeNotifyTest()
     } catch (error) {
