@@ -194,7 +194,8 @@ await test('shipped catalog is schema v2 with 52 bits in 7 groups', async () => 
     assert.match(bit.color, /^#[0-9a-f]{6}$/, `${bit.id} color`)
     assert.ok(bit.summary.pt && bit.summary.en, `${bit.id} summaries`)
     assert.ok(bit.instructions.length > 100 && bit.instructions.length <= 1500, `${bit.id} instructions length`)
-    assert.match(bit.instructions, /Report back in Portuguese \(pt-BR\)/, `${bit.id} report line`)
+    assert.match(bit.instructions, /Report back with /, `${bit.id} report line`)
+    assert.ok(!bit.instructions.includes('Portuguese'), `${bit.id} has no language mention`)
   }
   for (const id of ['bit-mascot', 'bit-scout', 'bit-product-owner', 'bit-android-engineer', 'bit-crm-specialist', 'bit-user-researcher']) {
     assert.ok(catalog.has(id), id)

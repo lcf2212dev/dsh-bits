@@ -61,7 +61,7 @@ aquele papel; tudo pode ser alterado. **Restaurar descrição padrão** volta ao
 
 As descrições seguem o formato dos agentes do Claude Code (`~/.claude/agents`): uma frase
 com o papel, o método e os limites, terminando com o formato do relatório
-("Report back in pt-BR with …"). O catálogo também guarda o **modelo/esforço padrão** de
+("Report back with …"). O catálogo também guarda o **modelo/esforço padrão** de
 cada personagem e quais são **orquestradores** (os quatro papéis de coordenação), para que
 um fluxo funcione bem desde o primeiro uso.
 
