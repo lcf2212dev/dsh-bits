@@ -8,4 +8,23 @@ node_modules/
 # que uma cópia local (DSH_HOME apontando para o projeto) seja versionada por engano.
 /.dsh/
 /teams.json
+/teams.json.bak-*
+/projects.json
+/projects.json.bak-*
 /harness/
+/bots.json
+/bots.json.bak-*
+/bits.json
+/bits.json.bak-*
+
+# Artefatos de migração/quarentena e escritas atômicas dos stores de bits/times/projetos.
+*.tmp-*
+/bits.json.migrated-*
+/bits.json.corrupt-*
+/bots.json.migrated-*
+/bots.json.corrupt-*
+/teams.json.corrupt-*
+/projects.json.corrupt-*
+/team-bindings.json
+/team-bindings.json.bak-*
+/team-inbox/

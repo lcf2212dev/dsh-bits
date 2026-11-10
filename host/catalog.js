@@ -1,14 +1,19 @@
 /**
- * Bit character catalog for the Bots plugin.
+ * Bit character catalog for the Bits plugin (v5).
  *
- * Every bot is created from one illustrated character ("bit"). The catalog
- * ships with the bundle in `bits/catalog.json` (display name, group, emoji,
- * accent color, picker summaries and the default instructions each bit starts
- * with) plus one avatar per bit in `bits/avatars/<id>.webp`.
+ * Every bit starts from one illustrated character ("bit"). The catalog ships
+ * with the bundle in `bits/catalog.json` (display name, group, emoji, accent
+ * color, picker summaries, the default instructions, and since schema v2 the
+ * defaults for `isOrchestrator`, `model` and `effort`) plus one avatar per bit
+ * in `bits/avatars/<id>.webp`.
  *
  * The module has no import-time side effects: `loadBitCatalog()` reads the
  * catalog synchronously when the plugin applies, and avatars are read lazily
  * and cached in memory.
+ *
+ * Old (v1) catalog files keep working: a bit without the new fields is
+ * normalized to `isOrchestrator: false`, `model: 'subscription/sonnet'` and
+ * `effort: 'high'`.
  *
  * @module host/catalog
  */
@@ -20,6 +25,16 @@ import path from 'node:path'
 /** Character id accepted by the store and the catalog: `bit-...`, lowercase. */
 export const CHARACTER_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/
 
+/** Schema version this module understands; older documents are upgraded on read. */
+export const CATALOG_SCHEMA_VERSION = 2
+
+/** Defaults for bits whose catalog row predates schema v2. */
+export const DEFAULT_CATALOG_MODEL = 'subscription/sonnet'
+export const DEFAULT_CATALOG_EFFORT = 'high'
+
+/** Upper bounds mirrored by the bit store. */
+const MAX_MODEL_LENGTH = 120
+const MAX_EFFORT_LENGTH = 20
 /** Upper bound for one avatar file kept in memory. */
 const MAX_AVATAR_BYTES = 2 * 1024 * 1024
 
@@ -51,6 +66,30 @@ function localized(value) {
   const en = typeof source.en === 'string' ? source.en : ''
   const pt = typeof source.pt === 'string' ? source.pt : en
   return { pt, en: en || pt }
+}
+
+/**
+ * Normalize the optional `model` default of one catalog bit.
+ *
+ * @param {unknown} value
+ * @returns {string} trimmed model string (never empty)
+ */
+function normalizeModelDefault(value) {
+  if (typeof value !== 'string') return DEFAULT_CATALOG_MODEL
+  const model = value.trim().slice(0, MAX_MODEL_LENGTH)
+  return model === '' ? DEFAULT_CATALOG_MODEL : model
+}
+
+/**
+ * Normalize the optional `effort` default of one catalog bit.
+ *
+ * @param {unknown} value
+ * @returns {string} trimmed effort string (never empty)
+ */
+function normalizeEffortDefault(value) {
+  if (typeof value !== 'string') return DEFAULT_CATALOG_EFFORT
+  const effort = value.trim().slice(0, MAX_EFFORT_LENGTH)
+  return effort === '' ? DEFAULT_CATALOG_EFFORT : effort
 }
 
 /**
@@ -89,6 +128,10 @@ export function normalizeCatalog(document) {
       color: typeof raw.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(raw.color) ? raw.color.toLowerCase() : '#475569',
       summary: localized(raw.summary),
       instructions: typeof raw.instructions === 'string' ? raw.instructions.slice(0, 20000) : '',
+      // Schema v2 execution defaults (old files fall back to worker defaults).
+      isOrchestrator: raw.isOrchestrator === true,
+      model: normalizeModelDefault(raw.model),
+      effort: normalizeEffortDefault(raw.effort),
     })
   }
   return {
@@ -102,7 +145,7 @@ export function normalizeCatalog(document) {
  * Load the bit catalog shipped in `<directory>/catalog.json`.
  *
  * A missing or corrupt catalog yields an empty catalog plus `error`, so the
- * plugin keeps working (bots then fall back to their emoji avatar).
+ * plugin keeps working (bits then fall back to their emoji avatar).
  *
  * @param {string} directory absolute directory holding `catalog.json` and `avatars/`
  * @returns {{

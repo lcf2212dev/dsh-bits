@@ -1,19 +1,24 @@
 #!/usr/bin/env node
 /**
- * End-to-end verification for the Bots bundle.
+ * End-to-end verification for the Bits bundle (v5).
  *
  * Boots a throwaway DeepSeek Harness Web profile in an isolated DSH_HOME with
- * this bundle installed from its local directory, authenticates with the
- * launch token printed at startup, and exercises the real `/api/bots.*`
- * routes (CRUD + Docker VM lifecycle) plus the served client bundle URL.
+ * this bundle installed from its local directory, authenticates with the launch
+ * token printed at startup, and exercises the real `/api/bots.*` routes:
+ * catalog v2, bits CRUD, model catalog, worker "Executar" (request → response),
+ * team templates (bits + flow), team member/lead rules, team execution error
+ * paths, the projects layer and diagnostics. Also asserts that the v4 VM/chat
+ * routes are gone.
  *
- * Nothing here touches the user's `~/.dsh`, the running Desktop profile, or
- * the workspace registry of the real installation. The only shared resource
- * is the local Docker daemon, and every container created is labelled and
- * removed again.
+ * Nothing here touches the user's `~/.dsh` or the running Desktop profile.
  *
- * Usage: node test/e2e-web.test.mjs
- * Env:   DSH_INSTALL_ROOT (default ~/.local/opt/deepseek-harness)
+ * Usage: node test/e2e-web.mjs
+ * Env:
+ *   DSH_INSTALL_ROOT          default ~/.local/opt/deepseek-harness
+ *   BITS_E2E_DELEGATE_DIR     optional @local/dsh-claude-delegate package dir;
+ *                             when set, the profile installs it and the suite
+ *                             runs one REAL subscription worker invocation
+ *                             (needs `claude` installed and logged in).
  */
 
 import assert from 'node:assert/strict'
@@ -32,17 +37,22 @@ const RUNTIME = path.join(INSTALL_ROOT, 'resources', 'runtime', 'primary-runtime
 const RUNTIME_NODE = path.join(RUNTIME, 'dependencies', 'node', 'bin', 'node')
 const RUNTIME_PNPM = path.join(RUNTIME, 'dependencies', 'pnpm', 'bin', 'pnpm.mjs')
 const PROFILE = 'bots-e2e'
-const TEST_IMAGE = 'ubuntu:24.04'
+const DELEGATE_DIR = process.env.BITS_E2E_DELEGATE_DIR ?? ''
 
 /** @type {string[]} */
 const cleanupNotes = []
 let bootChild
-let bootOutput = ''
 let tempHome
-let createdBotId
-let createdSessionId
 let origin
 let cookie
+/** Bits created by this run, deleted in cleanup. */
+const createdBitIds = []
+/** Teams created by this run, deleted in cleanup. */
+const createdTeamIds = []
+/** Projects created by this run, deleted in cleanup. */
+const createdProjectIds = []
+/** Temp directories created by this run. */
+const createdDirs = []
 
 /**
  * Run one child process to completion with a bounded timeout.
@@ -100,31 +110,27 @@ function freePort() {
 
 /**
  * Write the throwaway profile that composes the shipped Web bundles plus this
- * local bundle.
+ * local bundle (and the delegate plugin when requested).
  *
  * @returns {Promise<void>} resolves when the profile is installed.
  */
 async function installProfile() {
-  tempHome = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-bots-e2e-home-'))
+  tempHome = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-bits-e2e-home-'))
   const profileDir = path.join(tempHome, 'profiles', PROFILE)
   await fs.mkdir(profileDir, { recursive: true })
   await fs.writeFile(path.join(profileDir, 'cordis.yml'), '# e2e profile\n[]\n')
   await fs.writeFile(path.join(profileDir, 'pnpm-workspace.yaml'), 'packages:\n  - .\n\nnodeLinker: hoisted\nautoInstallPeers: false\n')
+  const dependencies = { '@local/dsh-bots': `file:${BUNDLE_DIR}` }
+  const bundles = ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', '@local/dsh-bots']
+  if (DELEGATE_DIR !== '') {
+    dependencies['@local/dsh-claude-delegate'] = `file:${DELEGATE_DIR}`
+    bundles.push('@local/dsh-claude-delegate')
+  }
   await fs.writeFile(path.join(profileDir, 'package.json'), JSON.stringify({
     name: 'dsh-profile-bots-e2e',
     private: true,
-    dependencies: {
-      '@local/dsh-bots': `file:${BUNDLE_DIR}`,
-    },
-    dsh: {
-      profile: {
-        bundles: [
-          '@deepseek-ai/dsh-base',
-          '@deepseek-ai/dsh-web-app',
-          '@local/dsh-bots',
-        ],
-      },
-    },
+    dependencies,
+    dsh: { profile: { bundles } },
   }, null, 2))
   const node = existsSync(RUNTIME_NODE) ? RUNTIME_NODE : process.execPath
   const pnpm = existsSync(RUNTIME_PNPM) ? RUNTIME_PNPM : null
@@ -160,7 +166,6 @@ function bootServer(port) {
     }, 120000)
     const onData = (chunk) => {
       buffer += String(chunk)
-      bootOutput += String(chunk)
       const match = buffer.match(/dsh web: (http:\/\/\S+)/)
       if (match !== null && !settled) {
         settled = true
@@ -204,35 +209,6 @@ async function authenticate(tokenizedUrl) {
 }
 
 /**
- * Call one Gateway Remote endpoint through the authenticated HTTP bridge.
- *
- * @param {string} endpoint Remote endpoint such as `session/create`.
- * @param {object} payload named-argument payload.
- * @returns {Promise<any>} the decoded `value` of a successful result.
- */
-async function remote(endpoint, payload) {
-  const response = await fetch(`${origin}/api/${endpoint}`, {
-    method: 'POST',
-    headers: { cookie, 'content-type': 'application/json' },
-    body: JSON.stringify({
-      type: 'client-request',
-      rpcId: crypto.randomUUID(),
-      method: endpoint,
-      payload: { args: payload },
-    }),
-  })
-  const text = await response.text()
-  assert.equal(response.status, 200, `${endpoint} answered HTTP ${response.status}: ${text.slice(0, 400)}`)
-  const body = JSON.parse(text)
-  assert.equal(body.type, 'server-response', `${endpoint} answered a non-response envelope: ${text.slice(0, 400)}`)
-  const result = body.result
-  if (result.ok !== true) {
-    assert.fail(`${endpoint} failed: ${JSON.stringify(result.error ?? result).slice(0, 800)}`)
-  }
-  return result.value
-}
-
-/**
  * Call one bots route through the authenticated HTTP bridge.
  *
  * @param {string} routePath absolute path such as `/api/bots.list`.
@@ -250,7 +226,7 @@ async function api(routePath, options = {}) {
   }
   const response = await fetch(`${origin}${routePath}`, init)
   const text = await response.text()
-  assert.equal(response.status, 200, `${routePath} answered HTTP ${response.status}: ${text}`)
+  assert.equal(response.status, 200, `${routePath} answered HTTP ${response.status}: ${text.slice(0, 400)}`)
   let payload
   try {
     payload = JSON.parse(text)
@@ -261,71 +237,88 @@ async function api(routePath, options = {}) {
 }
 
 /**
- * Read one bot's live VM state from the list route.
+ * Raw authenticated request, used to assert that a route is gone.
  *
- * @param {string} id bot id.
- * @returns {Promise<object>} BotView for the id.
+ * @param {string} routePath absolute path.
+ * @param {string} [method] HTTP method.
+ * @returns {Promise<{ status: number, body: string }>} status and text.
  */
-async function botView(id) {
-  const listed = await api('/api/bots.list')
-  assert.equal(listed.ok, true, `list failed: ${JSON.stringify(listed)}`)
-  const view = listed.bots.find((bot) => bot.id === id)
-  assert.ok(view !== undefined, `bot ${id} missing from list`)
-  return view
+async function raw(routePath, method = 'GET') {
+  const response = await fetch(`${origin}${routePath}`, { method, headers: { cookie } })
+  return { status: response.status, body: await response.text() }
 }
 
 /**
- * Poll one bot until its VM reaches a state.
+ * Assert a route answered a coded failure.
  *
- * @param {string} id bot id.
- * @param {(state: string) => boolean} predicate state test.
- * @param {number} timeoutMs deadline.
- * @returns {Promise<object>} the matching BotView.
+ * @param {string} routePath route path.
+ * @param {object} body request body.
+ * @param {string} code expected error code.
+ * @returns {Promise<any>} the payload.
  */
-async function waitForVmState(id, predicate, timeoutMs = 60000) {
-  const deadline = Date.now() + timeoutMs
-  let view = await botView(id)
-  while (!predicate(view.vmStatus?.state ?? 'missing')) {
-    if (Date.now() > deadline) {
-      assert.fail(`timed out waiting for VM state; last state ${JSON.stringify(view.vmStatus)}`)
-    }
-    await new Promise((resolve) => setTimeout(resolve, 1000))
-    view = await botView(id)
-  }
-  return view
+async function expectError(routePath, body, code) {
+  const payload = await api(routePath, { body })
+  assert.equal(payload.ok, false, `${routePath} unexpectedly succeeded: ${JSON.stringify(payload).slice(0, 600)}`)
+  assert.equal(payload.error.code, code, `${routePath} answered ${payload.error.code} (${payload.error.message}) instead of ${code}`)
+  return payload
 }
 
 /**
- * Remove every test container this run created.
+ * Create one bit from a catalog character and remember it for cleanup.
  *
- * @returns {Promise<void>} resolves after best-effort cleanup.
+ * @param {object} fields create payload.
+ * @returns {Promise<any>} bit record.
  */
-async function cleanupContainers() {
-  if (createdBotId !== undefined) {
-    try {
-      await run('docker', ['rm', '-f', `dsh-bot-${createdBotId}`], { timeoutMs: 30000 })
-    } catch {
-      // Best effort.
-    }
-  }
-  // Also remove anything else this suite may have left behind by label.
-  try {
-    const listed = await run('docker', ['ps', '--format', '{{.Names}}', '--filter', 'label=dsh.bots.managed=true'], { timeoutMs: 30000 })
-    for (const name of listed.stdout.split('\n').map((line) => line.trim()).filter(Boolean)) {
-      await run('docker', ['rm', '-f', name], { timeoutMs: 30000 })
-    }
-  } catch {
-    // Best effort.
-  }
+async function createBit(fields) {
+  const created = await api('/api/bots.create', { body: fields })
+  assert.equal(created.ok, true, `bit create failed: ${JSON.stringify(created)}`)
+  createdBitIds.push(created.bit.id)
+  return created.bit
 }
 
 /**
- * Stop the booted host and delete the throwaway home.
+ * Create one team and remember it for cleanup.
+ *
+ * @param {object} team team payload.
+ * @returns {Promise<any>} team record.
+ */
+async function createTeam(team) {
+  const created = await api('/api/bots.teams.create', { body: { team } })
+  assert.equal(created.ok, true, `team create failed: ${JSON.stringify(created).slice(0, 800)}`)
+  createdTeamIds.push(created.team.id)
+  return created.team
+}
+
+/**
+ * Stop the booted host, remove created records best-effort and delete the
+ * throwaway home.
  *
  * @returns {Promise<void>} resolves after cleanup.
  */
 async function cleanup() {
-  await cleanupContainers()
+  if (origin !== undefined) {
+    for (const id of createdTeamIds) {
+      try {
+        await api('/api/bots.teams.delete', { body: { id } })
+      } catch {
+        // Best effort (the host may already be down).
+      }
+    }
+    for (const id of createdBitIds) {
+      try {
+        await api('/api/bots.delete', { body: { id, deleteWorkspace: true } })
+      } catch {
+        // Best effort.
+      }
+    }
+    for (const id of createdProjectIds) {
+      try {
+        await api('/api/bots.projects.delete', { body: { id } })
+      } catch {
+        // Best effort.
+      }
+    }
+  }
   if (bootChild !== undefined && bootChild.exitCode === null) {
     bootChild.kill('SIGTERM')
     const exited = new Promise((resolve) => {
@@ -340,6 +333,13 @@ async function cleanup() {
     })
     await exited
   }
+  for (const dir of createdDirs) {
+    try {
+      await fs.rm(dir, { recursive: true, force: true })
+    } catch {
+      // Best effort.
+    }
+  }
   if (tempHome !== undefined) {
     try {
       await fs.rm(tempHome, { recursive: true, force: true })
@@ -352,20 +352,21 @@ async function cleanup() {
 
 /** Run the whole suite. */
 async function main() {
-  if (!existsSync(path.join(BUNDLE_DIR, 'host', 'vm.js'))) {
+  if (!existsSync(path.join(BUNDLE_DIR, 'host', 'bit-runtime.js')) || !existsSync(path.join(BUNDLE_DIR, 'host', 'models.js'))) {
     throw new Error(`bundle is incomplete at ${BUNDLE_DIR}`)
   }
   console.log(`bundle: ${BUNDLE_DIR}`)
   console.log(`install root: ${INSTALL_ROOT}`)
-  console.log('1/6 install throwaway profile')
+  console.log(`delegate plugin: ${DELEGATE_DIR === '' ? '(not installed; real run skipped)' : DELEGATE_DIR}`)
+  console.log('1/9 install throwaway profile')
   await installProfile()
   const port = await freePort()
-  console.log(`2/6 boot isolated web host on port ${port}`)
+  console.log(`2/9 boot isolated web host on port ${port}`)
   const tokenized = await bootServer(port)
   await authenticate(tokenized)
   console.log(`   authenticated at ${origin}`)
 
-  console.log('3/6 client bundle is served')
+  console.log('3/9 client bundle is served')
   {
     const indexResponse = await fetch(`${origin}/`, { headers: { cookie } })
     assert.equal(indexResponse.status, 200, `index answered HTTP ${indexResponse.status}`)
@@ -373,204 +374,399 @@ async function main() {
     const hrefs = [...indexHtml.matchAll(/(?:href|src)="([^"]+)"/g)]
       .map((match) => match[1].replaceAll('&amp;', '&'))
       .filter((href) => href.includes('@local/dsh-bots/client.js'))
-    assert.ok(hrefs.length > 0, 'the boot payload does not reference the Bots client bundle')
+    assert.ok(hrefs.length > 0, 'the boot payload does not reference the Bits client bundle')
     const bundleHref = hrefs.find((href) => href.includes('??')) ?? hrefs[0]
     const response = await fetch(new URL(bundleHref, `${origin}/`), { headers: { cookie } })
     assert.equal(response.status, 200, `client bundle ${bundleHref} answered HTTP ${response.status}`)
     const body = await response.text()
     assert.ok(body.includes('__ModuleLoader__'), 'served bundle does not contain the module loader registration')
     assert.ok(body.includes('@local/dsh-bots'), 'served bundle does not register the bundle id')
-    assert.ok(body.includes('Bots'), 'served bundle does not contain the Bots page code')
+    assert.ok(body.includes('Bits'), 'served bundle does not contain the Bits page code')
+    assert.ok(!/Máquina virtual/i.test(body), 'served bundle still contains the v4 VM copy')
     console.log(`   served ${bundleHref} (${body.length} bytes)`)
   }
 
-  console.log('4/6 docker discovery + images')
+  console.log('4/9 bits catalog v2 + model catalog')
   {
-    const docker = await api('/api/bots.docker')
-    assert.equal(docker.ok, true, `docker probe failed: ${JSON.stringify(docker)}`)
-    assert.equal(docker.available, true, `docker unavailable: ${JSON.stringify(docker)}`)
-    assert.equal(typeof docker.version, 'string')
-    const images = await api('/api/bots.images')
-    assert.equal(images.ok, true)
-    assert.ok(Array.isArray(images.images), 'images route returned no list')
-    assert.ok(images.images.some((image) => `${image.name}:${image.tag}` === TEST_IMAGE), `local image ${TEST_IMAGE} missing from discovery`)
+    const catalog = await api('/api/bots.catalog')
+    assert.equal(catalog.ok, true, `catalog failed: ${JSON.stringify(catalog).slice(0, 400)}`)
+    assert.equal(catalog.version, 2)
+    assert.ok(Array.isArray(catalog.bits) && catalog.bits.length === 52, `expected 52 bits, got ${catalog.bits?.length}`)
+    assert.ok(Array.isArray(catalog.groups) && catalog.groups.length >= 1)
+    for (const bit of catalog.bits) {
+      assert.equal(typeof bit.isOrchestrator, 'boolean', `catalog bit ${bit.id} has no isOrchestrator`)
+      assert.equal(typeof bit.model, 'string', `catalog bit ${bit.id} has no model`)
+      assert.ok(bit.model.length > 0)
+      assert.equal(typeof bit.effort, 'string', `catalog bit ${bit.id} has no effort`)
+      assert.ok(bit.effort.length > 0)
+    }
+    const orchestrators = catalog.bits.filter((bit) => bit.isOrchestrator === true).map((bit) => bit.id).sort()
+    assert.deepEqual(orchestrators, ['bit-coordinator', 'bit-manager', 'bit-product-owner', 'bit-sub-coordinator'])
+    const coordinator = catalog.bits.find((bit) => bit.id === 'bit-coordinator')
+    assert.equal(coordinator.model, 'deepseek-account/deepseek-flash')
+    assert.equal(coordinator.effort, 'max')
+    const builder = catalog.bits.find((bit) => bit.id === 'bit-builder')
+    assert.equal(builder.isOrchestrator, false)
+    assert.equal(builder.model, 'subscription/sonnet')
+
+    const models = await api('/api/bots.models')
+    assert.equal(models.ok, true, `models failed: ${JSON.stringify(models).slice(0, 400)}`)
+    assert.ok(Array.isArray(models.models) && models.models.length >= 3)
+    for (const option of models.models) {
+      assert.equal(typeof option.id, 'string')
+      assert.equal(typeof option.label, 'string')
+      assert.ok(['subscription', 'routes'].includes(option.group))
+      assert.ok(['claude-code', 'dsh'].includes(option.backend))
+      assert.ok(Array.isArray(option.efforts))
+    }
+    for (const id of ['subscription/opus', 'subscription/sonnet', 'subscription/haiku']) {
+      assert.ok(models.models.some((option) => option.id === id), `model catalog lacks ${id}`)
+    }
+    const opus = models.models.find((option) => option.id === 'subscription/opus')
+    assert.equal(opus.backend, 'claude-code')
+    assert.equal(opus.supportsOrchestrator, false)
+    assert.deepEqual(opus.efforts, ['low', 'medium', 'high', 'xhigh', 'max'])
+    console.log(`   ${catalog.bits.length} catalog bits (${orchestrators.length} orchestrators), ${models.models.length} model options`)
   }
 
-  console.log('5/6 bot CRUD')
-  let listed = await api('/api/bots.list')
-  assert.equal(listed.ok, true)
-  assert.ok(Array.isArray(listed.bots))
-  const baselineCount = listed.bots.length
+  console.log('5/9 bits CRUD')
+  let baseline = await api('/api/bots.list')
+  assert.equal(baseline.ok, true)
+  assert.ok(Array.isArray(baseline.bits))
+  assert.deepEqual(baseline.bots, baseline.bits, 'list does not expose the legacy `bots` alias')
+  const baselineCount = baseline.bits.length
 
-  const created = await api('/api/bots.create', {
-    body: {
-      name: 'E2E Bot',
-      emoji: '🤖',
-      instructions: 'You are the end-to-end verification bot.',
-      vm: { enabled: true, image: TEST_IMAGE },
-    },
+  const builder = await createBit({
+    name: 'E2E Builder',
+    character: 'bit-builder',
+    emoji: '🛠️',
+    color: '#7c3aed',
+    instructions: 'You are the end-to-end verification worker.',
   })
-  assert.equal(created.ok, true, `create failed: ${JSON.stringify(created)}`)
-  assert.equal(created.bot.name, 'E2E Bot')
-  assert.match(created.bot.id, /^[0-9a-f]{10}$/)
-  assert.equal(created.bot.vm.enabled, true)
-  assert.equal(created.bot.vm.image, TEST_IMAGE)
-  assert.ok(typeof created.bot.workspaceDir === 'string' && path.isAbsolute(created.bot.workspaceDir))
-  assert.ok(typeof created.bot.workspaceId === 'string' && created.bot.workspaceId.length > 0, 'bot has no registered workspace id')
-  createdBotId = created.bot.id
-  await fs.access(created.bot.workspaceDir)
+  assert.match(builder.id, /^[0-9a-f]{10}$/)
+  assert.equal(builder.character, 'bit-builder')
+  assert.equal(builder.isOrchestrator, false)
+  assert.equal(builder.model, 'subscription/sonnet')
+  assert.equal(builder.effort, 'high')
+  assert.ok(typeof builder.workspaceDir === 'string' && path.isAbsolute(builder.workspaceDir))
+  await fs.access(builder.workspaceDir)
 
-  listed = await api('/api/bots.list')
-  assert.equal(listed.bots.length, baselineCount + 1)
+  const orchestrator = await createBit({ name: 'E2E Coordinator', character: 'bit-coordinator', emoji: '🗂️', color: '#346dca' })
+  assert.equal(orchestrator.isOrchestrator, true)
+  assert.equal(orchestrator.model, 'deepseek-account/deepseek-flash')
+  assert.equal(orchestrator.effort, 'max')
 
   const updated = await api('/api/bots.update', {
-    body: { id: createdBotId, patch: { name: 'E2E Bot Renamed', instructions: 'Updated instructions.' } },
+    body: { id: builder.id, patch: { name: 'E2E Builder Renamed', instructions: 'Updated instructions.', effort: 'max' } },
   })
-  assert.equal(updated.ok, true, `update failed: ${JSON.stringify(updated)}`)
-  assert.equal(updated.bot.name, 'E2E Bot Renamed')
-  assert.equal(updated.bot.instructions, 'Updated instructions.')
+  assert.equal(updated.ok, true, `bit update failed: ${JSON.stringify(updated)}`)
+  assert.equal(updated.bit.name, 'E2E Builder Renamed')
+  assert.equal(updated.bit.instructions, 'Updated instructions.')
+  assert.equal(updated.bit.effort, 'max')
+  assert.equal(updated.bit.character, 'bit-builder')
 
-  const unknown = await api('/api/bots.update', { body: { id: 'deadbeef01', patch: { name: 'nope' } } })
-  assert.equal(unknown.ok, false)
-  assert.equal(unknown.error.code, 'BOT_NOT_FOUND')
+  await expectError('/api/bots.update', { id: 'deadbeef01', patch: { name: 'nope' } }, 'BOT_NOT_FOUND')
+  const emptyName = await api('/api/bots.create', { body: { name: '', character: 'bit-builder' } })
+  assert.equal(emptyName.ok, false, `empty name was accepted: ${JSON.stringify(emptyName)}`)
+  assert.match(emptyName.error.code, /^BOT_INVALID/, `unexpected empty-name error: ${JSON.stringify(emptyName.error)}`)
+  await expectError('/api/bots.create', { name: 'Unknown', character: 'bit-does-not-exist' }, 'BOT_INVALID_CHARACTER')
+  await expectError('/api/bots.create', { name: 'Bad Orchestrator', character: 'bit-builder', isOrchestrator: true, model: 'subscription/opus' }, 'BOT_INVALID')
 
-  const badRequest = await api('/api/bots.create', { body: { name: '' } })
-  assert.equal(badRequest.ok, false)
-  assert.ok(typeof badRequest.error.code === 'string')
+  baseline = await api('/api/bots.list')
+  assert.equal(baseline.bits.length, baselineCount + 2)
+  console.log('   create/update/list/validation respected catalog defaults')
 
-  console.log('5b/7 create a chat session in the bot workspace (real Agent setup)')
+  console.log('6/9 worker Executar (request → response)')
   {
-    const createdSession = await remote('session/create', { request: { workspaceId: created.bot.workspaceId } })
-    assert.ok(typeof createdSession.sessionId === 'string' && createdSession.sessionId.length > 0, 'session/create returned no sessionId')
-    // Agent creation is dispatched as a serial `agent/created` event; give the
-    // persona/VM integration a moment to attach, then read its diagnostics.
-    await new Promise((resolve) => setTimeout(resolve, 2000))
-    const diagnostics = await api('/api/bots.diagnostics')
-    assert.equal(diagnostics.ok, true, 'diagnostics route failed')
-    assert.equal(diagnostics.storeReady, true)
-    assert.deepEqual(diagnostics.errors, [], `bot integration reported failures: ${JSON.stringify(diagnostics.errors)}`)
-    const attachedAgent = diagnostics.agents.find((entry) => entry.id === createdSession.sessionId)
-    assert.ok(attachedAgent !== undefined, `the new Agent did not attach to its bot. Diagnostics: ${JSON.stringify(diagnostics)}`)
-    assert.equal(attachedAgent.botId, createdBotId)
-    assert.equal(attachedAgent.vmEnabled, true)
-    for (const name of ['vm_bash', 'notify_user', 'schedule_create', 'schedule_list', 'schedule_edit']) {
-      assert.ok(attachedAgent.tools.includes(name), `bot agent lacks ${name}; tools: ${JSON.stringify(attachedAgent.tools)}`)
+    // Orchestrators execute inside flows only.
+    await expectError('/api/bots.run', { id: orchestrator.id, request: 'faça algo' }, 'BIT_IS_ORCHESTRATOR')
+    // Request validation.
+    await expectError('/api/bots.run', { id: builder.id, request: '' }, 'BAD_REQUEST')
+    await expectError('/api/bots.run', { id: 'deadbeef01', request: 'oi' }, 'BOT_NOT_FOUND')
+    // Without @local/dsh-claude-delegate installed, the subscription backend
+    // fails with an actionable coded error instead of hanging or crashing.
+    if (DELEGATE_DIR === '') {
+      const unavailable = await api('/api/bots.run', { body: { id: builder.id, request: 'Responda apenas: ok', readOnly: true } })
+      assert.equal(unavailable.ok, false, `subscription run without the delegate plugin unexpectedly succeeded: ${JSON.stringify(unavailable).slice(0, 600)}`)
+      assert.ok(
+        ['BIT_DELEGATE_UNAVAILABLE', 'BIT_MODEL_INVALID'].includes(unavailable.error.code),
+        `unexpected run error: ${JSON.stringify(unavailable.error)}`,
+      )
+      console.log(`   coded failure without the delegate plugin: ${unavailable.error.code}`)
     }
-    assert.ok(!attachedAgent.tools.includes('bash'), 'VM bot agent still sees the host bash tool')
-    // The notification route is wired (an unknown bot never shows a notification).
-    const notifyUnknown = await fetch(`${origin}/api/bots.notify-test`, {
-      method: 'POST',
-      headers: { cookie, 'content-type': 'application/json' },
-      body: JSON.stringify({ id: 'deadbeef01' }),
-    }).then((response) => response.json())
-    assert.equal(notifyUnknown.ok, false)
-    assert.equal(notifyUnknown.error.code, 'BOT_NOT_FOUND')
-    createdSessionId = createdSession.sessionId
-    console.log(`   session ${createdSession.sessionId} created; bot agent attached (persona + host shell restriction + vm_bash)`)
+
+    // One-shot DSH route backend: no chat providers exist in this throwaway
+    // profile, so the bit route is invalid at catalog resolution; when the
+    // profile does expose a route this becomes a real call. Either way the
+    // route must answer a coded error, never a 500/hang.
+    const dshBit = await api('/api/bots.create', {
+      body: { name: 'E2E DSH Worker', character: 'bit-scout', isOrchestrator: false, model: 'deepseek-account/deepseek-flash', effort: 'low' },
+    })
+    createdBitIds.push(dshBit.bit.id)
+    const dshRun = await api('/api/bots.run', { body: { id: dshBit.bit.id, request: 'Responda apenas: ok', readOnly: true } })
+    if (dshRun.ok === false) {
+      assert.ok(['BIT_MODEL_INVALID', 'BIT_MODEL_CALL_FAILED', 'BIT_DELEGATE_UNAVAILABLE'].includes(dshRun.error.code), `unexpected error: ${JSON.stringify(dshRun.error)}`)
+      console.log(`   coded failure for a DSH-route worker: ${dshRun.error.code}`)
+    } else {
+      assert.equal(typeof dshRun.response, 'string')
+      assert.ok(dshRun.response.length > 0)
+      console.log(`   one-shot DSH route answered (${dshRun.response.length} chars)`)
+    }
+
+    // Real subscription invocation when the delegate plugin is installed.
+    if (DELEGATE_DIR !== '') {
+      const realBit = await api('/api/bots.create', {
+        body: {
+          name: 'E2E Subscription Worker',
+          character: 'bit-scout',
+          isOrchestrator: false,
+          model: 'subscription/haiku',
+          effort: 'low',
+          instructions: 'Responda em uma linha curta.',
+        },
+      })
+      assert.equal(realBit.ok, true, `real-run bit create failed: ${JSON.stringify(realBit)}`)
+      createdBitIds.push(realBit.bit.id)
+      const startedAt = Date.now()
+      const realRun = await api('/api/bots.run', { body: { id: realBit.bit.id, request: 'Responda exatamente: ok', readOnly: true } })
+      assert.equal(realRun.ok, true, `real subscription run failed: ${JSON.stringify(realRun).slice(0, 800)}`)
+      assert.equal(typeof realRun.response, 'string')
+      assert.ok(realRun.response.trim().length > 0, 'real subscription run returned an empty answer')
+      assert.equal(realRun.meta.backend, 'claude-code')
+      assert.match(String(realRun.meta.model), /^subscription\/haiku$/)
+      console.log(`   REAL subscription run answered in ${Date.now() - startedAt}ms: ${realRun.response.trim().slice(0, 80)}`)
+    }
   }
 
-  console.log('5d/7 a scheduled task fires into a new session that runs as the bot')
+  console.log('7/9 teams: templates, bit-referencing members, lead rule, run error paths')
   {
-    const before = (await api('/api/bots.diagnostics')).agents.filter((entry) => entry.botId === createdBotId).map((entry) => entry.id)
-    const task = await remote('schedule/create', {
-      request: {
-        title: 'Lembrete de teste do bot',
-        prompt: 'Scheduled reminder: call notify_user with "teste" and reply with one short line.',
-        timing: { kind: 'after', after_seconds: 3 },
-        target: { kind: 'new', create: { cwd: created.bot.workspaceDir } },
+    const templates = await api('/api/bots.teams.templates')
+    assert.equal(templates.ok, true, `templates failed: ${JSON.stringify(templates).slice(0, 400)}`)
+    const engineering = templates.templates.find((entry) => entry.id === 'engineering')
+    assert.ok(engineering !== undefined, 'engineering template missing')
+    assert.ok(Array.isArray(engineering.bits) && engineering.bits.length > 0, 'template has no bits')
+    assert.ok(Array.isArray(engineering.team.members) && engineering.team.members.length > 0)
+    assert.ok(engineering.team.members.every((member) => typeof member.bitKey === 'string'), 'template members do not reference bitKey')
+    assert.equal(typeof engineering.team.lead, 'string')
+
+    const before = (await api('/api/bots.list')).bits.length
+    const instantiated = await api('/api/bots.teams.fromTemplate', { body: { templateId: 'engineering' } })
+    assert.equal(instantiated.ok, true, `fromTemplate failed: ${JSON.stringify(instantiated).slice(0, 800)}`)
+    createdTeamIds.push(instantiated.team.id)
+    for (const bit of instantiated.bits) createdBitIds.push(bit.id)
+    const listedBits = await api('/api/bots.list')
+    assert.equal(listedBits.bits.length, before + instantiated.bits.length)
+    const team = instantiated.team
+    const memberBitIds = new Set(instantiated.bits.map((bit) => bit.id))
+    assert.ok(team.members.length > 0)
+    for (const member of team.members) {
+      assert.ok(memberBitIds.has(member.bitId), `member ${member.id} references an unknown bit`)
+      assert.ok(!('instructions' in member) && !('model' in member) && !('character' in member), `member ${member.id} still embeds v4 fields`)
+    }
+    assert.ok(team.lead, 'fromTemplate team has no lead')
+    const leadMember = team.members.find((member) => member.id === team.lead)
+    assert.ok(leadMember !== undefined, 'team lead is not a member')
+    assert.equal(leadMember.access, 'read')
+    const leadBit = instantiated.bits.find((bit) => bit.id === leadMember.bitId)
+    assert.equal(leadBit.isOrchestrator, true, 'template lead bit is not an orchestrator')
+    assert.ok(Array.isArray(team.flow.nodes) && team.flow.nodes.length > 1)
+    assert.ok(team.flow.nodes.some((node) => node.memberId === team.lead))
+
+    // Members must reference existing bits.
+    const unknownMember = await api('/api/bots.teams.update', {
+      body: { id: team.id, patch: { members: [{ id: 'ghost', bitId: 'deadbeef01' }] } },
+    })
+    assert.equal(unknownMember.ok, false, `unknown bitId was accepted: ${JSON.stringify(unknownMember).slice(0, 400)}`)
+    assert.equal(unknownMember.error.code, 'TEAM_INVALID')
+    assert.match(unknownMember.error.message, /bitId/)
+
+    // A worker bit cannot lead a team.
+    const workerLead = await api('/api/bots.teams.create', {
+      body: { team: { name: 'E2E Worker Lead', members: [{ id: 'builder', bitId: builder.id, access: 'write' }], lead: 'builder' } },
+    })
+    assert.equal(workerLead.ok, false, `worker bit accepted as team lead: ${JSON.stringify(workerLead).slice(0, 400)}`)
+    assert.equal(workerLead.error.code, 'TEAM_LEAD_NOT_ORCHESTRATOR')
+
+    // A manually built team with an orchestrator lead is accepted.
+    const manual = await createTeam({
+      name: 'E2E Manual Flow',
+      members: [
+        { id: 'lead', bitId: orchestrator.id, access: 'read', launches: ['builder'] },
+        { id: 'builder', bitId: builder.id, access: 'write' },
+      ],
+      lead: 'lead',
+      flow: {
+        nodes: [
+          { id: 'start', type: 'start', x: 0, y: 0, label: 'Pedido' },
+          { id: 'lead', type: 'step', x: 0, y: 100, label: 'Orquestrar', memberId: 'lead' },
+          { id: 'builder', type: 'step', x: 0, y: 200, label: 'Implementar', memberId: 'builder' },
+          { id: 'end', type: 'end', x: 0, y: 300, label: 'Entrega' },
+        ],
+        edges: [
+          { id: 'e1', from: 'start', to: 'lead' },
+          { id: 'e2', from: 'lead', to: 'builder', kind: 'delegate' },
+          { id: 'e3', from: 'builder', to: 'end' },
+        ],
       },
     })
-    const taskId = task.id ?? task.task?.id
-    assert.ok(typeof taskId === 'string', `schedule/create returned no id: ${JSON.stringify(task).slice(0, 300)}`)
-    let fired
-    const deadline = Date.now() + 45000
-    while (Date.now() < deadline && fired === undefined) {
-      await new Promise((resolve) => setTimeout(resolve, 1000))
-      const diagnostics = await api('/api/bots.diagnostics')
-      fired = diagnostics.agents.find((entry) => entry.botId === createdBotId && !before.includes(entry.id))
+    assert.equal(manual.lead, 'lead')
+
+    // Run error paths are deterministic without a workspace/session setup.
+    await expectError('/api/bots.teams.run', { id: 'deadbeef01', prompt: 'oi' }, 'TEAM_NOT_FOUND')
+    const noLead = await createTeam({ name: 'E2E No Lead' })
+    await expectError('/api/bots.teams.run', { id: noLead.id, prompt: 'oi' }, 'TEAM_NO_LEAD')
+    await expectError('/api/bots.teams.run', { id: manual.id, prompt: '' }, 'TEAM_NO_WORKSPACE')
+
+    // A team with a real workspace registers it through the workspace route.
+    const repoDir = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-bits-e2e-repo-'))
+    createdDirs.push(repoDir)
+    const withRepo = await createTeam({ name: 'E2E With Repo', workspaceDir: repoDir, lead: 'lead', members: [{ id: 'lead', bitId: orchestrator.id, access: 'read' }] })
+    const workspace = await api('/api/bots.teams.workspace', { body: { id: withRepo.id } })
+    assert.equal(workspace.ok, true, `teams.workspace failed: ${JSON.stringify(workspace)}`)
+    assert.ok(typeof workspace.workspaceId === 'string' && workspace.workspaceId.length > 0)
+    assert.equal(workspace.workspaceDir, repoDir)
+    await expectError('/api/bots.teams.run', { id: withRepo.id, prompt: '   ' }, 'BAD_REQUEST')
+
+    const deletedTeam = await api('/api/bots.teams.delete', { body: { id: noLead.id } })
+    assert.equal(deletedTeam.ok, true)
+    const stillListed = (await api('/api/bots.teams')).teams.some((entry) => entry.id === noLead.id)
+    assert.equal(stillListed, false, 'deleted team still listed')
+    console.log(`   template instantiated ${instantiated.bits.length} bits + ${team.members.length} members; lead/bitId rules and run errors verified`)
+  }
+
+  console.log('8/9 projects layer (unchanged)')
+  {
+    const none = await api('/api/bots.projects')
+    assert.equal(none.ok, true, `projects list failed: ${JSON.stringify(none)}`)
+    assert.deepEqual(none.projects, [])
+
+    const first = await api('/api/bots.projects.create', {
+      body: {
+        project: {
+          name: '  E2E Project  ',
+          description: 'Projeto de verificação end-to-end.',
+          id: 'ffffffffff',
+          createdAt: '2000-01-01T00:00:00.000Z',
+          updatedAt: '2000-01-01T00:00:00.000Z',
+        },
+      },
+    })
+    assert.equal(first.ok, true, `project create failed: ${JSON.stringify(first)}`)
+    const project = first.project
+    createdProjectIds.push(project.id)
+    assert.match(project.id, /^[0-9a-f]{10}$/)
+    assert.notEqual(project.id, 'ffffffffff', 'project create kept the client-supplied id')
+    assert.equal(project.name, 'E2E Project')
+    assert.equal(project.description, 'Projeto de verificação end-to-end.')
+    assert.equal(project.emoji, '📁')
+    assert.equal(project.color, '#2563eb')
+
+    const second = await api('/api/bots.projects.create', {
+      body: { project: { name: 'E2E Second', description: 'Outro projeto.', emoji: '🧪', color: '#16a34a' } },
+    })
+    assert.equal(second.ok, true, `second project create failed: ${JSON.stringify(second)}`)
+    const other = second.project
+    createdProjectIds.push(other.id)
+    assert.match(other.id, /^[0-9a-f]{10}$/)
+    assert.notEqual(other.id, project.id)
+
+    const listedProjects = await api('/api/bots.projects')
+    assert.equal(listedProjects.projects.length, 2, `expected two projects: ${JSON.stringify(listedProjects)}`)
+
+    const updatedProject = await api('/api/bots.projects.update', {
+      body: { id: project.id, patch: { name: 'E2E Project Renamed', color: '#dc2626' } },
+    })
+    assert.equal(updatedProject.ok, true, `project update failed: ${JSON.stringify(updatedProject)}`)
+    assert.equal(updatedProject.project.id, project.id)
+    assert.equal(updatedProject.project.name, 'E2E Project Renamed')
+    assert.equal(updatedProject.project.color, '#dc2626')
+    assert.equal(updatedProject.project.description, project.description)
+
+    const invalidProject = await api('/api/bots.projects.create', { body: { project: { name: '' } } })
+    assert.equal(invalidProject.ok, false, `empty project name was accepted: ${JSON.stringify(invalidProject)}`)
+    assert.equal(invalidProject.error.code, 'PROJECT_INVALID')
+    assert.match(invalidProject.error.message, /name:/)
+    await expectError('/api/bots.projects.update', { id: 'deadbeef01', patch: { name: 'nope' } }, 'PROJECT_NOT_FOUND')
+    await expectError('/api/bots.projects.delete', { id: 'deadbeef01' }, 'PROJECT_NOT_FOUND')
+
+    // A non-shared team belongs to a single project by default.
+    const teamA = await createTeam({ name: 'E2E Team A', projectIds: [project.id] })
+    assert.equal(teamA.shared, false)
+    assert.deepEqual(teamA.projectIds, [project.id])
+    const teamB = await createTeam({ name: 'E2E Team B' })
+    assert.equal(teamB.shared, false)
+    assert.deepEqual(teamB.projectIds, [])
+    const teamBShared = await api('/api/bots.teams.update', {
+      body: { id: teamB.id, patch: { shared: true, projectIds: [project.id, other.id] } },
+    })
+    assert.equal(teamBShared.ok, true, `shared team update failed: ${JSON.stringify(teamBShared)}`)
+    assert.equal(teamBShared.team.shared, true)
+    assert.deepEqual(teamBShared.team.projectIds, [project.id, other.id])
+
+    const unknownOnCreate = await api('/api/bots.teams.create', { body: { team: { name: 'E2E Team X', projectIds: ['deadbeef01'] } } })
+    assert.equal(unknownOnCreate.ok, false, `team with unknown project was accepted: ${JSON.stringify(unknownOnCreate)}`)
+    assert.equal(unknownOnCreate.error.code, 'TEAM_INVALID')
+    assert.match(unknownOnCreate.error.message, /projectIds\[0\]: unknown project "deadbeef01"/)
+    const unknownOnUpdate = await api('/api/bots.teams.update', { body: { id: teamA.id, patch: { projectIds: ['deadbeef01'] } } })
+    assert.equal(unknownOnUpdate.ok, false)
+    assert.equal(unknownOnUpdate.error.code, 'TEAM_INVALID')
+    let teams = await api('/api/bots.teams')
+    const teamAUnchanged = teams.teams.find((entry) => entry.id === teamA.id)
+    assert.ok(teamAUnchanged !== undefined, 'team A missing from the teams list')
+    assert.deepEqual(teamAUnchanged.projectIds, [project.id], 'rejected patch still changed the team')
+
+    const twoProjects = await api('/api/bots.teams.update', {
+      body: { id: teamA.id, patch: { shared: false, projectIds: [project.id, other.id] } },
+    })
+    assert.equal(twoProjects.ok, false, `non-shared team accepted two projects: ${JSON.stringify(twoProjects)}`)
+    assert.equal(twoProjects.error.code, 'TEAM_INVALID')
+
+    const deletedOther = await api('/api/bots.projects.delete', { body: { id: other.id } })
+    assert.equal(deletedOther.ok, true, `second project delete failed: ${JSON.stringify(deletedOther)}`)
+    assert.equal(deletedOther.detachedTeams, 1, `expected one detached team: ${JSON.stringify(deletedOther)}`)
+    teams = await api('/api/bots.teams')
+    const teamBAfterDetach = teams.teams.find((entry) => entry.id === teamB.id)
+    assert.ok(teamBAfterDetach !== undefined)
+    assert.deepEqual(teamBAfterDetach.projectIds, [project.id], 'deleted project id remained in the shared team')
+
+    const deletedFirst = await api('/api/bots.projects.delete', { body: { id: project.id } })
+    assert.equal(deletedFirst.ok, true, `first project delete failed: ${JSON.stringify(deletedFirst)}`)
+    assert.equal(deletedFirst.detachedTeams, 2, `expected two detached teams: ${JSON.stringify(deletedFirst)}`)
+    teams = await api('/api/bots.teams')
+    for (const id of [teamA.id, teamB.id]) {
+      const view = teams.teams.find((entry) => entry.id === id)
+      assert.ok(view !== undefined, `team ${id} disappeared when its project was deleted`)
+      assert.deepEqual(view.projectIds, [], `team ${id} still lists the deleted project`)
     }
-    assert.ok(fired !== undefined, 'the scheduled task did not open a session attached to the bot')
-    assert.ok(fired.tools.includes('notify_user'), `scheduled bot session lacks notify_user: ${JSON.stringify(fired.tools)}`)
-    assert.ok(fired.personaOk, 'scheduled bot session got no persona')
-    console.log(`   task ${taskId} fired; session ${fired.id} runs as the bot with notify_user`)
-    try {
-      await remote('schedule/edit', { request: { id: taskId, action: 'delete' } })
-    } catch {
-      // A fired one-shot task may already be ended; cleanup is best-effort.
+    assert.deepEqual((await api('/api/bots.projects')).projects, [])
+    console.log('   projects CRUD, shared/non-shared membership, unknown-id rejection and delete/detach verified')
+  }
+
+  console.log('9/9 diagnostics + removed v4 surface')
+  {
+    const diagnostics = await api('/api/bots.diagnostics')
+    assert.equal(diagnostics.ok, true, `diagnostics failed: ${JSON.stringify(diagnostics).slice(0, 400)}`)
+    assert.equal(diagnostics.storeReady, true)
+    assert.ok(typeof diagnostics.bitsPath === 'string' && diagnostics.bitsPath.endsWith('bits.json'))
+    assert.ok(Array.isArray(diagnostics.bits))
+    for (const bit of diagnostics.bits) {
+      assert.equal(typeof bit.isOrchestrator, 'boolean')
+      assert.equal(typeof bit.model, 'string')
+      assert.ok(!('vm' in bit) && !('vmEnabled' in bit), `diagnostics still reports VM fields: ${JSON.stringify(bit)}`)
     }
-  }
+    assert.deepEqual(diagnostics.errors, [], `team integration reported errors: ${JSON.stringify(diagnostics.errors)}`)
+    assert.ok(Array.isArray(diagnostics.agents))
 
-  console.log('5c/7 live VM toggle refreshes the running Agent (M1)')
-  {
-    // Disable the VM on the bot while its Agent is live: the host integration
-    // must lift the shell restriction immediately.
-    const disabled = await api('/api/bots.update', { body: { id: createdBotId, patch: { vm: { enabled: false } } } })
-    assert.equal(disabled.ok, true, `vm disable failed: ${JSON.stringify(disabled)}`)
-    await new Promise((resolve) => setTimeout(resolve, 1200))
-    let diagnostics = await api('/api/bots.diagnostics')
-    let attachedAgent = diagnostics.agents.find((entry) => entry.id === createdSessionId)
-    assert.ok(attachedAgent !== undefined, 'agent lost from diagnostics after VM toggle')
-    assert.equal(attachedAgent.vmEnabled, false, 'live Agent still reports VM enabled after disabling the bot VM')
-    assert.equal(attachedAgent.restricted, false, 'host shell restriction survived disabling the VM')
-    assert.deepEqual(diagnostics.errors, [], `VM toggle reported integration errors: ${JSON.stringify(diagnostics.errors)}`)
-
-    // Re-enable the VM: the restriction must come back for the live Agent.
-    const enabled = await api('/api/bots.update', { body: { id: createdBotId, patch: { vm: { enabled: true } } } })
-    assert.equal(enabled.ok, true, `vm re-enable failed: ${JSON.stringify(enabled)}`)
-    await new Promise((resolve) => setTimeout(resolve, 1200))
-    diagnostics = await api('/api/bots.diagnostics')
-    attachedAgent = diagnostics.agents.find((entry) => entry.id === createdSessionId)
-    assert.ok(attachedAgent !== undefined)
-    assert.equal(attachedAgent.vmEnabled, true, 'live Agent did not pick up the re-enabled VM')
-    assert.equal(attachedAgent.restricted, true, 'host shell restriction was not re-installed for the live Agent')
-    assert.deepEqual(diagnostics.errors, [])
-    console.log('   live Agent refreshed on VM disable and re-enable')
-  }
-
-  console.log('6/6 VM lifecycle')
-  {
-    const before = await botView(createdBotId)
-    assert.ok(['missing', 'created', 'exited', 'stopped', 'running'].includes(before.vmStatus.state), `unexpected initial state ${before.vmStatus.state}`)
-
-    const started = await api('/api/bots.vm', { body: { id: createdBotId, action: 'start' } })
-    assert.equal(started.ok, true, `vm start failed: ${JSON.stringify(started)}`)
-    const running = await waitForVmState(createdBotId, (state) => state === 'running')
-    assert.equal(running.vmStatus.running, true)
-    assert.equal(running.vmStatus.containerName, `dsh-bot-${createdBotId}`)
-
-    const pinged = await run('docker', ['exec', `dsh-bot-${createdBotId}`, 'sh', '-lc', 'echo bot-vm-ok'], { timeoutMs: 30000 })
-    assert.equal(pinged.code, 0, `docker exec failed: ${pinged.stderr}`)
-    assert.match(pinged.stdout, /bot-vm-ok/)
-
-    const workspaceProbe = await run('docker', ['exec', `dsh-bot-${createdBotId}`, 'sh', '-lc', 'pwd'], { timeoutMs: 30000 })
-    assert.equal(workspaceProbe.code, 0)
-    assert.equal(workspaceProbe.stdout.trim(), created.bot.workspaceDir, 'VM did not start in the bot workspace')
-
-    const stopped = await api('/api/bots.vm', { body: { id: createdBotId, action: 'stop' } })
-    assert.equal(stopped.ok, true, `vm stop failed: ${JSON.stringify(stopped)}`)
-    await waitForVmState(createdBotId, (state) => state !== 'running')
-
-    const restarted = await api('/api/bots.vm', { body: { id: createdBotId, action: 'start' } })
-    assert.equal(restarted.ok, true)
-    await waitForVmState(createdBotId, (state) => state === 'running')
-
-    const removed = await api('/api/bots.vm', { body: { id: createdBotId, action: 'remove' } })
-    assert.equal(removed.ok, true, `vm remove failed: ${JSON.stringify(removed)}`)
-    const afterRemove = await waitForVmState(createdBotId, (state) => state === 'missing')
-    assert.equal(afterRemove.vmStatus.running, false)
-    // The bot record and its workspace survive a VM removal.
-    await fs.access(created.bot.workspaceDir)
-  }
-
-  console.log('7/7 delete bot')
-  {
-    const deleted = await api('/api/bots.delete', { body: { id: createdBotId, deleteWorkspace: true } })
-    assert.equal(deleted.ok, true, `delete failed: ${JSON.stringify(deleted)}`)
-    assert.equal(deleted.workspaceRemoved, true)
-    await assert.rejects(fs.access(created.bot.workspaceDir), 'workspace directory still exists after delete')
-    listed = await api('/api/bots.list')
-    assert.equal(listed.bots.length, baselineCount, 'bot list did not return to baseline')
-    createdBotId = undefined
+    for (const [routePath, method] of [
+      ['/api/bots.images', 'GET'],
+      ['/api/bots.vm', 'POST'],
+      ['/api/bots.notify-test', 'POST'],
+      ['/api/bots.teams.providers', 'GET'],
+    ]) {
+      const response = await raw(routePath, method)
+      assert.notEqual(response.status, 200, `${routePath} still answers 200: ${response.body.slice(0, 200)}`)
+    }
+    console.log('   diagnostics reports bits/agents only; v4 VM/chat/provider routes are gone')
   }
 
   console.log('\nE2E PASS')

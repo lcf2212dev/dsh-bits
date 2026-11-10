@@ -1,9 +1,15 @@
 /**
- * Routes for harness packs and the team runtime (CONTRACT §11.3).
+ * Routes for harness packs and the team runtime (V5-CONTRACT §5.3, §5.4).
  *
  * Same conventions as `host/routes.js`: HTTP 200, `{ ok: true, ... }` or
  * `{ ok: false, error: { code, message } }`, coded errors pass through,
  * unexpected ones become `INTERNAL`.
+ *
+ * A harness pack is turned into a team of bits: one worker bit per preset plus
+ * an orchestrating lead bit (DeepSeek-V4.1-Flash Max). `teamFromPack` returns
+ * `{ bits, team }` in the team-template shape (the team members reference the
+ * definitions by local `bitKey`); `/api/bots.teams.fromPack` creates the bits
+ * first and then the team, returning `{ team, bits }`.
  *
  * @module host/harness-routes
  */
@@ -11,13 +17,27 @@
 import path from 'node:path'
 
 import { PACK_ID_PATTERN, listPacks, readPack, transpileHarness } from './harness.js'
+import { instantiateTeamTemplate } from './team-routes.js'
 
 const CODED = /^[A-Z][A-Z0-9_]{1,63}$/
+
+/** Efforts accepted by the Claude Code CLI (V5-CONTRACT §1). */
+const CLI_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max'])
+/** Defaults for a worker bit when the catalog has no entry for its character. */
+const FALLBACK_WORKER_MODEL = 'subscription/sonnet'
+const FALLBACK_WORKER_EFFORT = 'high'
+/** Orchestrator route: DeepSeek-V4.1-Flash Max (V5-CONTRACT §1). */
+const ORCHESTRATOR_MODEL = 'deepseek-account/deepseek-flash'
+const ORCHESTRATOR_EFFORT = 'max'
 
 function codedError(code, message) {
   const error = new Error(message)
   error.code = code
   return error
+}
+
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
 function json(payload) {
@@ -83,48 +103,90 @@ function slugMember(name, taken) {
 }
 
 /**
- * A generic runnable team from a pack: an orchestrating lead plus one member
- * per preset (instructions, model, effort, read-only, launches, skills), and a
- * simple flow (request → lead → members → report).
+ * The lead instructions of a harness-generated team: the orchestrator only
+ * plans and delegates, it never runs commands or edits files.
+ *
+ * @returns {string}
+ */
+export function harnessLeadInstructions() {
+  return [
+    'Você é a sessão principal do harness e só orquestra: entende o pedido, escolhe o fluxo (skill) certo, delega cada etapa ao membro adequado com `team_delegate`, confere os relatórios e responde ao dev.',
+    'Leia a skill do fluxo antes do primeiro passo. Você não roda comandos nem edita arquivos.',
+  ].join('\n\n')
+}
+
+/**
+ * A generic runnable team from a pack (V5-CONTRACT §5.3): one bit per preset
+ * (instructions/model/effort/read-only/launches/skills), an orchestrating lead
+ * bit on the DeepSeek route, a simple flow (request → lead → members → report),
+ * and the team members referencing those bits.
+ *
+ * Worker bits use the catalog defaults for their character; when the catalog
+ * has no entry, they fall back to `subscription/sonnet` and the preset effort
+ * (a valid CLI effort) or `high`. The lead is always
+ * `bit-coordinator`/orchestrator/DeepSeek-V4.1-Flash Max.
  *
  * @param {Record<string, any>} manifest
- * @param {{ name?: string, workspaceDir?: string | null, has?: (bit: string) => boolean }} options
+ * @param {{ name?: string, workspaceDir?: string | null, has?: (bit: string) => boolean,
+ *   catalog?: { get?: (id: string) => object | undefined } | null }} options
+ * @returns {{ bits: Array<Record<string, any>>, team: Record<string, any> }}
  */
-export function teamFromPack(manifest, { name, workspaceDir = null, has } = {}) {
+export function teamFromPack(manifest, { name, workspaceDir = null, has, catalog = null } = {}) {
   const taken = new Set(['lider'])
   const presets = (manifest.agents || []).filter((agent) => agent.instructions)
   const idOf = new Map(presets.map((agent) => [agent.name, slugMember(agent.name, taken)]))
-  const members = presets.map((agent) => ({
-    id: idOf.get(agent.name),
-    character: bitForPreset(agent.name, has),
-    name: agent.name.charAt(0).toUpperCase() + agent.name.slice(1),
-    role: String(agent.description || '').slice(0, 200),
-    model: String(agent.model || '').slice(0, 60),
-    effort: String(agent.effort || '').slice(0, 20),
-    access: agent.readOnly ? 'read' : 'write',
-    instructions: String(agent.instructions || '').slice(0, 40000),
-    launches: (agent.launches || []).map((launch) => idOf.get(launch)).filter(Boolean),
-    skills: (agent.skills || []).filter((skill) => (manifest.skills || []).some((item) => item.name === skill)),
-    teamRef: null,
-    mcp: [],
-  }))
+  const catalogOf = (character) => {
+    if (character === null || character === undefined || !isPlainObject(catalog) || typeof catalog.get !== 'function') return undefined
+    const row = catalog.get(character)
+    return isPlainObject(row) ? row : undefined
+  }
+  const bits = []
+  const members = presets.map((agent) => {
+    const id = idOf.get(agent.name)
+    const character = bitForPreset(agent.name, has)
+    const row = catalogOf(character)
+    const presetEffort = typeof agent.effort === 'string' && CLI_EFFORTS.has(agent.effort) ? agent.effort : FALLBACK_WORKER_EFFORT
+    const model = row !== undefined && typeof row.model === 'string' && row.model !== '' ? row.model : FALLBACK_WORKER_MODEL
+    const effort = row !== undefined && typeof row.effort === 'string' && row.effort !== '' ? row.effort : presetEffort
+    bits.push({
+      key: id,
+      name: String(agent.name || id).slice(0, 60),
+      character,
+      instructions: String(agent.instructions || '').slice(0, 20000),
+      isOrchestrator: false,
+      model,
+      effort,
+    })
+    return {
+      id,
+      bitKey: id,
+      role: String(agent.description || '').slice(0, 200),
+      access: agent.readOnly ? 'read' : 'write',
+      launches: (agent.launches || []).map((launch) => idOf.get(launch)).filter(Boolean),
+      skills: (agent.skills || []).filter((skill) => (manifest.skills || []).some((item) => item.name === skill)),
+      teamRef: null,
+      mcp: [],
+    }
+  })
   const lead = {
     id: 'lider',
-    character: has && !has('bit-coordinator') ? null : 'bit-coordinator',
-    name: 'Orquestrador',
+    bitKey: 'lider',
     role: 'Sessão principal: conversa com o dev, decide e delega cada etapa a um membro',
-    model: '',
-    effort: '',
     access: 'read',
-    instructions: [
-      'Você é a sessão principal do harness e só orquestra: entende o pedido, escolhe o fluxo (skill) certo, delega cada etapa ao membro adequado com `team_delegate`, confere os relatórios e responde ao dev.',
-      'Leia a skill do fluxo antes do primeiro passo. Você não roda comandos nem edita arquivos.',
-    ].join('\n\n'),
     launches: members.map((member) => member.id),
     skills: [],
     teamRef: null,
     mcp: [],
   }
+  bits.unshift({
+    key: 'lider',
+    name: 'Orquestrador',
+    character: has && !has('bit-coordinator') ? null : 'bit-coordinator',
+    instructions: harnessLeadInstructions(),
+    isOrchestrator: true,
+    model: ORCHESTRATOR_MODEL,
+    effort: ORCHESTRATOR_EFFORT,
+  })
   const nodes = [
     { id: 'start', type: 'start', x: 0, y: 0, label: 'Pedido do dev', detail: '' },
     { id: 'lead', type: 'step', x: -26, y: 104, label: 'Entender e escolher o fluxo', detail: 'Ler a skill do fluxo.', memberId: 'lider' },
@@ -133,7 +195,7 @@ export function teamFromPack(manifest, { name, workspaceDir = null, has } = {}) 
   members.forEach((member, index) => {
     const column = index % 3
     const row = Math.floor(index / 3)
-    const node = { id: `m-${member.id}`, type: 'step', x: -320 + column * 288, y: 240 + row * 104, label: member.role ? member.role.slice(0, 80) : member.name, detail: '', memberId: member.id }
+    const node = { id: `m-${member.id}`, type: 'step', x: -320 + column * 288, y: 240 + row * 104, label: member.role ? member.role.slice(0, 80) : member.id, detail: '', memberId: member.id }
     nodes.push(node)
     edges.push({ id: `e-${member.id}`, from: 'lead', to: node.id, label: '', kind: 'delegate' })
   })
@@ -141,25 +203,28 @@ export function teamFromPack(manifest, { name, workspaceDir = null, has } = {}) 
   nodes.push({ id: 'end', type: 'end', x: 0, y: lastY, label: 'Relatório ao dev', detail: '' })
   edges.push({ id: 'e-end', from: 'lead', to: 'end', label: '', kind: 'flow' })
   return {
-    name: String(name || manifest.name || manifest.id).slice(0, 60),
-    description: `Time gerado do harness ${manifest.name || manifest.id}: ${members.length} presets, ${(manifest.skills || []).length} skills.`,
-    emoji: '🧭',
-    color: '#0891b2',
-    workspaceDir,
-    members: [lead, ...members],
-    flow: { nodes, edges },
-    lead: 'lider',
-    harness: manifest.id,
-    bindWorkspace: false,
-    rules: '',
-    skills: [],
-    entry: [{ id: 'request', label: 'Pedido', template: '{pedido}' }],
+    bits,
+    team: {
+      name: String(name || manifest.name || manifest.id).slice(0, 60),
+      description: `Time gerado do harness ${manifest.name || manifest.id}: ${members.length} presets, ${(manifest.skills || []).length} skills.`,
+      emoji: '🧭',
+      color: '#0891b2',
+      workspaceDir,
+      members: [lead, ...members],
+      flow: { nodes, edges },
+      lead: 'lider',
+      harness: manifest.id,
+      bindWorkspace: false,
+      rules: '',
+      skills: [],
+      entry: [{ id: 'request', label: 'Pedido', template: '{pedido}' }],
+    },
   }
 }
 
 /**
  * @param {any} ctx host context (only `ctx.connection.fetch.register` is used)
- * @param {{ teams: any, ready: Promise<void>, botsRoot: string, runtime?: any, catalog?: any, ensureDirectoryWorkspace?: (dir: string, title: string) => Promise<string | null>, log?: (m: string) => void }} deps
+ * @param {{ teams: any, bits: any, projects?: any, ready: Promise<void>, botsRoot: string, runtime?: any, catalog?: any, ensureDirectoryWorkspace?: (dir: string, title: string) => Promise<string | null>, log?: (m: string) => void }} deps
  * @returns {() => void}
  */
 export function registerHarnessRoutes(ctx, deps) {
@@ -200,10 +265,20 @@ export function registerHarnessRoutes(ctx, deps) {
       const input = await body(request)
       const manifest = await readPack(packsRoot, input.packId)
       if (!manifest) throw codedError('HARNESS_NOT_FOUND', `Harness pack "${String(input.packId)}" was not found`)
+      if (!isPlainObject(deps.bits) || typeof deps.bits.create !== 'function') {
+        throw codedError('BIT_STORE_UNAVAILABLE', 'Bit store unavailable')
+      }
+      // Optional project the new team starts in (CONTRACT §12.3); it must exist.
+      const projectId = typeof input.projectId === 'string' && input.projectId.trim() !== '' ? input.projectId.trim() : null
+      if (projectId !== null) {
+        const project = deps.projects && typeof deps.projects.get === 'function' ? deps.projects.get(projectId) : undefined
+        if (!project) throw codedError('PROJECT_NOT_FOUND', `Project "${projectId}" was not found`)
+      }
       const has = deps.catalog && typeof deps.catalog.has === 'function' ? (bit) => deps.catalog.has(bit) : undefined
       const workspaceDir = typeof input.workspaceDir === 'string' && input.workspaceDir.trim() ? input.workspaceDir.trim() : (manifest.source && manifest.source.dir) || null
-      const team = await deps.teams.create(teamFromPack(manifest, { name: input.name, workspaceDir, has }))
-      return { team }
+      const template = teamFromPack(manifest, { name: input.name, workspaceDir, has, catalog: deps.catalog })
+      const instantiated = await instantiateTeamTemplate(deps, template, { name: input.name, projectId })
+      return { team: instantiated.team, bits: instantiated.bits }
     }),
     define('/api/bots.teams.workspace', ['POST'], async (request) => {
       const input = await body(request)

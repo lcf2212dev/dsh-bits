@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Bits",
-    "description": "Crie assistentes de IA com nome, persona própria, área de trabalho e, opcionalmente, uma máquina virtual Docker."
+    "description": "Bits executam em fluxos de times: cada bit recebe uma requisição e devolve uma resposta, com modelo e esforço próprios."
   }
 }

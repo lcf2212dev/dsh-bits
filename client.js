@@ -1,11 +1,12 @@
 /**
- * Bots — browser half of the `@local/dsh-bots` bundle.
+ * Bits — browser half of the `@local/dsh-bots` bundle.
  *
- * Contributes a "Bots" entry to the sidebar's global panel list and a full page
- * in the layout's `main` keyed slot. The page lists the bots the Host exposes on
- * `/api/bots.*`, lets the user chat with one (navigating through
- * `ctx.uiWorkspace.startSession(workspaceId)`), create/edit/delete bots and
- * drive each bot's optional Docker VM (start/stop/restart/remove).
+ * Contributes a "Bits" entry to the sidebar's global panel list and a full page
+ * in the layout's `main` keyed slot. The page has three tabs: Bits (bit
+ * definitions: catalog character, context/instructions, model, effort and the
+ * orchestrator flag; workers can also be run ad-hoc with "Executar"), Times
+ * (flow teams whose members reference bits) and Projects (teams grouped by
+ * project).
  *
  * This file is a plain browser module: no JSX, no imports, no Harness package
  * requires. Only `react` comes from the shared module table. Every registration
@@ -31,17 +32,20 @@ window.__ModuleLoader__.load({
     const NS = 'bots'
     /** Id shared by the sidebar entry and the main panel it opens. */
     const PANEL_ID = 'bots'
-    /** Poll period while the panel is visible. */
-    const POLL_MS = 5000
-    /** Image the Host store falls back to. */
-    const DEFAULT_IMAGE = 'ubuntu:24.04'
-    /** Field limits mirroring the record contract (CONTRACT.md §2). */
+    /** Field limits mirroring the record contract (V5-CONTRACT.md §2). */
     const MAX_NAME = 60
     const MAX_INSTRUCTIONS = 20000
+    /** Ad-hoc request limit mirrored from the run route (§7). */
+    const MAX_REQUEST = 20000
     /** Catalog id of the brand mascot (empty state and generic bit). */
     const MASCOT_ID = 'bit-mascot'
-    /** Docker image reference validation, mirroring the Host. */
-    const IMAGE_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._/:@-]{0,199}$/
+    /** Execution defaults per bit family (V5-CONTRACT.md §1 and §2). */
+    const DEFAULT_WORKER_MODEL = 'subscription/sonnet'
+    const DEFAULT_WORKER_EFFORT = 'high'
+    const DEFAULT_ORCHESTRATOR_MODEL = 'deepseek-account/deepseek-flash'
+    const DEFAULT_ORCHESTRATOR_EFFORT = 'max'
+    /** Fallback effort list when the model reports none (V5-CONTRACT.md §1). */
+    const FALLBACK_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
     /** Hex colour palette offered by the form; the Host picks from its own fixed palette. */
     const COLOR_PALETTE = [
       '#7c3aed', '#2563eb', '#0891b2', '#059669', '#65a30d',
@@ -57,25 +61,23 @@ window.__ModuleLoader__.load({
       lang: 'pt',
       panel: 'Bits',
       title: 'Bits',
-      subtitle: 'Equipes de IA com persona própria, workspace dedicado e, opcionalmente, uma máquina virtual Docker.',
-      newBot: 'Novo bot',
-      editBot: 'Editar bot',
-      create: 'Criar bot',
-      chat: 'Conversar',
+      subtitle: 'Bits são definições de agente: contexto, modelo e esforço. Use-os em fluxos na aba Times ou execute um pedido avulso com os workers.',
+      newBot: 'Novo bit',
+      editBot: 'Editar bit',
+      create: 'Criar bit',
       edit: 'Editar',
-      delete: 'Excluir bot',
+      delete: 'Excluir bit',
       deleteTitle: 'Excluir {name}?',
-      deleteBody: 'O bot será removido da lista. O workspace e os arquivos dele são mantidos, a menos que você marque a opção abaixo.',
+      deleteBody: 'O bit será removido da lista. Os times que o referenciam ficam com o membro sem bit até você escolher outro.',
       deleteFiles: 'Também apagar os arquivos do workspace',
-      deleteConfirm: 'Excluir bot',
+      deleteConfirm: 'Excluir bit',
       cancel: 'Cancelar',
       save: 'Salvar',
       saving: 'Salvando…',
       name: 'Nome',
       namePlaceholder: 'Ex.: Pesquisador',
-      nameRequired: 'Informe um nome para o bot.',
+      nameRequired: 'Informe um nome para o bit.',
       nameTooLong: 'O nome deve ter no máximo 60 caracteres.',
-      character: 'Personagem',
       pickCharacter: 'Escolha um bit',
       pickCharacterHint: 'Cada bit já vem com uma descrição pronta para a função. Você pode mudar o nome e a descrição depois.',
       searchCharacters: 'Buscar por função, nome ou habilidade',
@@ -83,70 +85,60 @@ window.__ModuleLoader__.load({
       changeCharacter: 'Trocar bit',
       chooseCharacter: 'Escolher bit',
       noCharacter: 'Sem personagem',
-      noCharacterHint: 'Este bot foi criado antes dos bits. Escolha um personagem para ele.',
+      noCharacterHint: 'Este bit não usa um personagem do catálogo. Escolha um para herdar as instruções e o avatar.',
       catalogLoading: 'Carregando os bits…',
       catalogError: 'Não foi possível carregar os bits.',
       continueWithout: 'Continuar sem personagem',
       back: 'Voltar',
       otherGroup: 'Outros',
       instructions: 'Descrição',
-      instructionsHint: 'Descrição pré-definida do bit (persona e instruções), enviada em todas as conversas. Edite à vontade (até 20.000 caracteres).',
-      instructionsPlaceholder: 'Descreva a função, o jeito de trabalhar e os limites deste bot…',
+      instructionsHint: 'Contexto do bit (persona e instruções), enviado em todas as execuções. Edite à vontade (até 20.000 caracteres).',
+      instructionsPlaceholder: 'Descreva a função, o jeito de trabalhar e os limites deste bit…',
       restoreDefault: 'Restaurar descrição padrão',
       instructionsTooLong: 'As instruções devem ter no máximo 20.000 caracteres.',
       noInstructions: 'Sem instruções ainda.',
-      vm: 'Máquina virtual',
-      vmEnable: 'Executar comandos em uma VM Docker',
-      vmEnableHint: 'Quando ativada, os comandos de shell do bot rodam dentro de um container persistente.',
-      vmImage: 'Imagem Docker',
-      vmImageLocal: 'Imagens locais',
-      vmImageFree: 'Referência da imagem',
-      vmImagePlaceholder: 'ubuntu:24.04',
-      vmImageHint: 'Escolha uma imagem local ou digite qualquer referência (ex.: ubuntu:24.04). A imagem precisa existir no Docker local.',
-      imagesLoading: 'Carregando imagens…',
-      imagesEmpty: 'Nenhuma imagem local encontrada.',
-      imagesError: 'Não foi possível listar as imagens do Docker.',
-      imageInvalid: 'Referência de imagem inválida.',
-      vmRunning: 'Rodando',
-      vmStopped: 'Desligada',
-      vmCreated: 'Criada',
-      vmPaused: 'Pausada',
-      vmMissing: 'VM não iniciada',
-      vmNoVm: 'Sem VM',
-      vmError: 'Falha na VM',
-      vmImageMissing: 'Imagem ausente',
-      vmImageMissingHint: 'A imagem {image} não existe localmente. Baixe-a com: docker pull {image}',
-      vmStart: 'Iniciar VM',
-      vmStop: 'Parar VM',
-      vmRestart: 'Reiniciar VM',
-      vmRemove: 'Remover VM',
-      vmActions: 'Ações da VM',
-      vmRemoveTitle: 'Remover a VM de {name}?',
-      vmRemoveBody: 'O container será removido. Os arquivos do workspace e o cadastro do bot serão mantidos.',
-      vmStarted: 'VM iniciada.',
-      vmStoppedMsg: 'VM parada.',
-      vmRestarted: 'VM reiniciada.',
-      vmRemoved: 'VM removida.',
-      notifyTest: 'Testar notificação no computador',
-      notifyTestBody: 'Notificações funcionando: vou te avisar por aqui quando você pedir um lembrete.',
-      notifyTestSent: 'Notificação enviada. Ela deve aparecer no canto da sua tela.',
-      notifyTestFailed: 'Não foi possível mostrar a notificação',
-      dockerReady: 'Docker pronto',
-      dockerUnavailable: 'Docker indisponível',
-      dockerUnknown: 'Docker desconhecido',
-      workspace: 'Workspace',
-      workspaceUnavailable: 'Workspace ainda indisponível.',
-      chatUnavailable: 'O workspace deste bot ainda não está disponível. Atualize a lista e tente novamente.',
-      loading: 'Carregando bots…',
-      empty: 'Nenhum bot ainda',
-      emptyHint: 'Escolha um bit (Scout, Builder, Product Owner, …) para criar um colega de IA com função, workspace e, se quiser, uma VM próprios.',
-      error: 'Não foi possível carregar os bots.',
+      orchestrator: 'Orquestrador',
+      worker: 'Worker',
+      isOrchestrator: 'Orquestrador',
+      isOrchestratorHint: 'Orquestradores coordenam fluxos: rodam como agentes DSH e são os únicos que podem liderar um time. Workers recebem um pedido e devolvem uma resposta única.',
+      model: 'Modelo',
+      modelHint: 'Modelo usado nas execuções. Orquestradores usam rotas de chat do DSH; workers podem usar a assinatura do Claude Code (claude_delegate) ou uma rota DSH.',
+      effort: 'Esforço',
+      effortHint: 'Esforço de raciocínio aplicado ao modelo (varia por modelo).',
+      modelGroupSubscription: 'Assinatura (Claude Code)',
+      modelGroupRoutes: 'Rotas do DSH',
+      modelsLoading: 'Carregando modelos…',
+      modelsError: 'Não foi possível carregar os modelos.',
+      modelMissing: 'O modelo “{id}” não está disponível neste perfil.',
+      modelRequired: 'Escolha um modelo.',
+      modelOrchestratorRequired: 'Orquestradores precisam de uma rota de chat do DSH.',
+      noModels: 'O host não oferece modelos agora.',
+      execute: 'Executar',
+      executeTitle: 'Executar {name}',
+      executeHint: 'Um pedido avulso: o bit recebe o texto e devolve uma resposta única.',
+      runRequest: 'Pedido',
+      runRequestPlaceholder: 'Descreva o pedido com o contexto necessário…',
+      runReadOnly: 'Somente leitura',
+      runReadOnlyHint: 'Sem permissão de escrita no workspace do bit: o worker apenas lê e responde.',
+      runSubmit: 'Executar',
+      runRunning: 'Executando…',
+      runResponse: 'Resposta',
+      runResponseEmpty: 'A resposta aparece aqui.',
+      runClose: 'Fechar',
+      runsInFlows: 'Executa em fluxos (aba Times).',
+      leadInTeams: 'Líder em: {names}',
+      leadInTeamsNone: 'Ainda não lidera nenhum time.',
+      openTeamsTab: 'Abrir Times',
+      loading: 'Carregando bits…',
+      empty: 'Nenhum bit ainda',
+      emptyHint: 'Crie um bit (Scout, Builder, Product Owner, …) para usá-lo em um fluxo ou executar um pedido avulso.',
+      error: 'Não foi possível carregar os bits.',
       retry: 'Tentar novamente',
       confirm: 'Confirmar',
-      deleted: 'Bot excluído.',
-      deletedWorkspace: 'Bot excluído e workspace apagado.',
+      deleted: 'Bit excluído.',
+      deletedWorkspace: 'Bit excluído e workspace apagado.',
       saved: 'Alterações salvas.',
-      created: 'Bot criado.',
+      created: 'Bit criado.',
       failed: 'Falhou',
       refresh: 'Atualizar',
       refreshing: 'Atualizando…',
@@ -159,25 +151,23 @@ window.__ModuleLoader__.load({
       lang: 'en',
       panel: 'Bits',
       title: 'Bits',
-      subtitle: 'AI teammates with their own persona, workspace and, optionally, a Docker virtual machine.',
-      newBot: 'New bot',
-      editBot: 'Edit bot',
-      create: 'Create bot',
-      chat: 'Chat',
+      subtitle: 'Bits are agent definitions: context, model and effort. Use them in flows on the Teams tab or run an ad-hoc request with workers.',
+      newBot: 'New bit',
+      editBot: 'Edit bit',
+      create: 'Create bit',
       edit: 'Edit',
-      delete: 'Delete bot',
+      delete: 'Delete bit',
       deleteTitle: 'Delete {name}?',
-      deleteBody: 'The bot will be removed from the list. Its workspace and files are kept unless you check the option below.',
+      deleteBody: 'The bit will be removed from the list. Teams referencing it keep the member without a bit until you pick another.',
       deleteFiles: 'Also delete the workspace files',
-      deleteConfirm: 'Delete bot',
+      deleteConfirm: 'Delete bit',
       cancel: 'Cancel',
       save: 'Save',
       saving: 'Saving…',
       name: 'Name',
       namePlaceholder: 'E.g. Researcher',
-      nameRequired: 'Enter a name for the bot.',
+      nameRequired: 'Enter a name for the bit.',
       nameTooLong: 'The name must be at most 60 characters.',
-      character: 'Character',
       pickCharacter: 'Pick a bit',
       pickCharacterHint: 'Each bit comes with a ready-made description for its role. You can change the name and the description afterwards.',
       searchCharacters: 'Search by role, name or skill',
@@ -185,70 +175,60 @@ window.__ModuleLoader__.load({
       changeCharacter: 'Change bit',
       chooseCharacter: 'Choose a bit',
       noCharacter: 'No character',
-      noCharacterHint: 'This bot was created before bits existed. Pick a character for it.',
+      noCharacterHint: 'This bit does not use a catalog character. Pick one to inherit its instructions and avatar.',
       catalogLoading: 'Loading bits…',
       catalogError: 'Could not load the bits.',
       continueWithout: 'Continue without a character',
       back: 'Back',
       otherGroup: 'Other',
       instructions: 'Description',
-      instructionsHint: 'The bit predefined description (persona and instructions), sent in every conversation. Edit freely (up to 20,000 characters).',
-      instructionsPlaceholder: 'Describe the role, the way of working and the limits of this bot…',
+      instructionsHint: 'The bit context (persona and instructions), sent in every run. Edit freely (up to 20,000 characters).',
+      instructionsPlaceholder: 'Describe the role, the way of working and the limits of this bit…',
       restoreDefault: 'Restore default description',
       instructionsTooLong: 'Instructions must be at most 20,000 characters.',
       noInstructions: 'No instructions yet.',
-      vm: 'Virtual machine',
-      vmEnable: 'Run commands in a Docker VM',
-      vmEnableHint: 'When enabled, the bot shell commands run inside a persistent container.',
-      vmImage: 'Docker image',
-      vmImageLocal: 'Local images',
-      vmImageFree: 'Image reference',
-      vmImagePlaceholder: 'ubuntu:24.04',
-      vmImageHint: 'Pick a local image or type any reference (e.g. ubuntu:24.04). The image must exist in the local Docker.',
-      imagesLoading: 'Loading images…',
-      imagesEmpty: 'No local images found.',
-      imagesError: 'Could not list Docker images.',
-      imageInvalid: 'Invalid image reference.',
-      vmRunning: 'Running',
-      vmStopped: 'Stopped',
-      vmCreated: 'Created',
-      vmPaused: 'Paused',
-      vmMissing: 'VM not started',
-      vmNoVm: 'No VM',
-      vmError: 'VM failure',
-      vmImageMissing: 'Image missing',
-      vmImageMissingHint: 'Image {image} is not available locally. Download it with: docker pull {image}',
-      vmStart: 'Start VM',
-      vmStop: 'Stop VM',
-      vmRestart: 'Restart VM',
-      vmRemove: 'Remove VM',
-      vmActions: 'VM actions',
-      vmRemoveTitle: 'Remove the VM of {name}?',
-      vmRemoveBody: 'The container will be removed. The workspace files and the bot record are kept.',
-      vmStarted: 'VM started.',
-      vmStoppedMsg: 'VM stopped.',
-      vmRestarted: 'VM restarted.',
-      vmRemoved: 'VM removed.',
-      notifyTest: 'Send a test desktop notification',
-      notifyTestBody: 'Notifications work: I will alert you here when you ask for a reminder.',
-      notifyTestSent: 'Notification sent. It should appear on your screen.',
-      notifyTestFailed: 'Could not show the notification',
-      dockerReady: 'Docker ready',
-      dockerUnavailable: 'Docker unavailable',
-      dockerUnknown: 'Docker unknown',
-      workspace: 'Workspace',
-      workspaceUnavailable: 'Workspace not ready yet.',
-      chatUnavailable: 'This bot workspace is not available yet. Refresh the list and try again.',
-      loading: 'Loading bots…',
-      empty: 'No bots yet',
-      emptyHint: 'Pick a bit (Scout, Builder, Product Owner, …) to create an AI teammate with its own role, workspace and, if you want, a VM.',
-      error: 'Could not load the bots.',
+      orchestrator: 'Orchestrator',
+      worker: 'Worker',
+      isOrchestrator: 'Orchestrator',
+      isOrchestratorHint: 'Orchestrators coordinate flows: they run as DSH agents and are the only bits allowed to lead a team. Workers receive one request and return a single response.',
+      model: 'Model',
+      modelHint: 'Model used by the runs. Orchestrators use DSH chat routes; workers may use the Claude Code subscription (claude_delegate) or a DSH route.',
+      effort: 'Effort',
+      effortHint: 'Reasoning effort applied to the model (varies per model).',
+      modelGroupSubscription: 'Subscription (Claude Code)',
+      modelGroupRoutes: 'DSH routes',
+      modelsLoading: 'Loading models…',
+      modelsError: 'Could not load the models.',
+      modelMissing: 'Model “{id}” is not available in this profile.',
+      modelRequired: 'Pick a model.',
+      modelOrchestratorRequired: 'Orchestrators need a DSH chat route.',
+      noModels: 'The host offers no models right now.',
+      execute: 'Run',
+      executeTitle: 'Run {name}',
+      executeHint: 'An ad-hoc request: the bit receives the text and returns a single response.',
+      runRequest: 'Request',
+      runRequestPlaceholder: 'Describe the request with the needed context…',
+      runReadOnly: 'Read only',
+      runReadOnlyHint: 'No write access to the bit workspace: the worker only reads and answers.',
+      runSubmit: 'Run',
+      runRunning: 'Running…',
+      runResponse: 'Response',
+      runResponseEmpty: 'The response shows up here.',
+      runClose: 'Close',
+      runsInFlows: 'Executes in flows (Teams tab).',
+      leadInTeams: 'Lead of: {names}',
+      leadInTeamsNone: 'Not leading any team yet.',
+      openTeamsTab: 'Open Teams',
+      loading: 'Loading bits…',
+      empty: 'No bits yet',
+      emptyHint: 'Create a bit (Scout, Builder, Product Owner, …) to use it in a flow or run an ad-hoc request.',
+      error: 'Could not load the bits.',
       retry: 'Retry',
       confirm: 'Confirm',
-      deleted: 'Bot deleted.',
-      deletedWorkspace: 'Bot deleted and workspace removed.',
+      deleted: 'Bit deleted.',
+      deletedWorkspace: 'Bit deleted and workspace removed.',
       saved: 'Changes saved.',
-      created: 'Bot created.',
+      created: 'Bit created.',
       failed: 'Failed',
       refresh: 'Refresh',
       refreshing: 'Refreshing…',
@@ -292,10 +272,6 @@ window.__ModuleLoader__.load({
 .dsh-bots-icon-button:disabled { cursor: not-allowed; opacity: .45; }
 .dsh-bots-icon-button:focus-visible { outline: none; box-shadow: var(--dsh-bots-ring); }
 .dsh-bots-icon-button-sm { width: 28px; height: 28px; border-radius: var(--dsh-bots-radius-sm); }
-.dsh-bots-pill { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; height: 28px; padding: 0 10px; border: 1px solid var(--dsh-bots-border-2); border-radius: 999px; background: var(--dsh-bots-bg-1); color: var(--dsh-bots-text-2); font-size: 12px; line-height: 18px; white-space: nowrap; }
-.dsh-bots-pill-ok { color: var(--dsh-bots-ok); }
-.dsh-bots-pill-bad { color: var(--dsh-bots-bad); }
-.dsh-bots-pill-detail { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
 .dsh-bots-dot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: currentColor; }
 .dsh-bots-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 12px; margin: 0; padding: 0; list-style: none; min-width: 0; }
 .dsh-bots-card { box-sizing: border-box; display: flex; flex-direction: column; gap: 12px; min-width: 0; height: 100%; padding: 14px; border: 1px solid var(--dsh-bots-border-2); border-radius: var(--dsh-bots-radius); background: var(--dsh-bots-bg-1); }
@@ -318,7 +294,6 @@ window.__ModuleLoader__.load({
 .dsh-bots-warn { margin: 0; overflow-wrap: anywhere; color: var(--dsh-bots-warn); font-size: 12px; line-height: 18px; }
 .dsh-bots-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: auto; padding-top: 10px; border-top: 1px solid var(--dsh-bots-border-1); }
 .dsh-bots-actions-grow { flex: 1; }
-.dsh-bots-vm-actions { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
 .dsh-bots-skeleton { display: flex; flex-direction: column; gap: 12px; padding: 14px; border: 1px solid var(--dsh-bots-border-2); border-radius: var(--dsh-bots-radius); background: var(--dsh-bots-bg-1); }
 .dsh-bots-skeleton-head { display: flex; gap: 12px; align-items: center; }
 .dsh-bots-skeleton-avatar { width: 44px; height: 44px; border-radius: var(--dsh-bots-radius-md); }
@@ -366,7 +341,11 @@ window.__ModuleLoader__.load({
 .dsh-bots-swatch:hover:not(:disabled) { opacity: .85; }
 .dsh-bots-swatch[aria-pressed="true"] { outline: 2px solid var(--dsh-bots-text); outline-offset: 2px; }
 .dsh-bots-swatch:focus-visible { outline: 2px solid var(--dsh-bots-accent); outline-offset: 2px; }
-.dsh-bots-vm-box { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid var(--dsh-bots-border-2); border-radius: var(--dsh-bots-radius-md); background: var(--dsh-bots-bg-1); }
+.dsh-bots-box { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid var(--dsh-bots-border-2); border-radius: var(--dsh-bots-radius-md); background: var(--dsh-bots-bg-1); }
+.dsh-bit-flow-note { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border: 1px dashed var(--dsh-bots-border-3); border-radius: var(--dsh-bots-radius-md); background: var(--dsh-bots-bg-1); }
+.dsh-bit-run-meta { font-family: var(--dsh-bots-mono); }
+.dsh-bit-picker { display: flex; flex-direction: column; gap: 8px; max-height: 420px; overflow-y: auto; padding: 2px; }
+.dsh-bit-picker-group { display: flex; flex-direction: column; gap: 4px; }
 .dsh-bots-switch { display: inline-flex; align-items: center; gap: 8px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; font-size: 13px; line-height: 20px; text-align: left; cursor: pointer; }
 .dsh-bots-switch:disabled { cursor: not-allowed; opacity: .5; }
 .dsh-bots-switch:focus-visible { outline: none; }
@@ -449,9 +428,6 @@ window.__ModuleLoader__.load({
       'M13.5 2.5V5h-2.6',
     ])
     const PlusIcon = pathsIcon(['M8 3v10', 'M3 8h10'])
-    const ChatIcon = pathsIcon([
-      'M2.5 4.5A1.5 1.5 0 0 1 4 3h8a1.5 1.5 0 0 1 1.5 1.5v6A1.5 1.5 0 0 1 12 12H7l-3 2.6V12H4a1.5 1.5 0 0 1-1.5-1.5z',
-    ])
     const EditIcon = pathsIcon([
       'M11.4 2.6l2 2L5.6 12.4l-3 .9.9-3z',
       'M10.2 3.8l2 2',
@@ -464,22 +440,6 @@ window.__ModuleLoader__.load({
       'M9.2 7v3.4',
     ])
     const PlayIcon = pathsIcon(['M5.5 3.4l7 4.6-7 4.6z'])
-    const BellIcon = pathsIcon([
-      'M4 11.5V7.2a4 4 0 0 1 8 0v4.3l1 1H3z',
-      'M6.6 13.6a1.5 1.5 0 0 0 2.8 0',
-    ])
-    const StopIcon = h('rect', { x: 4.5, y: 4.5, width: 7, height: 7, rx: 1 })
-    const StopIconComponent = (function () {
-      return function Icon(props) {
-        const size = props && typeof props.size === 'number' ? props.size : 16
-        return h('svg', {
-          width: size, height: size, viewBox: '0 0 16 16', fill: 'none',
-          stroke: 'currentColor', strokeWidth: 1.5, 'aria-hidden': 'true',
-          focusable: 'false', style: { display: 'block', flex: 'none' },
-        }, StopIcon)
-      }
-    })()
-    const RestartIcon = RefreshIcon
     const CloseIcon = pathsIcon(['M4 4l8 8', 'M12 4l-8 8'])
     const CheckIcon = pathsIcon(['M3 8.5l3 3 7-7'])
     const WarningIcon = pathsIcon([
@@ -646,27 +606,11 @@ window.__ModuleLoader__.load({
       return payload
     }
 
-    /** Defensive VM status projection: a host bug must never blank the page. */
-    function normalizeVmStatus(raw) {
-      const source = isObject(raw) ? raw : {}
-      return {
-        state: asString(source.state) || 'missing',
-        running: source.running === true,
-        image: asString(source.image),
-        containerName: asString(source.containerName),
-        detail: asString(source.detail),
-        error: asString(source.error),
-        startedAt: asString(source.startedAt),
-        exitCode: typeof source.exitCode === 'number' ? source.exitCode : null,
-      }
-    }
-
-    /** Defensive BotView projection (CONTRACT.md §2). */
-    function normalizeBot(raw) {
+    /** Defensive bit projection (V5-CONTRACT.md §2). */
+    function normalizeBit(raw) {
       if (!isObject(raw)) return null
       const id = asString(raw.id)
       if (!id) return null
-      const vm = isObject(raw.vm) ? raw.vm : {}
       return {
         id: id,
         name: asString(raw.name) || id,
@@ -674,59 +618,74 @@ window.__ModuleLoader__.load({
         emoji: asString(raw.emoji) || '🤖',
         color: /^#[0-9a-fA-F]{6}$/.test(asString(raw.color)) ? asString(raw.color) : COLOR_PALETTE[0],
         instructions: asString(raw.instructions),
+        isOrchestrator: raw.isOrchestrator === true,
+        model: asString(raw.model),
+        effort: asString(raw.effort),
         workspaceDir: asString(raw.workspaceDir),
-        workspaceId: asString(raw.workspaceId) || null,
-        workspaceError: asString(raw.workspaceError) || null,
-        vm: { enabled: vm.enabled === true, image: asString(vm.image) },
-        vmStatus: normalizeVmStatus(raw.vmStatus),
         createdAt: asString(raw.createdAt),
         updatedAt: asString(raw.updatedAt),
       }
     }
 
-    /** Defensive Docker availability projection. */
-    function normalizeDocker(raw) {
-      if (!isObject(raw)) return { available: false, version: null, error: null }
+    /** Normalize `/api/bots.list` (accepts the `bots` alias of older hosts). */
+    function normalizeBitsPayload(payload) {
+      const source = Array.isArray(payload.bits) ? payload.bits : (Array.isArray(payload.bots) ? payload.bots : [])
+      const bits = []
+      const byId = {}
+      source.forEach(function (raw) {
+        const bit = normalizeBit(raw)
+        if (bit && !byId[bit.id]) {
+          byId[bit.id] = bit
+          bits.push(bit)
+        }
+      })
+      return { bits: bits, byId: byId }
+    }
+
+    /** Defensive model option projection (V5-CONTRACT.md §1). */
+    function normalizeModelOption(raw) {
+      if (!isObject(raw)) return null
+      const id = asString(raw.id)
+      if (!id) return null
+      const backend = asString(raw.backend) === 'dsh'
+        ? 'dsh'
+        : (asString(raw.backend) === 'claude-code' ? 'claude-code' : '')
+      if (!backend) return null
       return {
-        available: raw.available === true,
-        version: asString(raw.version) || null,
-        error: asString(raw.error) || null,
+        id: id,
+        label: asString(raw.label) || id,
+        group: asString(raw.group) || (backend === 'dsh' ? 'routes' : 'subscription'),
+        backend: backend,
+        provider: asString(raw.provider),
+        model: asString(raw.model),
+        alias: asString(raw.alias),
+        efforts: stringList(raw.efforts).slice(0, 12),
+        tools: raw.tools === true,
+        // Orchestrators must run as DSH agents: only routes qualify by default.
+        supportsOrchestrator: raw.supportsOrchestrator === undefined
+          ? backend === 'dsh'
+          : raw.supportsOrchestrator === true,
       }
     }
 
-    /** Normalize `/api/bots.list`. */
-    function normalizeListPayload(payload) {
-      const bots = []
-      if (Array.isArray(payload.bots)) {
-        payload.bots.forEach(function (raw) {
-          const bot = normalizeBot(raw)
-          if (bot) bots.push(bot)
-        })
-      }
-      return {
-        bots: bots,
-        docker: normalizeDocker(payload.docker),
-        defaultImage: asString(payload.defaultImage) || DEFAULT_IMAGE,
-      }
+    /** Empty model-catalog state used before `/api/bots.models` answers. */
+    function emptyModels(phase) {
+      return { phase: phase, list: [], byId: {}, error: null }
     }
 
-    /** Normalize `/api/bots.images`; tolerates `{ name, tag }` entries. */
-    function normalizeImagesPayload(payload) {
-      const images = []
-      if (Array.isArray(payload.images)) {
-        payload.images.forEach(function (raw) {
-          if (!isObject(raw)) return
-          const reference = asString(raw.reference) || (asString(raw.name)
-            ? asString(raw.name) + (asString(raw.tag) ? ':' + asString(raw.tag) : '')
-            : '')
-          if (!reference) return
-          images.push({ reference: reference })
-        })
-      }
-      return {
-        images: images,
-        defaultImage: asString(payload.defaultImage) || DEFAULT_IMAGE,
-      }
+    /** Normalize `/api/bots.models`; malformed rows are dropped. */
+    function normalizeModelsPayload(payload) {
+      const list = []
+      const byId = {}
+      const source = isObject(payload) && Array.isArray(payload.models) ? payload.models : []
+      source.forEach(function (raw) {
+        const option = normalizeModelOption(raw)
+        if (option && !byId[option.id]) {
+          byId[option.id] = option
+          list.push(option)
+        }
+      })
+      return { list: list, byId: byId, error: isObject(payload) ? (asString(payload.error) || null) : null }
     }
 
     /** Empty catalog state used before `/api/bots.catalog` answers. */
@@ -770,6 +729,9 @@ window.__ModuleLoader__.load({
             color: /^#[0-9a-fA-F]{6}$/.test(asString(raw.color)) ? asString(raw.color) : COLOR_PALETTE[0],
             summary: { pt: asString(summary.pt), en: asString(summary.en) },
             instructions: asString(raw.instructions),
+            isOrchestrator: raw.isOrchestrator === true,
+            model: asString(raw.model) || DEFAULT_WORKER_MODEL,
+            effort: asString(raw.effort) || DEFAULT_WORKER_EFFORT,
             avatar: asString(raw.avatar) || '/api/bots.avatar?id=' + encodeURIComponent(id),
           }
           byId[id] = bit
@@ -779,28 +741,28 @@ window.__ModuleLoader__.load({
       return { groups: groups, bits: bits, byId: byId, error: asString(payload.error) || null }
     }
 
-    /** Normalize `/api/bots.vm` (and create/update payloads). */
-    function normalizeBotPayload(payload) {
-      const bot = normalizeBot(payload.bot)
-      if (!bot) throw apiError('BAD_RESPONSE', 'The server response is missing the bot record')
-      return bot
+    /** Normalize a create/update response (`bit`, with the `bot` alias). */
+    function normalizeBitPayload(payload) {
+      const bit = normalizeBit(payload.bit) || normalizeBit(payload.bot)
+      if (!bit) throw apiError('BAD_RESPONSE', 'The server response is missing the bit record')
+      return bit
     }
 
     const api = {
       async list() {
-        return normalizeListPayload(await fetchJson('/api/bots.list'))
-      },
-      async images() {
-        return normalizeImagesPayload(await fetchJson('/api/bots.images'))
+        return normalizeBitsPayload(await fetchJson('/api/bots.list'))
       },
       async catalog() {
         return normalizeCatalogPayload(await fetchJson('/api/bots.catalog'))
       },
+      async models() {
+        return normalizeModelsPayload(await fetchJson('/api/bots.models'))
+      },
       async create(fields) {
-        return normalizeBotPayload(await fetchJson('/api/bots.create', fields))
+        return normalizeBitPayload(await fetchJson('/api/bots.create', fields))
       },
       async update(id, patch) {
-        return normalizeBotPayload(await fetchJson('/api/bots.update', { id: id, patch: patch }))
+        return normalizeBitPayload(await fetchJson('/api/bots.update', { id: id, patch: patch }))
       },
       async remove(id, deleteWorkspace) {
         const payload = await fetchJson('/api/bots.delete', {
@@ -812,12 +774,93 @@ window.__ModuleLoader__.load({
           workspaceDir: asString(payload.workspaceDir),
         }
       },
-      async vm(id, action) {
-        return normalizeBotPayload(await fetchJson('/api/bots.vm', { id: id, action: action }))
+      /** Ad-hoc worker invocation: request → response (V5-CONTRACT.md §6.1/§7). */
+      async run(id, request, readOnly) {
+        const payload = await fetchJson('/api/bots.run', {
+          id: id,
+          request: request,
+          readOnly: readOnly === true,
+        })
+        return {
+          response: asString(payload.response),
+          meta: isObject(payload.meta) ? payload.meta : {},
+        }
       },
-      async notifyTest(id, message) {
-        await fetchJson('/api/bots.notify-test', { id: id, message: message })
-      },
+    }
+
+    /* --------------------- model catalog helpers ------------------- */
+
+    /** Model ids a bit family may pick: orchestrators only DSH routes. */
+    function modelOptionsFor(models, isOrchestrator) {
+      const list = models && Array.isArray(models.list) ? models.list : []
+      return list.filter(function (option) {
+        return isOrchestrator === true ? option.backend === 'dsh' : true
+      })
+    }
+
+    /** Display label of a model id (falls back to the raw id). */
+    function modelLabelOf(models, id) {
+      if (!id) return ''
+      const option = models && models.byId ? models.byId[id] : null
+      return option ? option.label : id
+    }
+
+    /** Efforts a model offers (fallback list when it reports none). */
+    function effortsForModel(models, modelId) {
+      const option = modelId && models && models.byId ? models.byId[modelId] : null
+      if (option && option.efforts.length > 0) return option.efforts
+      return FALLBACK_EFFORTS
+    }
+
+    /** Default model id for a bit family. */
+    function defaultModelFor(isOrchestrator) {
+      return isOrchestrator === true ? DEFAULT_ORCHESTRATOR_MODEL : DEFAULT_WORKER_MODEL
+    }
+
+    /** Default effort for a bit family. */
+    function defaultEffortFor(isOrchestrator) {
+      return isOrchestrator === true ? DEFAULT_ORCHESTRATOR_EFFORT : DEFAULT_WORKER_EFFORT
+    }
+
+    /**
+     * Snap a model id to a model usable by the bit family. The current value is
+     * kept while it is offered (or the catalog is unknown, or it is a route the
+     * profile no longer lists); an orchestrator holding a subscription model is
+     * the only store-invalid combination and snaps to the family default.
+     */
+    function snapModel(models, isOrchestrator, current) {
+      const options = modelOptionsFor(models, isOrchestrator)
+      const ready = !!models && models.phase === 'ready'
+      const wanted = asString(current)
+      if (wanted) {
+        if (!ready) return wanted
+        if (options.some(function (option) { return option.id === wanted })) return wanted
+        // An unknown id is kept: the provider may be offline but the route is
+        // still the stored value the server validates. Subscription->orchestrator
+        // is the one invalid combination (V5-CONTRACT.md §1/§2).
+        if (isOrchestrator !== true || wanted.indexOf('subscription/') !== 0) return wanted
+      }
+      const preferred = defaultModelFor(isOrchestrator)
+      if (options.some(function (option) { return option.id === preferred })) return preferred
+      if (options.length > 0) return options[0].id
+      return preferred
+    }
+
+    /** Snap an effort id to the efforts the chosen model offers. */
+    function snapEffort(models, isOrchestrator, modelId, current) {
+      const efforts = effortsForModel(models, modelId)
+      const wanted = asString(current)
+      if (wanted && efforts.indexOf(wanted) >= 0) return wanted
+      const preferred = defaultEffortFor(isOrchestrator)
+      if (efforts.indexOf(preferred) >= 0) return preferred
+      return efforts[0] || ''
+    }
+
+    /** `<model label> · <effort>` shown on bit cards and read-only member rows. */
+    function bitRouteText(bit, models) {
+      if (!bit) return ''
+      const model = bit.model ? modelLabelOf(models, bit.model) : ''
+      return [model, bit.effort].filter(Boolean).join(' · ')
     }
 
     /* ------------------------------------------------------------------ */
@@ -825,17 +868,17 @@ window.__ModuleLoader__.load({
     /* ------------------------------------------------------------------ */
 
     /** Default form values for create/edit. */
-    function initialFormValues(bot, defaultImage) {
-      const fallbackImage = asString(defaultImage) || DEFAULT_IMAGE
-      if (bot) {
+    function initialFormValues(bit) {
+      if (bit) {
         return {
-          name: bot.name,
-          character: bot.character,
-          emoji: bot.emoji,
-          color: bot.color,
-          instructions: bot.instructions,
-          vmEnabled: bot.vm.enabled === true,
-          vmImage: bot.vm.image || fallbackImage,
+          name: bit.name,
+          character: bit.character,
+          emoji: bit.emoji,
+          color: bit.color,
+          instructions: bit.instructions,
+          isOrchestrator: bit.isOrchestrator === true,
+          model: bit.model || defaultModelFor(bit.isOrchestrator === true),
+          effort: bit.effort || defaultEffortFor(bit.isOrchestrator === true),
         }
       }
       return {
@@ -844,21 +887,30 @@ window.__ModuleLoader__.load({
         emoji: '🤖',
         color: COLOR_PALETTE[0],
         instructions: '',
-        vmEnabled: false,
-        vmImage: fallbackImage,
+        isOrchestrator: false,
+        model: DEFAULT_WORKER_MODEL,
+        effort: DEFAULT_WORKER_EFFORT,
       }
     }
 
-    /** Client-side validation mirroring the record rules; returns `{ field: messageKey }`. */
-    function validateForm(values, t) {
+    /** Client-side validation mirroring the record rules; returns `{ field: message }`. */
+    function validateForm(values, t, models) {
       const errors = {}
       const name = asString(values.name).trim()
       if (!name) errors.name = t('nameRequired')
       else if (name.length > MAX_NAME) errors.name = t('nameTooLong')
       if (asString(values.instructions).length > MAX_INSTRUCTIONS) errors.instructions = t('instructionsTooLong')
-      if (values.vmEnabled === true) {
-        const image = asString(values.vmImage).trim()
-        if (!IMAGE_PATTERN.test(image)) errors.vmImage = t('imageInvalid')
+      const orchestrator = values.isOrchestrator === true
+      const modelId = asString(values.model).trim()
+      if (!modelId) {
+        errors.model = orchestrator ? t('modelOrchestratorRequired') : t('modelRequired')
+      } else if (orchestrator) {
+        // The store rejects an orchestrator with a subscription model; routes are
+        // `<provider>/<modelId>` (V5-CONTRACT.md §1/§2).
+        const option = models && models.byId ? models.byId[modelId] : null
+        if (modelId.indexOf('subscription/') === 0 || (option && option.backend !== 'dsh')) {
+          errors.model = t('modelOrchestratorRequired')
+        }
       }
       return errors
     }
@@ -869,8 +921,8 @@ window.__ModuleLoader__.load({
 
     /**
      * Payload shared by create and update for the editable fields. A chosen
-     * bit supplies the emoji (used in the persona prompt and notifications)
-     * and the accent colour; a legacy bot keeps its own.
+     * catalog bit supplies the emoji and the accent colour; a bit without a
+     * character keeps its own.
      */
     function formPayload(values, bit) {
       const payload = {
@@ -879,13 +931,9 @@ window.__ModuleLoader__.load({
         emoji: bit ? bit.emoji : (asString(values.emoji).trim() || '🤖'),
         color: bit ? bit.color : asString(values.color),
         instructions: asString(values.instructions),
-        vm: {
-          enabled: values.vmEnabled === true,
-          // The Host validates vm.image on every write; fall back when it is empty/invalid.
-          image: IMAGE_PATTERN.test(asString(values.vmImage).trim())
-            ? asString(values.vmImage).trim()
-            : DEFAULT_IMAGE,
-        },
+        isOrchestrator: values.isOrchestrator === true,
+        model: asString(values.model).trim(),
+        effort: asString(values.effort).trim(),
       }
       if (bit) payload.character = bit.id
       return payload
@@ -967,7 +1015,7 @@ window.__ModuleLoader__.load({
       )
     }
 
-    /** VM state / Docker pill. */
+    /** Small labelled badge with a status dot. */
     function Badge(props) {
       const tone = props.tone ? ' dsh-bots-badge-' + props.tone : ''
       return h('span', { className: 'dsh-bots-badge' + tone, title: props.title || undefined },
@@ -1098,220 +1146,194 @@ window.__ModuleLoader__.load({
       )
     }
 
-    /** Docker availability pill for the page header. */
-    function DockerPill(props) {
+    /* ------------------------------------------------------------------ */
+    /* Bit card                                                           */
+    /* ------------------------------------------------------------------ */
+
+    /** Card of one bit definition: avatar, family badge, model route and actions. */
+    function BitCard(props) {
       const t = props.t
-      const docker = isObject(props.docker) ? props.docker : null
-      if (!docker) {
-        return h('span', { className: 'dsh-bots-pill', role: 'status' },
-          h('span', { className: 'dsh-bots-dot', 'aria-hidden': 'true' }),
-          t('dockerUnknown'))
+      const bit = props.bit
+      const models = props.models || emptyModels('idle')
+      const busy = props.busy === bit.id
+      const catalog = props.catalog
+      const catalogBit = bit.character && catalog && catalog.byId[bit.character] ? catalog.byId[bit.character] : null
+      const avatarBit = catalogBit || {
+        id: bit.id, name: bit.name, color: bit.color, emoji: bit.emoji, avatar: '',
+        summary: { pt: '', en: '' }, group: null,
       }
-      const available = docker.available === true
-      const version = asString(docker.version)
-      const error = asString(docker.error)
-      const label = available ? (version ? 'Docker ' + version : t('dockerReady')) : t('dockerUnavailable')
-      return h('span', {
-        className: 'dsh-bots-pill' + (available ? ' dsh-bots-pill-ok' : ' dsh-bots-pill-bad'),
-        role: 'status',
-        title: available ? t('dockerReady') + (version ? ' (' + version + ')' : '') : t('dockerUnavailable') + (error ? ': ' + error : ''),
-      },
-        h('span', { className: 'dsh-bots-dot', 'aria-hidden': 'true' }),
-        h('span', { className: 'dsh-bots-pill-detail' }, label)
-      )
-    }
-
-    /* ------------------------------------------------------------------ */
-    /* VM presentation                                                    */
-    /* ------------------------------------------------------------------ */
-
-    /** Whether the VM has a container Docker can start/stop/remove. */
-    function hasVmContainer(state) {
-      return ['running', 'created', 'exited', 'stopped', 'paused'].indexOf(state) >= 0
-    }
-
-    /** Canonical Docker reference: implicit `:latest`, no default registry prefix. */
-    function canonicalImage(reference) {
-      let value = asString(reference).trim()
-      if (!value) return ''
-      value = value.replace(/^docker\.io\//, '').replace(/^library\//, '')
-      if (value.indexOf('@') >= 0) return value
-      const lastSlash = value.lastIndexOf('/')
-      return value.indexOf(':', lastSlash + 1) >= 0 ? value : value + ':latest'
-    }
-
-    /** Whether a bot's VM image is known to be absent locally (null = unknown). */
-    function imageMissing(bot, localImages) {
-      if (!localImages || bot.vm.enabled !== true) return false
-      const wanted = canonicalImage(bot.vm.image)
-      return wanted !== '' && !localImages.has(wanted)
-    }
-
-    /** Keep the meaningful tail of a long path (`…/bots/<id>/workspace`). */
-    function shortPath(value) {
-      const text = asString(value)
-      const marker = text.lastIndexOf('/bots/')
-      if (marker > 0) return '…' + text.slice(marker)
-      const parts = text.split('/').filter(Boolean)
-      return parts.length > 3 ? '…/' + parts.slice(-3).join('/') : text
-    }
-
-    /** Badge model for one bot's VM state. */
-    function vmBadge(bot, docker, t, localImages) {
-      if (bot.vm.enabled !== true) {
-        return { label: t('vmNoVm'), tone: 'neutral' }
-      }
-      const status = bot.vmStatus || {}
-      const state = asString(status.state) || 'missing'
-      const dockerKnown = isObject(docker) && docker.available === false
-      if (dockerKnown) {
-        return { label: t('dockerUnavailable'), tone: 'bad', title: asString(docker.error) || undefined }
-      }
-      if (state === 'running') return { label: t('vmRunning'), tone: 'ok', title: status.containerName || undefined }
-      if (state === 'created') return { label: t('vmCreated'), tone: 'warn' }
-      if (state === 'paused') return { label: t('vmPaused'), tone: 'warn' }
-      if (state === 'missing' && imageMissing(bot, localImages)) {
-        return { label: t('vmImageMissing'), tone: 'warn', title: t('vmImageMissingHint').replace('{image}', bot.vm.image) }
-      }
-      if (state === 'missing') return { label: t('vmMissing'), tone: 'neutral', title: bot.vm.image || undefined }
-      if (state === 'unavailable') {
-        return { label: t('dockerUnavailable'), tone: 'bad', title: status.error || undefined }
-      }
-      if (state === 'error') {
-        const detail = asString(status.error) + ' ' + asString(status.detail)
-        if (/image|imagem/i.test(detail)) {
-          return { label: t('vmImageMissing'), tone: 'bad', title: detail.trim() || undefined }
-        }
-        return { label: t('vmError'), tone: 'bad', title: detail.trim() || undefined }
-      }
-      return { label: t('vmStopped'), tone: 'neutral', title: status.detail || undefined }
-    }
-
-    /** One VM lifecycle button descriptor list for a bot card. */
-    function vmActionsFor(bot, docker, t) {
-      const actions = []
-      if (bot.vm.enabled !== true) return actions
-      const state = asString((bot.vmStatus || {}).state) || 'missing'
-      const dockerReady = !(isObject(docker) && docker.available === false)
-      if (state === 'running') {
-        actions.push({ action: 'stop', label: t('vmStop'), icon: h(StopIconComponent, { size: 14 }) })
-        actions.push({ action: 'restart', label: t('vmRestart'), icon: h(RestartIcon, { size: 14 }) })
-      } else {
-        actions.push({ action: 'start', label: t('vmStart'), icon: h(PlayIcon, { size: 14 }) })
-      }
-      if (hasVmContainer(state)) {
-        actions.push({ action: 'remove', label: t('vmRemove'), icon: h(TrashIcon, { size: 14 }), danger: true })
-      }
-      return actions.map(function (item) {
-        item.disabled = !dockerReady
-        return item
-      })
-    }
-
-    /* ------------------------------------------------------------------ */
-    /* Bot card                                                           */
-    /* ------------------------------------------------------------------ */
-
-    function BotCard(props) {
-      const t = props.t
-      const bot = props.bot
-      const docker = props.docker
-      const busy = props.busy
-      const botBusy = busy !== null && busy.botId === bot.id
-      const vmBusy = botBusy && busy.kind === 'vm'
-      const dockerReady = !(isObject(docker) && docker.available === false)
-      const badge = vmBadge(bot, docker, t, props.localImages)
-      const persona = excerpt(bot.instructions, 240)
-      const canChat = !!bot.workspaceId
-      const chatTitle = canChat ? undefined : t('chatUnavailable')
-      const vmActions = vmActionsFor(bot, docker, t)
-
-      const chatButton = h(Button, {
-        variant: 'primary',
-        size: 'sm',
-        disabled: !canChat || botBusy,
-        title: chatTitle,
-        onClick: function () { props.onChat(bot) },
-      }, h(ChatIcon, { size: 14 }), t('chat'))
+      const persona = excerpt(bit.instructions, 240)
+      const leadTeams = Array.isArray(props.leadTeams) ? props.leadTeams : []
+      const route = bitRouteText(bit, models)
 
       const editButton = h(Button, {
         variant: 'outline',
         size: 'sm',
-        disabled: botBusy,
-        onClick: function () { props.onEdit(bot) },
+        disabled: busy,
+        onClick: function () { props.onEdit(bit) },
       }, h(EditIcon, { size: 14 }), t('edit'))
 
-      const notifyButton = h(IconButton, {
-        label: t('notifyTest'),
-        className: 'dsh-bots-icon-button-sm',
-        disabled: botBusy,
-        onClick: function () { props.onNotifyTest(bot) },
-      }, h(BellIcon, { size: 14 }))
-
-      const vmButtons = vmActions.map(function (item) {
-        const title = item.disabled ? t('dockerUnavailable') : item.label
-        return h(Button, {
-          key: 'vm-' + item.action,
-          variant: 'ghost',
+      const runButton = bit.isOrchestrator === true
+        ? null
+        : h(Button, {
+          variant: 'primary',
           size: 'sm',
-          disabled: item.disabled || botBusy,
-          busy: vmBusy && busy.action === item.action,
-          title: title,
-          onClick: function () { props.onVmAction(bot, item.action) },
-        }, item.icon, item.action === 'remove' ? t('vmRemove') : item.label)
-      })
+          disabled: busy,
+          onClick: function () { props.onRun(bit) },
+        }, h(PlayIcon, { size: 14 }), t('execute'))
 
       const deleteButton = h(Button, {
         variant: 'ghost',
         size: 'sm',
         className: 'dsh-bots-button-danger',
-        disabled: botBusy,
-        onClick: function () { props.onDelete(bot) },
+        disabled: busy,
+        onClick: function () { props.onDelete(bit) },
       }, h(TrashIcon, { size: 14 }), t('delete'))
 
-      const catalog = props.catalog
-      const bit = bot.character && catalog && catalog.byId[bot.character] ? catalog.byId[bot.character] : null
-      const workspaceValue = bot.workspaceDir || bot.workspaceId || '—'
-      const workspaceShort = shortPath(workspaceValue)
-
-      return h('li', { className: 'dsh-bots-card' },
+      return h('li', { className: 'dsh-bots-card', 'data-bit-id': bit.id },
         h('div', { className: 'dsh-bots-card-head' },
-          h(BitAvatar, { bit: bit, size: 52, emoji: bot.emoji, color: bot.color }),
+          h(BitAvatar, { bit: avatarBit, size: 52, emoji: bit.emoji, color: bit.color }),
           h('div', { className: 'dsh-bots-card-titles' },
             h('div', { className: 'dsh-bots-name-row' },
-              h('h3', { className: 'dsh-bots-name', title: bot.name }, bot.name),
-              h(Badge, { label: badge.label, tone: badge.tone, title: badge.title })
+              h('h3', { className: 'dsh-bots-name', title: bit.name }, bit.name),
+              h(Badge, {
+                label: bit.isOrchestrator === true ? t('orchestrator') : t('worker'),
+                tone: bit.isOrchestrator === true ? 'info' : 'neutral',
+              })
             ),
-            bit
-              ? h('p', { className: 'dsh-bots-role', title: summaryOf(bit, props.lang) || undefined },
-                bit.name + ' · ' + groupLabelOf(catalog, bit.group, props.lang, t))
-              : null,
-            h('div', { className: 'dsh-bots-meta' },
-              h('span', { className: 'dsh-bots-meta-label' }, t('workspace')),
-              h('span', { className: 'dsh-bots-path', title: workspaceValue }, workspaceShort)
-            )
+            catalogBit
+              ? h('p', { className: 'dsh-bots-role', title: summaryOf(catalogBit, props.lang) || undefined },
+                catalogBit.name + ' · ' + groupLabelOf(catalog, catalogBit.group, props.lang, t))
+              : h('p', { className: 'dsh-bots-role' }, t('noCharacter')),
+            route
+              ? h('div', { className: 'dsh-bots-meta dsh-bit-route' },
+                h('span', { className: 'dsh-bots-meta-label' }, t('model')),
+                h('span', { title: route }, route))
+              : null
           )
         ),
         h('p', {
           className: 'dsh-bots-persona' + (persona ? '' : ' dsh-bots-persona-empty'),
           title: persona || undefined,
         }, persona || t('noInstructions')),
-        bot.workspaceError ? h('p', { className: 'dsh-bots-warn' }, bot.workspaceError) : null,
-        bot.vm.enabled === true && bot.vm.image && !hasVmContainer(asString(bot.vmStatus.state))
-          ? h('div', { className: 'dsh-bots-meta' },
-            h('span', { className: 'dsh-bots-meta-label' }, t('vmImage')),
-            h('span', { className: 'dsh-bots-path', title: bot.vm.image }, bot.vm.image))
+        bit.isOrchestrator === true
+          ? h('div', { className: 'dsh-bit-flow-note' },
+            h('p', { className: 'dsh-bots-hint' }, t('runsInFlows')),
+            leadTeams.length > 0
+              ? h('p', { className: 'dsh-bots-hint' },
+                tf(t, 'leadInTeams', { names: leadTeams.map(function (team) { return team.name }).join(', ') }))
+              : h('p', { className: 'dsh-bots-hint' }, t('leadInTeamsNone')),
+            typeof props.onOpenTeams === 'function'
+              ? h('button', { type: 'button', className: 'dsh-bots-link-button', onClick: props.onOpenTeams }, t('openTeamsTab'))
+              : null)
           : null,
         h('div', { className: 'dsh-bots-actions' },
-          chatButton,
+          runButton,
           editButton,
-          notifyButton,
-          vmButtons.length > 0 ? h('span', { className: 'dsh-bots-actions-grow' }) : null,
-          vmButtons.length > 0
-            ? h('span', { className: 'dsh-bots-vm-actions', role: 'group', 'aria-label': t('vmActions') }, vmButtons)
-            : null,
+          h('span', { className: 'dsh-bots-actions-grow' }),
           deleteButton
         )
+      )
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Run dialog (ad-hoc worker invocation)                              */
+    /* ------------------------------------------------------------------ */
+
+    /**
+     * "Executar": request textarea, read-only toggle (default on), busy state
+     * and the response/error panel (V5-CONTRACT.md §6.1/§8).
+     */
+    function RunBitDialog(props) {
+      const t = props.t
+      const bit = props.bit
+      const models = props.models || emptyModels('idle')
+      const inputRef = React.useRef(null)
+      const [request, setRequest] = React.useState('')
+      const [readOnly, setReadOnly] = React.useState(true)
+      const [busy, setBusy] = React.useState(false)
+      const [result, setResult] = React.useState(null)
+      const [error, setError] = React.useState(null)
+      const blocked = busy || request.trim() === ''
+
+      async function submit(event) {
+        if (event && typeof event.preventDefault === 'function') event.preventDefault()
+        if (blocked) return
+        setBusy(true)
+        setError(null)
+        setResult(null)
+        try {
+          const data = await props.onRun(bit, request.trim(), readOnly)
+          setResult(data)
+        } catch (reason) {
+          setError(requestErrorText(reason, t))
+        } finally {
+          setBusy(false)
+        }
+      }
+
+      const meta = result && isObject(result.meta) ? result.meta : null
+      const metaText = meta
+        ? [
+          asString(meta.backend),
+          asString(meta.model),
+          asString(meta.effort),
+          typeof meta.durationMs === 'number' ? (meta.durationMs / 1000).toFixed(1) + 's' : '',
+        ].filter(Boolean).join(' · ')
+        : ''
+
+      const footer = [
+        h('button', { key: 'close', type: 'button', className: 'dsh-bots-button dsh-bots-button-outline', disabled: busy, onClick: props.onClose }, t('runClose')),
+        h('button', {
+          key: 'run',
+          type: 'button',
+          className: 'dsh-bots-button dsh-bots-button-primary',
+          disabled: blocked,
+          'aria-busy': busy ? 'true' : undefined,
+          onClick: submit,
+        }, h(PlayIcon, { size: 14 }), busy ? t('runRunning') : t('runSubmit')),
+      ]
+
+      return h(Modal, {
+        t: t,
+        title: tf(t, 'executeTitle', { name: bit.name }),
+        wide: true,
+        initialFocusRef: inputRef,
+        onClose: props.onClose,
+        dismissDisabled: busy,
+        footer: footer,
+      },
+        h('p', { className: 'dsh-bots-hint' }, t('executeHint')),
+        h(Field, { label: t('runRequest'), htmlFor: 'dsh-bots-run-request' },
+          h('textarea', {
+            id: 'dsh-bots-run-request',
+            ref: inputRef,
+            className: 'dsh-bots-textarea dsh-team-textarea-sm',
+            value: request,
+            maxLength: MAX_REQUEST,
+            placeholder: t('runRequestPlaceholder'),
+            disabled: busy,
+            onChange: function (event) { setRequest(event.target.value); setError(null) },
+          })),
+        h('div', { className: 'dsh-bots-field' },
+          h(Switch, {
+            checked: readOnly,
+            label: t('runReadOnly'),
+            disabled: busy,
+            onChange: function (value) { setReadOnly(value) },
+          }),
+          h('p', { className: 'dsh-bots-hint' }, t('runReadOnlyHint'))),
+        error
+          ? h('p', { className: 'dsh-bots-error dsh-bots-form-error', role: 'alert' }, error)
+          : null,
+        h(Field, { label: t('runResponse'), htmlFor: 'dsh-bots-run-response' },
+          h('pre', {
+            id: 'dsh-bots-run-response',
+            className: 'dsh-team-preview' + (result && result.response ? '' : ' dsh-team-preview-empty'),
+            'aria-live': 'polite',
+            'aria-busy': busy ? 'true' : undefined,
+          }, busy ? t('runRunning') : (result && result.response ? result.response : t('runResponseEmpty'))),
+          metaText ? h('p', { className: 'dsh-bots-hint dsh-bit-run-meta' }, metaText) : null)
       )
     }
 
@@ -1329,7 +1351,8 @@ window.__ModuleLoader__.load({
       const src = bit ? bit.avatar : ''
       const [failedSrc, setFailedSrc] = React.useState('')
       const failed = !!src && failedSrc === src
-      if (bit && !failed) {
+      // A pseudo-bit (a catalog-less record) has no avatar image: fall back to the emoji tile.
+      if (bit && src && !failed) {
         return h('span', {
           className: 'dsh-bots-avatar dsh-bots-avatar-bit',
           'aria-hidden': 'true',
@@ -1448,47 +1471,30 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * Create / edit dialog. Creating starts at the bit picker; picking a bit
-     * prefills the name and its predefined description, both editable. Editing
-     * opens the form directly, with "Change bit" going back to the picker.
+     * Create / edit dialog. Creating starts at the catalog picker; picking a bit
+     * prefills the name, the description and the execution defaults (family,
+     * model, effort), all editable. Editing opens the form directly, with
+     * "Change bit" going back to the picker.
      */
     function FormDialog(props) {
       const t = props.t
       const lang = props.lang
       const catalog = props.catalog
+      const models = props.models || emptyModels('idle')
       const editing = !!props.bot
       const onCancel = props.onCancel
       const onSubmit = props.onSubmit
       const nameRef = React.useRef(null)
       const searchRef = React.useRef(null)
-      const imageRequestedRef = React.useRef(false)
       const firstStepRef = React.useRef(true)
       const [values, setValues] = React.useState(function () {
-        return initialFormValues(props.bot, props.defaultImage)
+        return initialFormValues(props.bot)
       })
       const [step, setStep] = React.useState(editing ? 'form' : 'pick')
       const [errors, setErrors] = React.useState({})
       const [serverError, setServerError] = React.useState(null)
       const [saving, setSaving] = React.useState(false)
-      const [imageState, setImageState] = React.useState(function () {
-        return { phase: 'idle', images: [], defaultImage: props.defaultImage || DEFAULT_IMAGE, error: null }
-      })
       const bit = values.character && catalog.byId[values.character] ? catalog.byId[values.character] : null
-
-      React.useEffect(function () {
-        if (values.vmEnabled !== true || imageRequestedRef.current) return
-        imageRequestedRef.current = true
-        setImageState(function (previous) {
-          return { phase: 'loading', images: previous.images, defaultImage: previous.defaultImage, error: null }
-        })
-        api.images().then(function (data) {
-          setImageState({ phase: 'ready', images: data.images, defaultImage: data.defaultImage, error: null })
-        }).catch(function (error) {
-          setImageState(function (previous) {
-            return { phase: 'error', images: previous.images, defaultImage: previous.defaultImage, error: describeError(error) }
-          })
-        })
-      }, [values.vmEnabled])
 
       // The Modal focuses the first step; later step switches move focus here.
       React.useEffect(function () {
@@ -1511,7 +1517,7 @@ window.__ModuleLoader__.load({
         })
       }
 
-      /** Pick a bit; name/description follow it unless the user customized them. */
+      /** Pick a catalog bit; name/description/family/model follow it unless customized. */
       function pickCharacter(next) {
         setValues(function (previous) {
           const previousBit = previous.character ? catalog.byId[previous.character] || null : null
@@ -1524,10 +1530,39 @@ window.__ModuleLoader__.load({
           if (!instructions.trim() || (previousBit && instructions === previousBit.instructions)) {
             updated.instructions = next.instructions
           }
+          const orchestrator = next.isOrchestrator === true
+          updated.isOrchestrator = orchestrator
+          const model = snapModel(models, orchestrator, next.model)
+          updated.model = model
+          updated.effort = snapEffort(models, orchestrator, model, next.effort)
           return updated
         })
         setErrors({})
         setStep('form')
+      }
+
+      /** Switching family snaps an incompatible model to the family default. */
+      function changeOrchestrator(checked) {
+        setValues(function (previous) {
+          const next = Object.assign({}, previous, { isOrchestrator: checked === true })
+          const familyChanged = (previous.isOrchestrator === true) !== next.isOrchestrator
+          const model = snapModel(models, next.isOrchestrator, previous.model)
+          next.model = model
+          next.effort = familyChanged
+            ? snapEffort(models, next.isOrchestrator, model, '')
+            : snapEffort(models, next.isOrchestrator, model, previous.effort)
+          return next
+        })
+        setErrors({})
+      }
+
+      function changeModel(modelId) {
+        setValues(function (previous) {
+          const next = Object.assign({}, previous, { model: modelId })
+          next.effort = snapEffort(models, previous.isOrchestrator === true, modelId, previous.effort)
+          return next
+        })
+        setErrors({})
       }
 
       function requestClose() {
@@ -1542,10 +1577,10 @@ window.__ModuleLoader__.load({
       function submit(event) {
         if (event && typeof event.preventDefault === 'function') event.preventDefault()
         if (saving) return
-        const nextErrors = validateForm(values, t)
+        const nextErrors = validateForm(values, t, models)
         setErrors(nextErrors)
         if (hasKeys(nextErrors)) {
-          if (nameRef.current && typeof nameRef.current.focus === 'function') nameRef.current.focus()
+          if (nextErrors.name && nameRef.current && typeof nameRef.current.focus === 'function') nameRef.current.focus()
           return
         }
         setSaving(true)
@@ -1600,54 +1635,33 @@ window.__ModuleLoader__.load({
         )
       }
 
-      const imageOptions = []
-      const seenImages = {}
-      function pushImage(reference) {
-        if (!reference || seenImages[reference]) return
-        seenImages[reference] = true
-        imageOptions.push(reference)
+      // Model options: the family filter plus the current value when the profile
+      // no longer lists it (legacy data or a provider that is offline).
+      const familyOptions = modelOptionsFor(models, values.isOrchestrator === true)
+      const currentModel = asString(values.model)
+      const unknownModel = currentModel !== '' && !familyOptions.some(function (option) { return option.id === currentModel })
+      const groups = [
+        { id: 'subscription', label: t('modelGroupSubscription'), options: familyOptions.filter(function (option) { return option.group !== 'routes' }) },
+        { id: 'routes', label: t('modelGroupRoutes'), options: familyOptions.filter(function (option) { return option.group === 'routes' }) },
+      ].filter(function (group) { return group.options.length > 0 })
+      const modelOptions = []
+      groups.forEach(function (group) {
+        modelOptions.push(h('optgroup', { key: group.id, label: group.label },
+          group.options.map(function (option) {
+            return h('option', { key: option.id, value: option.id }, option.label)
+          })))
+      })
+      if (unknownModel) {
+        modelOptions.push(h('option', { key: 'unknown', value: currentModel }, tf(t, 'modelMissing', { id: currentModel })))
       }
-      pushImage(values.vmImage)
-      pushImage(imageState.defaultImage)
-      imageState.images.forEach(function (image) { pushImage(image.reference) })
+      let modelHint = t('modelHint')
+      if (models.phase === 'loading' || models.phase === 'idle') modelHint = t('modelsLoading')
+      else if (models.phase === 'error') modelHint = t('modelsError')
+      else if (models.list.length === 0) modelHint = t('noModels')
 
-      let imageHint = t('vmImageHint')
-      if (imageState.phase === 'loading') imageHint = t('imagesLoading')
-      else if (imageState.phase === 'error') imageHint = t('imagesError')
-      else if (imageState.phase === 'ready' && imageState.images.length === 0) imageHint = t('imagesEmpty')
-
-      const imageField = values.vmEnabled === true
-        ? h(Field, {
-          label: t('vmImage'),
-          error: errors.vmImage,
-          hint: imageHint,
-        },
-          h('label', { className: 'dsh-bots-hint', htmlFor: 'dsh-bots-image-select' }, t('vmImageLocal')),
-          h('select', {
-            id: 'dsh-bots-image-select',
-            className: 'dsh-bots-select',
-            value: values.vmImage,
-            'aria-invalid': errors.vmImage ? 'true' : 'false',
-            disabled: saving,
-            onChange: function (event) { patchValues({ vmImage: event.target.value }) },
-          }, imageOptions.map(function (image) {
-            return h('option', { key: 'image-' + image, value: image }, image)
-          })),
-          h('label', { className: 'dsh-bots-hint', htmlFor: 'dsh-bots-image-input' }, t('vmImageFree')),
-          h('input', {
-            id: 'dsh-bots-image-input',
-            className: 'dsh-bots-input',
-            type: 'text',
-            spellCheck: false,
-            autoComplete: 'off',
-            placeholder: t('vmImagePlaceholder'),
-            value: values.vmImage,
-            'aria-invalid': errors.vmImage ? 'true' : 'false',
-            disabled: saving,
-            onChange: function (event) { patchValues({ vmImage: event.target.value }) },
-          })
-        )
-        : null
+      // Efforts offered by the chosen model (current legacy value stays visible).
+      let effortOptions = effortsForModel(models, currentModel)
+      if (values.effort && effortOptions.indexOf(values.effort) < 0) effortOptions = effortOptions.concat([values.effort])
 
       const footer = [
         h(Button, {
@@ -1738,23 +1752,57 @@ window.__ModuleLoader__.load({
             }, t('restoreDefault')))
             : null
         ),
-        h('div', { className: 'dsh-bots-vm-box' },
-          h('div', { className: 'dsh-bots-label' }, t('vm')),
+        h('div', { className: 'dsh-bots-box' },
+          h('div', { className: 'dsh-bots-label' }, t('isOrchestrator')),
           h(Switch, {
-            checked: values.vmEnabled === true,
-            label: t('vmEnable'),
+            checked: values.isOrchestrator === true,
+            label: values.isOrchestrator === true ? t('orchestrator') : t('worker'),
             disabled: saving,
-            onChange: function (checked) { patchValues({ vmEnabled: checked }) },
+            onChange: changeOrchestrator,
           }),
-          h('p', { className: 'dsh-bots-hint' }, t('vmEnableHint')),
-          imageField
+          h('p', { className: 'dsh-bots-hint' }, t('isOrchestratorHint'))),
+        h('div', { className: 'dsh-bots-row' },
+          h(Field, {
+            label: t('model'),
+            htmlFor: 'dsh-bots-model-input',
+            grow: true,
+            error: errors.model,
+            hint: modelHint,
+          },
+            h('select', {
+              id: 'dsh-bots-model-input',
+              className: 'dsh-bots-select',
+              value: currentModel,
+              disabled: saving || models.phase === 'loading',
+              'aria-invalid': errors.model ? 'true' : 'false',
+              onChange: function (event) { changeModel(event.target.value) },
+            },
+              currentModel === '' ? h('option', { value: '' }, '—') : null,
+              modelOptions)
+          ),
+          h(Field, {
+            label: t('effort'),
+            htmlFor: 'dsh-bots-effort-input',
+            hint: values.isOrchestrator === true ? t('effortHint') : null,
+          },
+            h('select', {
+              id: 'dsh-bots-effort-input',
+              className: 'dsh-bots-select',
+              style: { minWidth: 112 },
+              value: values.effort,
+              disabled: saving,
+              onChange: function (event) { patchValues({ effort: event.target.value }) },
+            },
+              effortOptions.map(function (effort) {
+                return h('option', { key: effort, value: effort }, effort)
+              })))
         ),
         serverError ? h('p', { className: 'dsh-bots-error dsh-bots-form-error', role: 'alert' }, serverError) : null
       )
     }
 
     /* ------------------------------------------------------------------ */
-    /* Confirm dialog (delete bot / remove VM)                            */
+    /* Confirm dialog (delete bit)                                        */
     /* ------------------------------------------------------------------ */
 
     function ConfirmDialog(props) {
@@ -1860,7 +1908,7 @@ window.__ModuleLoader__.load({
       duplicateTeam: 'Duplicar',
       deleteTeam: 'Excluir',
       deleteTeamTitle: 'Excluir o time {name}?',
-      deleteTeamBody: 'O time, os membros e o fluxo serão removidos. Os bits e os bots não são afetados.',
+      deleteTeamBody: 'O time, os membros e o fluxo serão removidos. Os bits não são afetados.',
       teamsLoading: 'Carregando times…',
       teamsEmpty: 'Nenhum time ainda',
       teamsEmptyHint: 'Crie um time a partir de um modelo ou do zero e desenhe o fluxo arrastando bits para o quadro.',
@@ -1876,7 +1924,7 @@ window.__ModuleLoader__.load({
       noDescription: 'Sem descrição.',
       startFrom: 'Começar de',
       blankTeam: 'Em branco',
-      blankTeamHint: 'Só um nó de início; adicione membros e etapas.',
+      blankTeamHint: 'Só um nó de início; adicione bits e etapas.',
       templatesLoading: 'Carregando modelos…',
       teamName: 'Nome do time',
       teamNamePlaceholder: 'Ex.: Squad de pagamentos',
@@ -1887,6 +1935,7 @@ window.__ModuleLoader__.load({
       teamWorkspaceHint: 'Caminho absoluto onde o time trabalha (informativo).',
       workspaceInvalid: 'Use um caminho absoluto (ex.: /home/voce/projeto).',
       createTeam: 'Criar time',
+      creating: 'Criando…',
       backToTeams: 'Voltar para os times',
       unsaved: 'Não salvo',
       allSaved: 'Salvo',
@@ -1904,9 +1953,21 @@ window.__ModuleLoader__.load({
       members: 'Membros',
       addMember: 'Adicionar bit',
       addMemberTitle: 'Adicionar um bit ao time',
-      changeBitTitle: 'Trocar o bit de {name}',
+      addMemberHint: 'O membro referencia um bit já criado na aba Bits. O bit define contexto, modelo, esforço e se é orquestrador.',
+      addMemberPick: 'Bit',
+      addMemberConfirm: 'Adicionar',
+      addMemberNoBits: 'Nenhum bit para adicionar',
+      addMemberNoBitsHint: 'Crie um bit na aba Bits e volte para adicioná-lo ao time.',
       membersEmpty: 'Nenhum membro ainda. Adicione bits para atribuir as etapas.',
       memberDragHint: 'Arraste um membro para o quadro para criar uma etapa dele.',
+      memberBit: 'Bit',
+      memberBitHint: 'O bit define contexto, modelo, esforço e a família (orquestrador ou worker).',
+      memberBitMissing: 'Bit não encontrado ({id})',
+      memberRoute: 'Modelo e esforço',
+      memberReadOnlyHint: 'Modelo e esforço são editados no bit (aba Bits).',
+      leadNotOrchestrator: 'O líder do time precisa ser um bit orquestrador.',
+      noOrchestratorMembers: 'Nenhum membro é um bit orquestrador. Adicione um para escolher o líder.',
+      leadInvalid: 'O líder atual não é um bit orquestrador. Escolha outro ou remova o líder.',
       nodeStart: 'Início',
       nodeStep: 'Etapa',
       nodeDecision: 'Decisão',
@@ -1948,25 +2009,17 @@ window.__ModuleLoader__.load({
       duplicate: 'Duplicar',
       remove: 'Excluir',
       selectedCount: '{n} elementos selecionados',
-      memberName: 'Nome',
       memberRole: 'Papel',
       memberRolePlaceholder: 'Resumo do papel no time',
-      memberModel: 'Modelo',
-      memberProvider: 'Provedor (conta)',
-      providerAuto: 'Automático (do agente que chama)',
-      memberProviderHint: 'Fixa a conta em que o modelo do membro é resolvido. Sem escolha, o membro usa a conta do agente que o chama.',
-      memberEffort: 'Esforço',
       memberAccess: 'Acesso',
       accessRead: 'Somente leitura',
       accessWrite: 'Leitura e escrita',
       memberLaunches: 'Pode lançar',
       memberLaunchesNone: 'Não há outros membros.',
-      memberInstructions: 'Instruções',
       memberSteps: '{n} etapa(s) no fluxo',
       removeMember: 'Remover do time',
       removeMemberTitle: 'Remover {name} do time?',
       removeMemberBody: '{n} etapa(s) usam este membro e ficarão sem membro.',
-      changeBit: 'Trocar bit',
       shortcuts: 'Atalhos',
       shortcutPan: 'Arrastar o fundo ou rolar: mover o quadro',
       shortcutZoom: 'Ctrl + roda: zoom',
@@ -1979,14 +2032,13 @@ window.__ModuleLoader__.load({
       canvasLabel: 'Quadro do fluxo. Use Delete para excluir a seleção e as setas para mover.',
       emptyCanvas: 'Arraste elementos ou membros para começar.',
       saveFailed: 'Não foi possível salvar',
-      effortNone: '—',
       legendFlow: 'sequência',
       legendLoop: 'retorno',
       legendDelegate: 'delegação',
       togglePalette: 'Mostrar/ocultar elementos e membros',
       toggleInspector: 'Mostrar/ocultar propriedades',
       resize: 'Redimensionar',
-      // v3: runnable teams and harness packs (CONTRACT.md §11)
+      // v3: runnable teams and harness packs
       nodeTeam: 'Time',
       nodeTeamDefault: 'Outro time',
       edgeHandoff: 'Passagem para outro time',
@@ -1999,7 +2051,7 @@ window.__ModuleLoader__.load({
       teamNodeHint: 'Esta etapa é feita pelo líder do outro time.',
       leadLabel: 'Líder',
       leadNone: 'Sem líder',
-      leadHint: 'Recebe os pedidos e orquestra o time.',
+      leadHint: 'Recebe os pedidos e orquestra o time. Só bits orquestradores podem ser líderes.',
       leadBadge: 'Líder',
       leadOf: 'Líder: {name}',
       makeLead: 'Tornar líder',
@@ -2055,12 +2107,11 @@ window.__ModuleLoader__.load({
       sendDetailsPlaceholder: 'Descreva o que precisa ser feito…',
       sendPreview: 'Prévia',
       sendPreviewEmpty: 'O pedido aparece aqui.',
-      sendPrefixHint: 'O workspace pertence ao time “{bound}”; o prefixo faz o líder dele passar a sessão para este time.',
-      sendSubmit: 'Abrir sessão com o pedido',
-      sendOpening: 'Abrindo…',
-      sendDone: 'Sessão aberta com o pedido — revise e envie.',
-      sendUnavailable: 'Não foi possível abrir uma sessão a partir desta página.',
-      sendNoWorkspace: 'O host não devolveu o workspace do time.',
+      sendSubmit: 'Iniciar fluxo',
+      sendOpening: 'Iniciando…',
+      sendStarted: 'Sessão iniciada',
+      sendStartedHint: 'A sessão do time foi criada e o pedido já foi entregue ao líder.',
+      sendOpenFailed: 'A sessão foi iniciada, mas esta página não conseguiu abri-la.',
       workspaceBound: 'Workspace vinculado',
       harnessBadge: 'Harness {id} v{version}',
       harnessBadgeNoVersion: 'Harness {id}',
@@ -2085,7 +2136,58 @@ window.__ModuleLoader__.load({
       importSubmit: 'Importar',
       importing: 'Importando…',
       importDone: 'Harness importado',
-      creating: 'Criando…',
+      // v4: projects layer
+      tabProjects: 'Projetos',
+      projectsSubtitle: 'Organize os times por projeto: cada projeto reúne os times que trabalham juntos e um time compartilhado pode atender a mais de um projeto.',
+      projectsLoading: 'Carregando projetos…',
+      projectsError: 'Não foi possível carregar os projetos.',
+      projectsEmpty: 'Nenhum projeto ainda',
+      projectsEmptyHint: 'Crie um projeto para agrupar os times que trabalham juntos.',
+      newProject: 'Novo projeto',
+      projectCreated: 'Projeto criado.',
+      projectSaved: 'Projeto salvo.',
+      projectDeleted: 'Projeto excluído.',
+      projectName: 'Nome do projeto',
+      projectNamePlaceholder: 'Ex.: DSC',
+      projectNameRequired: 'Informe um nome para o projeto.',
+      projectDescription: 'Descrição',
+      projectDescriptionPlaceholder: 'O que este projeto reúne e como os times trabalham nele…',
+      projectEmoji: 'Emoji',
+      projectColor: 'Cor',
+      projectTeamsCount: '{n} time(s)',
+      projectSharedCount: '{n} compartilhado(s)',
+      backToProjects: 'Voltar para os projetos',
+      openProject: 'Abrir',
+      editProject: 'Editar projeto',
+      deleteProject: 'Excluir projeto',
+      deleteProjectTitle: 'Excluir o projeto {name}?',
+      deleteProjectBody: 'O projeto será removido; os times não são excluídos, apenas desvinculados dele.',
+      projectTeamsDetached: '{n} time(s) desvinculado(s).',
+      noProjectTeams: 'Nenhum time neste projeto',
+      noProjectTeamsHint: 'Adicione times que já existem ou crie um time novo dentro do projeto.',
+      addExistingTeams: 'Adicionar times',
+      addTeamsTitle: 'Adicionar times ao projeto',
+      addTeamsHint: 'Marque os times que trabalham neste projeto. Times não compartilhados só podem estar em um projeto.',
+      addTeamsConfirm: 'Aplicar',
+      removeFromProject: 'Remover do projeto',
+      removeFromProjectDone: 'Time removido do projeto.',
+      projectTeamNotShared: 'Não compartilhado, já está no projeto',
+      sharedTeam: 'Time compartilhado',
+      sharedTeamHint: 'Permite usar este time em mais de um projeto.',
+      sharedBadge: 'Compartilhado',
+      sharedSingleProjectHint: 'Um time não compartilhado pode estar em um único projeto; mantivemos o primeiro.',
+      teamProjects: 'Projetos do time',
+      teamProjectsHint: 'Projeto em que o time trabalha. Marque “Time compartilhado” para usar em vários.',
+      noProject: 'Nenhum projeto',
+      projectUnknown: 'Projeto não encontrado',
+      projectNewTeam: 'Novo time',
+      createProject: 'Criar projeto',
+      teamsInProjectsTitle: 'Nenhum time fora de projetos',
+      teamsInProjectsHint: 'Times de projeto aparecem dentro do projeto. Abra Projetos para ver os {n} time(s) deste perfil, ou crie um time sem projeto para ele aparecer aqui.',
+      teamsInProjectsNotice: '{n} time(s) de projeto aparecem na aba Projetos.',
+      openProjectsTab: 'Ver projetos',
+      teamMovedToProject: 'Time salvo: agora ele aparece na aba Projetos.',
+      workspace: 'Workspace',
     }
 
     /** Teams copy (en fallback). */
@@ -2102,7 +2204,7 @@ window.__ModuleLoader__.load({
       duplicateTeam: 'Duplicate',
       deleteTeam: 'Delete',
       deleteTeamTitle: 'Delete team {name}?',
-      deleteTeamBody: 'The team, its members and its flow will be removed. Bits and bots are not affected.',
+      deleteTeamBody: 'The team, its members and its flow will be removed. Bits are not affected.',
       teamsLoading: 'Loading teams…',
       teamsEmpty: 'No teams yet',
       teamsEmptyHint: 'Create a team from a template or from scratch and draw the flow by dragging bits onto the board.',
@@ -2118,7 +2220,7 @@ window.__ModuleLoader__.load({
       noDescription: 'No description.',
       startFrom: 'Start from',
       blankTeam: 'Blank',
-      blankTeamHint: 'Only a start node; add members and steps.',
+      blankTeamHint: 'Only a start node; add bits and steps.',
       templatesLoading: 'Loading templates…',
       teamName: 'Team name',
       teamNamePlaceholder: 'E.g. Payments squad',
@@ -2129,6 +2231,7 @@ window.__ModuleLoader__.load({
       teamWorkspaceHint: 'Absolute path where the team works (informational).',
       workspaceInvalid: 'Use an absolute path (e.g. /home/you/project).',
       createTeam: 'Create team',
+      creating: 'Creating…',
       backToTeams: 'Back to teams',
       unsaved: 'Unsaved',
       allSaved: 'Saved',
@@ -2146,9 +2249,21 @@ window.__ModuleLoader__.load({
       members: 'Members',
       addMember: 'Add bit',
       addMemberTitle: 'Add a bit to the team',
-      changeBitTitle: 'Change the bit of {name}',
+      addMemberHint: 'The member references a bit already created on the Bits tab. The bit defines context, model, effort and whether it is an orchestrator.',
+      addMemberPick: 'Bit',
+      addMemberConfirm: 'Add',
+      addMemberNoBits: 'No bits to add',
+      addMemberNoBitsHint: 'Create a bit on the Bits tab and come back to add it to the team.',
       membersEmpty: 'No members yet. Add bits to assign the steps.',
       memberDragHint: 'Drag a member onto the board to create a step for it.',
+      memberBit: 'Bit',
+      memberBitHint: 'The bit defines context, model, effort and the family (orchestrator or worker).',
+      memberBitMissing: 'Bit not found ({id})',
+      memberRoute: 'Model and effort',
+      memberReadOnlyHint: 'Model and effort are edited on the bit (Bits tab).',
+      leadNotOrchestrator: 'The team lead must be an orchestrator bit.',
+      noOrchestratorMembers: 'No member is an orchestrator bit. Add one to choose the lead.',
+      leadInvalid: 'The current lead is not an orchestrator bit. Pick another one or clear the lead.',
       nodeStart: 'Start',
       nodeStep: 'Step',
       nodeDecision: 'Decision',
@@ -2190,25 +2305,17 @@ window.__ModuleLoader__.load({
       duplicate: 'Duplicate',
       remove: 'Delete',
       selectedCount: '{n} elements selected',
-      memberName: 'Name',
       memberRole: 'Role',
       memberRolePlaceholder: 'Summary of the role in the team',
-      memberModel: 'Model',
-      memberProvider: 'Provider (account)',
-      providerAuto: "Automatic (the caller's)",
-      memberProviderHint: "Pins the account the member's model resolves in. Without it the member uses the calling agent's account.",
-      memberEffort: 'Effort',
       memberAccess: 'Access',
       accessRead: 'Read only',
       accessWrite: 'Read and write',
       memberLaunches: 'Can launch',
       memberLaunchesNone: 'There are no other members.',
-      memberInstructions: 'Instructions',
       memberSteps: '{n} step(s) in the flow',
       removeMember: 'Remove from team',
       removeMemberTitle: 'Remove {name} from the team?',
       removeMemberBody: '{n} step(s) use this member and will be left without one.',
-      changeBit: 'Change bit',
       shortcuts: 'Shortcuts',
       shortcutPan: 'Drag the background or scroll: move the board',
       shortcutZoom: 'Ctrl + wheel: zoom',
@@ -2221,14 +2328,13 @@ window.__ModuleLoader__.load({
       canvasLabel: 'Flow board. Use Delete to remove the selection and the arrow keys to move it.',
       emptyCanvas: 'Drag elements or members here to start.',
       saveFailed: 'Could not save',
-      effortNone: '—',
       legendFlow: 'sequence',
       legendLoop: 'loop back',
       legendDelegate: 'delegation',
       togglePalette: 'Show/hide elements and members',
       toggleInspector: 'Show/hide properties',
       resize: 'Resize',
-      // v3: runnable teams and harness packs (CONTRACT.md §11)
+      // v3: runnable teams and harness packs
       nodeTeam: 'Team',
       nodeTeamDefault: 'Another team',
       edgeHandoff: 'Handoff to another team',
@@ -2241,7 +2347,7 @@ window.__ModuleLoader__.load({
       teamNodeHint: 'This step is handled by the other team’s lead.',
       leadLabel: 'Lead',
       leadNone: 'No lead',
-      leadHint: 'Receives the requests and orchestrates the team.',
+      leadHint: 'Receives the requests and orchestrates the team. Only orchestrator bits can lead.',
       leadBadge: 'Lead',
       leadOf: 'Lead: {name}',
       makeLead: 'Make lead',
@@ -2297,12 +2403,11 @@ window.__ModuleLoader__.load({
       sendDetailsPlaceholder: 'Describe what needs to be done…',
       sendPreview: 'Preview',
       sendPreviewEmpty: 'The request shows up here.',
-      sendPrefixHint: 'The workspace belongs to team “{bound}”; the prefix makes its lead hand the session over to this team.',
-      sendSubmit: 'Open session with the request',
-      sendOpening: 'Opening…',
-      sendDone: 'Session opened with the request — review it and send.',
-      sendUnavailable: 'Could not open a session from this page.',
-      sendNoWorkspace: 'The host did not return the team workspace.',
+      sendSubmit: 'Start flow',
+      sendOpening: 'Starting…',
+      sendStarted: 'Session started',
+      sendStartedHint: 'The team session was created and the request was already delivered to the lead.',
+      sendOpenFailed: 'The session was started, but this page could not open it.',
       workspaceBound: 'Workspace bound',
       harnessBadge: 'Harness {id} v{version}',
       harnessBadgeNoVersion: 'Harness {id}',
@@ -2327,7 +2432,58 @@ window.__ModuleLoader__.load({
       importSubmit: 'Import',
       importing: 'Importing…',
       importDone: 'Harness imported',
-      creating: 'Creating…',
+      // v4: projects layer
+      tabProjects: 'Projects',
+      projectsSubtitle: 'Organize teams by project: each project gathers the teams that work together, and a shared team can serve more than one project.',
+      projectsLoading: 'Loading projects…',
+      projectsError: 'Could not load the projects.',
+      projectsEmpty: 'No projects yet',
+      projectsEmptyHint: 'Create a project to group the teams that work together.',
+      newProject: 'New project',
+      projectCreated: 'Project created.',
+      projectSaved: 'Project saved.',
+      projectDeleted: 'Project deleted.',
+      projectName: 'Project name',
+      projectNamePlaceholder: 'E.g. DSC',
+      projectNameRequired: 'Enter a name for the project.',
+      projectDescription: 'Description',
+      projectDescriptionPlaceholder: 'What this project gathers and how the teams work on it…',
+      projectEmoji: 'Emoji',
+      projectColor: 'Color',
+      projectTeamsCount: '{n} team(s)',
+      projectSharedCount: '{n} shared',
+      backToProjects: 'Back to projects',
+      openProject: 'Open',
+      editProject: 'Edit project',
+      deleteProject: 'Delete project',
+      deleteProjectTitle: 'Delete project {name}?',
+      deleteProjectBody: 'The project is removed; the teams are not deleted, only detached from it.',
+      projectTeamsDetached: '{n} team(s) detached.',
+      noProjectTeams: 'No teams in this project',
+      noProjectTeamsHint: 'Add teams that already exist or create a new team inside the project.',
+      addExistingTeams: 'Add teams',
+      addTeamsTitle: 'Add teams to the project',
+      addTeamsHint: 'Check the teams that work on this project. Non-shared teams can belong to a single project.',
+      addTeamsConfirm: 'Apply',
+      removeFromProject: 'Remove from project',
+      removeFromProjectDone: 'Team removed from the project.',
+      projectTeamNotShared: 'Not shared, already in project',
+      sharedTeam: 'Shared team',
+      sharedTeamHint: 'Lets this team be used by more than one project.',
+      sharedBadge: 'Shared',
+      sharedSingleProjectHint: 'A non-shared team can belong to a single project; we kept the first one.',
+      teamProjects: 'Team projects',
+      teamProjectsHint: 'Project the team works on. Check “Shared team” to use it in several.',
+      noProject: 'No project',
+      projectUnknown: 'Project not found',
+      projectNewTeam: 'New team',
+      createProject: 'Create project',
+      teamsInProjectsTitle: 'No teams outside projects',
+      teamsInProjectsHint: 'Project teams are shown inside their project. Open Projects to see all {n} team(s) of this profile, or create a team without a project so it shows up here.',
+      teamsInProjectsNotice: '{n} project team(s) are shown in the Projects tab.',
+      openProjectsTab: 'View projects',
+      teamMovedToProject: 'Team saved: it now appears in the Projects tab.',
+      workspace: 'Workspace',
     }
 
     Object.assign(PT, TEAM_PT)
@@ -2486,6 +2642,16 @@ window.__ModuleLoader__.load({
 .dsh-team-pack-actions { display: flex; justify-content: flex-end; gap: 6px; }
 .dsh-team-subhead { margin: 4px 0 0; font-size: 13px; font-weight: 600; line-height: 20px; }
 .dsh-team-okbox { margin: 0; padding: 8px 10px; border: 1px solid var(--dsh-bots-border-2); border-radius: var(--dsh-bots-radius-md); background: var(--dsh-bots-bg-1); color: var(--dsh-bots-ok); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.dsh-project-head { display: flex; align-items: flex-start; gap: 10px; flex: 1; min-width: 0; }
+.dsh-project-heading { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.dsh-project-title-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.dsh-project-name { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 20px; font-weight: 500; line-height: 28px; }
+.dsh-project-desc { margin: 0; overflow-wrap: anywhere; font-size: 13px; line-height: 20px; color: var(--dsh-bots-text-2); }
+.dsh-project-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.dsh-project-picker { display: flex; flex-direction: column; gap: 2px; max-height: 340px; overflow-y: auto; padding: 6px 10px; border: 1px solid var(--dsh-bots-border-2); border-radius: var(--dsh-bots-radius-md); background: var(--dsh-bots-bg-1); }
+.dsh-project-picker .dsh-bots-check { padding: 4px 0; }
+.dsh-project-picker-label { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.dsh-project-picker-note { color: var(--dsh-bots-text-3); font-size: 11.5px; line-height: 17px; overflow-wrap: anywhere; }
 @media (max-width: 1100px) {
   .dsh-team-side { width: 208px; }
   .dsh-team-inspector { width: 268px; }
@@ -2539,7 +2705,6 @@ window.__ModuleLoader__.load({
     }
     const EDGE_KIND_KEY = { flow: 'edgeFlow', loop: 'edgeLoop', delegate: 'edgeDelegate', handoff: 'edgeHandoff' }
     /** Field limits mirroring host/teams.js (CONTRACT.md §11.1). */
-    const MAX_TEAM_INSTRUCTIONS = 40000
     const MAX_RULES = 40000
     const MAX_ENTRY = 20
     const MAX_ENTRY_LABEL = 60
@@ -2548,9 +2713,6 @@ window.__ModuleLoader__.load({
     const PACK_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/
     const ABSOLUTE_PATH_PATTERN = /^(\/|[A-Za-z]:[\\/]|~\/)/
     const GROUP_COLORS = ['#2563eb', '#7c3aed', '#0891b2', '#059669', '#ca8a04', '#ea580c', '#db2777', '#64748b']
-    /** Reasoning efforts offered by DeepSeek models (legacy values stay visible in the select). */
-    const EFFORTS = ['', 'off', 'low', 'high', 'max']
-    const MODEL_SUGGESTIONS = ['DeepSeek-V4.1-Flash', 'DeepSeek-V4-Pro']
     const GRID = 8
     const ZOOM_MIN = 0.15
     const ZOOM_MAX = 2
@@ -2562,6 +2724,10 @@ window.__ModuleLoader__.load({
     const MEMBER_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/
     const TEAM_EXPORT_FORMAT = 'dsh-bits-team'
     const TAB_STORAGE_KEY = 'dsh-bits.tab'
+    /** Persisted project id shape and defaults (CONTRACT.md §12.1). */
+    const PROJECT_ID_PATTERN = /^[0-9a-f]{10}$/
+    const PROJECT_EMOJI = '📁'
+    const PROJECT_COLOR = '#2563eb'
 
     /* --------------------------- icons ---------------------------- */
 
@@ -2602,6 +2768,18 @@ window.__ModuleLoader__.load({
       )
     }
 
+    function ProjectsGlyph(props) {
+      const size = props && typeof props.size === 'number' ? props.size : 16
+      return h('svg', {
+        width: size, height: size, viewBox: '0 0 16 16', fill: 'none', stroke: 'currentColor',
+        strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true',
+        focusable: 'false', style: { display: 'block', flex: 'none' },
+      },
+        h('path', { key: 'a', d: 'M2 4.6A1.6 1.6 0 0 1 3.6 3H6l1.5 2H12.4A1.6 1.6 0 0 1 14 6.6v4.8A1.6 1.6 0 0 1 12.4 13H3.6A1.6 1.6 0 0 1 2 11.4z' }),
+        h('path', { key: 'b', d: 'M5.4 9h5.2' })
+      )
+    }
+
     function typeIcon(type, size) {
       const s = size || 14
       if (type === 'start') return h(PlayIcon, { size: s })
@@ -2639,6 +2817,11 @@ window.__ModuleLoader__.load({
 
     function isHexColor(value) {
       return /^#[0-9a-fA-F]{6}$/.test(asString(value))
+    }
+
+    /** Whether `value` is a persisted project id (10 lowercase hex, §12.1). */
+    function isProjectId(value) {
+      return PROJECT_ID_PATTERN.test(asString(value))
     }
 
     function randomToken(length) {
@@ -2712,11 +2895,13 @@ window.__ModuleLoader__.load({
     }
 
     /** Node accent: the member's bit colour for steps, the node colour, or the type colour. */
-    function nodeColor(node, membersById, catalog) {
+    function nodeColor(node, membersById, catalog, bitsById) {
       if (node.type === 'step') {
         const member = node.memberId ? membersById[node.memberId] : null
-        const bit = member && member.character && catalog.byId[member.character] ? catalog.byId[member.character] : null
-        if (bit) return bit.color
+        const bit = member ? memberBit(member, bitsById) : null
+        const character = bitCharacter(bit, catalog)
+        if (character) return character.color
+        if (bit && isHexColor(bit.color)) return bit.color
         return member ? TYPE_COLOR.step : TYPE_COLOR.end
       }
       if (isHexColor(node.color)) return node.color
@@ -2737,64 +2922,71 @@ window.__ModuleLoader__.load({
       return typeof limit === 'number' ? out.slice(0, limit) : out
     }
 
+    /** Bit record referenced by a team member, when the list knows it. */
+    function memberBit(member, bitsById) {
+      if (!member || !member.bitId) return null
+      return bitsById && bitsById[member.bitId] ? bitsById[member.bitId] : null
+    }
+
+    /** Catalog character behind a bit record (avatar, group, summary). */
+    function bitCharacter(bit, catalog) {
+      if (!bit || !bit.character || !catalog || !catalog.byId) return null
+      return catalog.byId[bit.character] || null
+    }
+
+    /** Avatar source for a bit record: its catalog character, else the record itself. */
+    function avatarBitOf(bit, catalog) {
+      if (!bit) return null
+      const character = bitCharacter(bit, catalog)
+      if (character) return character
+      return {
+        id: bit.id,
+        name: bit.name,
+        color: bit.color,
+        emoji: bit.emoji,
+        avatar: '',
+        summary: { pt: '', en: '' },
+        group: null,
+      }
+    }
+
+    /** Display name of a member: the referenced bit name, else the stored bit id. */
+    function memberName(member, bitsById) {
+      if (!member) return ''
+      const bit = memberBit(member, bitsById)
+      if (bit) return bit.name
+      return member.bitId || member.id
+    }
+
+    /** Whether a member's referenced bit is an orchestrator (only they can lead). */
+    function memberIsOrchestrator(member, bitsById) {
+      const bit = memberBit(member, bitsById)
+      return !!bit && bit.isOrchestrator === true
+    }
+
+    /** `<model label> · <effort>` of a member bit (raw model id when unknown). */
+    function memberRouteText(member, bitsById, models) {
+      const bit = memberBit(member, bitsById)
+      if (!bit) return ''
+      const model = bit.model ? modelLabelOf(models, bit.model) : ''
+      return [model, bit.effort].filter(Boolean).join(' · ')
+    }
+
+    /** Defensive v5 member projection: a reference to a bit (V5-CONTRACT.md §5.1). */
     function normalizeMember(raw) {
       if (!isObject(raw)) return null
       const id = asString(raw.id)
       if (!MEMBER_ID_PATTERN.test(id)) return null
       return {
         id: id,
-        character: asString(raw.character) || null,
-        name: asString(raw.name) || id,
+        bitId: asString(raw.bitId) || null,
         role: asString(raw.role),
-        model: asString(raw.model),
-        provider: asString(raw.provider),
-        effort: asString(raw.effort),
         access: raw.access === 'read' ? 'read' : 'write',
-        instructions: asString(raw.instructions),
         launches: Array.isArray(raw.launches) ? raw.launches.filter(function (value) { return typeof value === 'string' && value }) : [],
-        skills: stringList(raw.skills),
         teamRef: asString(raw.teamRef) || null,
         mcp: stringList(raw.mcp, MAX_MEMBER_MCP),
+        skills: stringList(raw.skills),
       }
-    }
-
-    /** `/api/bots.teams.providers` → `[{ id, name, models: [{ id, name }] }]`. */
-    function normalizeProviders(payload) {
-      const providers = []
-      if (!isObject(payload) || !Array.isArray(payload.providers)) return providers
-      payload.providers.forEach(function (raw) {
-        if (!isObject(raw) || !asString(raw.id)) return
-        const id = asString(raw.id)
-        if (providers.some(function (item) { return item.id === id })) return
-        const models = []
-        ;(Array.isArray(raw.models) ? raw.models : []).forEach(function (model) {
-          if (!isObject(model) || !asString(model.name)) return
-          if (models.some(function (item) { return item.name === asString(model.name) })) return
-          models.push({ id: asString(model.id) || asString(model.name), name: asString(model.name) })
-        })
-        providers.push({ id: id, name: asString(raw.name) || id, models: models })
-      })
-      return providers
-    }
-
-    /** Display name of a provider id (falls back to the raw id). */
-    function providerNameOf(providers, id) {
-      if (!id) return ''
-      const list = Array.isArray(providers) ? providers : []
-      for (let index = 0; index < list.length; index += 1) {
-        if (list[index].id === id) return list[index].name || id
-      }
-      return id
-    }
-
-    /** Member route as shown in lists: `Claude Haiku 5.5 — Anthropic (conta 2) · low`. */
-    function memberRouteText(member, providers) {
-      if (!member) return ''
-      const provider = member.provider ? providerNameOf(providers, member.provider) : ''
-      let model = member.model
-      if (model && provider) model += ' — ' + provider
-      else if (!model) model = provider
-      return [model, member.effort].filter(Boolean).join(' · ')
     }
 
     /** Request templates (`entry`): `{ id, label, template }`, ids made unique. */
@@ -2895,6 +3087,8 @@ window.__ModuleLoader__.load({
         rules: asString(raw.rules),
         skills: stringList(raw.skills),
         entry: normalizeEntryList(raw.entry),
+        shared: raw.shared === true,
+        projectIds: stringList(raw.projectIds).filter(isProjectId),
         createdAt: asString(raw.createdAt),
         updatedAt: asString(raw.updatedAt),
       }
@@ -2921,6 +3115,9 @@ window.__ModuleLoader__.load({
         entry: normalizeEntryList(team.entry)
           .map(function (item) { return { id: item.id, label: item.label.trim(), template: item.template } })
           .filter(function (item) { return item.label || item.template.trim() }),
+        shared: team.shared === true,
+        // Order preserved; the non-shared one-project rule is enforced by the store and the editor.
+        projectIds: stringList(team.projectIds).filter(isProjectId),
       }
     }
 
@@ -2940,14 +3137,57 @@ window.__ModuleLoader__.load({
       return !!left && left === right
     }
 
-    /** The workspace-bound team sharing `team`'s workspace (not `team` itself), or null. */
-    function boundTeamFor(team, teams) {
-      if (!team || !team.workspaceDir) return null
-      for (let index = 0; index < teams.length; index += 1) {
-        const other = teams[index]
-        if (other.id !== team.id && other.bindWorkspace === true && sameDir(other.workspaceDir, team.workspaceDir)) return other
+    /* -------------------------- projects -------------------------- */
+
+    /** `/api/bots.projects` record projection (CONTRACT.md §12.1). */
+    function normalizeProjectRecord(raw) {
+      if (!isObject(raw)) return null
+      const id = asString(raw.id)
+      if (!isProjectId(id)) return null
+      return {
+        id: id,
+        name: asString(raw.name) || id,
+        description: asString(raw.description),
+        emoji: asString(raw.emoji) || PROJECT_EMOJI,
+        color: isHexColor(raw.color) ? raw.color : PROJECT_COLOR,
+        createdAt: asString(raw.createdAt),
+        updatedAt: asString(raw.updatedAt),
+      }
+    }
+
+    /** Editable part of a project, in the shape the Host accepts (§12.2). */
+    function projectPayload(project) {
+      return {
+        name: asString(project.name).trim(),
+        description: asString(project.description),
+        emoji: asString(project.emoji) || PROJECT_EMOJI,
+        color: isHexColor(project.color) ? project.color : PROJECT_COLOR,
+      }
+    }
+
+    /** Project record of `id` in `projects`, or null. */
+    function findProject(projects, id) {
+      const list = Array.isArray(projects) ? projects : []
+      for (let index = 0; index < list.length; index += 1) {
+        if (list[index].id === id) return list[index]
       }
       return null
+    }
+
+    /** Label used where a project is referenced by id only: emoji + name, or the unknown text. */
+    function projectLabel(projects, id, t) {
+      const project = findProject(projects, id)
+      if (project) return project.emoji ? project.emoji + ' ' + project.name : project.name
+      return t('projectUnknown') + ' (' + id + ')'
+    }
+
+    /**
+     * A team that is not shared (`shared: false`) belongs to exactly one project, so
+     * it is exclusive to it: it lists inside that project and no longer in the Times
+     * tab. Shared teams stay in the Times tab as the reusable library (§12.4).
+     */
+    function teamIsProjectExclusive(team) {
+      return isObject(team) && team.shared === false && Array.isArray(team.projectIds) && team.projectIds.length > 0
     }
 
     /* ----------------------- harness packs ------------------------ */
@@ -3044,8 +3284,8 @@ window.__ModuleLoader__.load({
       return { digits: match[1], valid: true, pending: !match[1] }
     }
 
-    /** Final request text: template filled with `{n}`/`{pedido}`, optional `[Time: …]` prefix. */
-    function buildRequestPrompt(entry, digits, details, prefixTeam) {
+    /** Final request text: template filled with `{n}`/`{pedido}` (free text appended). */
+    function buildRequestPrompt(entry, digits, details) {
       const extra = asString(details).trim()
       let text
       if (!entry) {
@@ -3055,8 +3295,7 @@ window.__ModuleLoader__.load({
         text = template.split('{n}').join(digits).split('{pedido}').join(extra).trim()
         if (template.indexOf('{pedido}') < 0 && extra) text = text + '\n\n' + extra
       }
-      if (!text) return ''
-      return prefixTeam ? '[Time: ' + prefixTeam.name + '] ' + text : text
+      return text || ''
     }
 
     function canonicalJson(team) {
@@ -3076,19 +3315,18 @@ window.__ModuleLoader__.load({
         const payload = await fetchJson('/api/bots.teams')
         return (Array.isArray(payload.teams) ? payload.teams : []).map(normalizeTeamRecord).filter(function (team) { return team && team.id })
       },
+      /** Template metadata only: the team is instantiated by `fromTemplate` (§5.2). */
       async templates() {
         const payload = await fetchJson('/api/bots.teams.templates')
         const list = []
         ;(Array.isArray(payload.templates) ? payload.templates : []).forEach(function (raw) {
           if (!isObject(raw) || !asString(raw.id)) return
-          const team = normalizeTeamRecord(raw.team)
-          if (!team) return
+          const team = isObject(raw.team) ? raw.team : {}
           list.push({
             id: asString(raw.id),
-            name: asString(raw.name) || team.name,
-            description: asString(raw.description) || team.description,
-            emoji: asString(raw.emoji) || team.emoji,
-            team: team,
+            name: asString(raw.name) || asString(team.name) || asString(raw.id),
+            description: asString(raw.description) || asString(team.description),
+            emoji: asString(raw.emoji) || asString(team.emoji) || '👥',
           })
         })
         return list
@@ -3108,22 +3346,68 @@ window.__ModuleLoader__.load({
       async remove(id) {
         await fetchJson('/api/bots.teams.delete', { id: id })
       },
-      /** Team with a lead + one member per preset of a harness pack (§11.3). */
+      /** Instantiate a template: fresh bits + the team they feed (§5.2). */
+      async fromTemplate(input) {
+        const body = { templateId: input.templateId }
+        if (input.name) body.name = input.name
+        if (input.projectId) body.projectId = input.projectId
+        const payload = await fetchJson('/api/bots.teams.fromTemplate', body)
+        const record = normalizeTeamRecord(payload.team)
+        if (!record || !record.id) throw apiError('BAD_RESPONSE', 'The server response is missing the team')
+        return {
+          team: record,
+          bits: (Array.isArray(payload.bits) ? payload.bits : []).map(normalizeBit).filter(Boolean),
+        }
+      },
+      /** Team with a lead + one member per preset of a harness pack (§5.3). */
       async fromPack(packId) {
         const payload = await fetchJson('/api/bots.teams.fromPack', { packId: packId })
         const record = normalizeTeamRecord(payload.team)
         if (!record || !record.id) throw apiError('BAD_RESPONSE', 'The server response is missing the team')
-        return record
+        return {
+          team: record,
+          bits: (Array.isArray(payload.bits) ? payload.bits : []).map(normalizeBit).filter(Boolean),
+        }
       },
-      /** Profile providers (accounts) and their models, for the member model picker. */
-      async providers() {
-        const payload = await fetchJson('/api/bots.teams.providers')
-        return normalizeProviders(payload)
+      /** Start a mission: the host creates the session and delivers the prompt (§5.4). */
+      async run(id, prompt) {
+        const payload = await fetchJson('/api/bots.teams.run', { id: id, prompt: prompt })
+        return {
+          sessionId: asString(payload.sessionId) || asString(payload.mission && payload.mission.sessionId),
+          workspaceId: asString(payload.workspaceId) || null,
+          teamId: asString(payload.teamId),
+          teamName: asString(payload.teamName),
+          cwd: asString(payload.cwd),
+        }
       },
       /** Register the team workspace in the Harness: `{ workspaceId, workspaceDir }`. */
       async workspace(id) {
         const payload = await fetchJson('/api/bots.teams.workspace', { id: id })
         return { workspaceId: asString(payload.workspaceId), workspaceDir: asString(payload.workspaceDir) }
+      },
+    }
+
+    const projectsApi = {
+      async list() {
+        const payload = await fetchJson('/api/bots.projects')
+        return (Array.isArray(payload.projects) ? payload.projects : []).map(normalizeProjectRecord).filter(function (project) { return project && project.id })
+      },
+      async create(project) {
+        const payload = await fetchJson('/api/bots.projects.create', { project: projectPayload(project) })
+        const record = normalizeProjectRecord(payload.project)
+        if (!record || !record.id) throw apiError('BAD_RESPONSE', 'The server response is missing the project')
+        return record
+      },
+      async update(id, project) {
+        const payload = await fetchJson('/api/bots.projects.update', { id: id, patch: projectPayload(project) })
+        const record = normalizeProjectRecord(payload.project)
+        if (!record || !record.id) throw apiError('BAD_RESPONSE', 'The server response is missing the project')
+        return record
+      },
+      async remove(id) {
+        const payload = await fetchJson('/api/bots.projects.delete', { id: id })
+        const detached = payload.detachedTeams
+        return { detachedTeams: typeof detached === 'number' && isFinite(detached) ? detached : 0 }
       },
     }
 
@@ -3262,20 +3546,17 @@ window.__ModuleLoader__.load({
       })
     }
 
-    function memberFromBit(bit, members, lang) {
+    function memberFromBit(bit, members, catalog, lang) {
+      const character = bitCharacter(bit, catalog)
       return {
         id: memberSlug(bit.name, members),
-        character: bit.id,
-        name: bit.name,
-        role: summaryOf(bit, lang).slice(0, 200),
-        model: '',
-        effort: '',
+        bitId: bit.id,
+        role: character ? summaryOf(character, lang).slice(0, 200) : excerpt(bit.instructions, 200),
         access: 'write',
-        instructions: bit.instructions,
         launches: [],
-        skills: [],
         teamRef: null,
         mcp: [],
+        skills: [],
       }
     }
 
@@ -3407,7 +3688,7 @@ window.__ModuleLoader__.load({
     function readStoredTab() {
       try {
         const value = window.localStorage.getItem(TAB_STORAGE_KEY)
-        return value === 'teams' ? 'teams' : 'bots'
+        return value === 'teams' || value === 'projects' ? value : 'bots'
       } catch (error) {
         return 'bots'
       }
@@ -3422,6 +3703,7 @@ window.__ModuleLoader__.load({
       const items = [
         { id: 'bots', label: t('tabBots'), icon: h(BotsGlyph, { size: 15 }) },
         { id: 'teams', label: t('tabTeams'), icon: h(TeamGlyph, { size: 15 }) },
+        { id: 'projects', label: t('tabProjects'), icon: h(ProjectsGlyph, { size: 15 }) },
       ]
       return h('div', { className: 'dsh-bots-tabs', role: 'tablist', 'aria-label': t('tabsLabel') },
         items.map(function (item) {
@@ -3437,7 +3719,10 @@ window.__ModuleLoader__.load({
             onKeyDown: function (event) {
               if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
               event.preventDefault()
-              props.onChange(item.id === 'bots' ? 'teams' : 'bots')
+              const index = items.findIndex(function (entry) { return entry.id === props.tab })
+              const step = event.key === 'ArrowRight' ? 1 : -1
+              const next = items[(Math.max(0, index) + step + items.length) % items.length]
+              props.onChange(next.id)
             },
           }, item.icon, item.label)
         })
@@ -3455,12 +3740,13 @@ window.__ModuleLoader__.load({
       const pad = 48
       const viewBox = [bounds.x - pad, bounds.y - pad, bounds.w + pad * 2, bounds.h + pad * 2].join(' ')
       const membersById = indexBy(team.members)
+      const bitsById = props.bitsById || {}
       const rects = indexBy(nodes.map(function (node) { const rect = nodeRect(node); rect.id = node.id; return rect }))
       const groups = nodes.filter(function (node) { return node.type === 'group' })
       const others = nodes.filter(function (node) { return node.type !== 'group' })
       return h('svg', { className: 'dsh-team-thumb', viewBox: viewBox, preserveAspectRatio: 'xMidYMid meet', 'aria-hidden': 'true', focusable: 'false' },
         groups.map(function (node) {
-          const color = nodeColor(node, membersById, props.catalog)
+          const color = nodeColor(node, membersById, props.catalog, bitsById)
           const rect = rects[node.id]
           return h('rect', {
             key: node.id, x: rect.x, y: rect.y, width: rect.w, height: rect.h, rx: 16,
@@ -3479,7 +3765,7 @@ window.__ModuleLoader__.load({
           })
         }),
         others.map(function (node) {
-          const color = nodeColor(node, membersById, props.catalog)
+          const color = nodeColor(node, membersById, props.catalog, bitsById)
           const rect = rects[node.id]
           return h('rect', {
             key: node.id, x: rect.x, y: rect.y, width: rect.w, height: rect.h,
@@ -3494,10 +3780,11 @@ window.__ModuleLoader__.load({
     function MemberStack(props) {
       const members = props.members
       const shown = members.slice(0, props.max || 7)
+      const bitsById = props.bitsById || {}
       return h('div', { className: 'dsh-team-stack' },
         shown.map(function (member) {
-          const bit = member.character && props.catalog.byId[member.character] ? props.catalog.byId[member.character] : null
-          return h(BitAvatar, { key: member.id, bit: bit, size: 30, emoji: '🤖', color: TYPE_COLOR.end })
+          const bit = memberBit(member, bitsById)
+          return h(BitAvatar, { key: member.id, bit: avatarBitOf(bit, props.catalog), size: 30, emoji: '🤖', color: TYPE_COLOR.end })
         }),
         members.length > shown.length ? h('span', { className: 'dsh-team-more' }, '+' + (members.length - shown.length)) : null
       )
@@ -3506,13 +3793,16 @@ window.__ModuleLoader__.load({
     function TeamCard(props) {
       const t = props.t
       const team = props.team
+      const bitsById = props.bitsById || {}
       const stats = teamStats(team)
       const description = excerpt(team.description, 220)
       const lead = team.lead ? team.members.find(function (member) { return member.id === team.lead }) || null : null
+      const leadName = lead ? memberName(lead, bitsById) : ''
       const pack = team.harness ? findPack(props.packs, team.harness) : null
-      const runnable = !!team.workspaceDir && !!lead
+      // A mission needs a workspace and an orchestrator bit as lead (V5-CONTRACT.md §6.2).
+      const runnable = !!team.workspaceDir && !!lead && memberIsOrchestrator(lead, bitsById)
       const badges = []
-      if (lead) badges.push(h(Badge, { key: 'lead', tone: 'info', dot: false, label: tf(t, 'leadOf', { name: lead.name }) }))
+      if (lead) badges.push(h(Badge, { key: 'lead', tone: memberIsOrchestrator(lead, bitsById) ? 'info' : 'warn', dot: false, label: tf(t, 'leadOf', { name: leadName }) }))
       if (team.harness) {
         badges.push(h(Badge, {
           key: 'harness', dot: false,
@@ -3521,7 +3811,17 @@ window.__ModuleLoader__.load({
         }))
       }
       if (team.bindWorkspace) badges.push(h(Badge, { key: 'bound', tone: 'ok', label: t('workspaceBound'), title: team.workspaceDir || undefined }))
-      return h('li', { className: 'dsh-bots-card' },
+      if (team.shared) badges.push(h(Badge, { key: 'shared', tone: 'info', dot: false, label: t('sharedBadge') }))
+      team.projectIds.forEach(function (id) {
+        const project = findProject(props.projects, id)
+        badges.push(h(Badge, {
+          key: 'project-' + id,
+          dot: false,
+          title: project ? (project.description || project.name) : id,
+          label: project ? (project.emoji ? project.emoji + ' ' : '') + project.name : t('projectUnknown'),
+        }))
+      })
+      return h('li', { className: 'dsh-bots-card', 'data-team-id': team.id },
         h('div', { className: 'dsh-bots-card-head' },
           h('span', {
             className: 'dsh-bots-avatar',
@@ -3538,10 +3838,10 @@ window.__ModuleLoader__.load({
           className: 'dsh-team-open',
           role: 'presentation',
           onClick: function () { props.onOpen(team) },
-        }, h(FlowThumb, { team: team, catalog: props.catalog, emptyLabel: t('emptyCanvas') })),
+        }, h(FlowThumb, { team: team, catalog: props.catalog, bitsById: bitsById, emptyLabel: t('emptyCanvas') })),
         h('p', { className: 'dsh-bots-persona' + (description ? '' : ' dsh-bots-persona-empty'), title: description || undefined }, description || t('noDescription')),
         badges.length > 0 ? h('div', { className: 'dsh-team-badges' }, badges) : null,
-        team.members.length > 0 ? h(MemberStack, { members: team.members, catalog: props.catalog }) : null,
+        team.members.length > 0 ? h(MemberStack, { members: team.members, catalog: props.catalog, bitsById: bitsById }) : null,
         team.workspaceDir
           ? h('div', { className: 'dsh-bots-meta' },
             h('span', { className: 'dsh-bots-meta-label' }, t('workspace')),
@@ -3556,13 +3856,19 @@ window.__ModuleLoader__.load({
             ? h(IconButton, { label: t('duplicateTeam'), className: 'dsh-bots-icon-button-sm', onClick: function () { props.onDuplicate(team) } }, h(CopyIcon, { size: 14 }))
             : h(Button, { variant: 'outline', size: 'sm', onClick: function () { props.onDuplicate(team) } }, h(CopyIcon, { size: 14 }), t('duplicateTeam')),
           h(IconButton, { label: t('exportTeam'), className: 'dsh-bots-icon-button-sm', onClick: function () { props.onExport(team) } }, h(DownloadIcon, { size: 14 })),
+          typeof props.onDetach === 'function'
+            ? h(Button, { variant: 'outline', size: 'sm', onClick: function () { props.onDetach(team) } }, t('removeFromProject'))
+            : null,
           h('span', { className: 'dsh-bots-actions-grow' }),
           h(Button, { variant: 'ghost', size: 'sm', className: 'dsh-bots-button-danger', onClick: function () { props.onDelete(team) } }, h(TrashIcon, { size: 14 }), t('deleteTeam'))
         )
       )
     }
 
-    /** "Enviar pedido": pick a template, fill `{n}`/`{pedido}`, preview, open a session (§11.4). */
+    /**
+     * "Enviar pedido": pick a template, fill `{n}`/`{pedido}`, preview, then start
+     * the mission through `POST /api/bots.teams.run` (V5-CONTRACT.md §5.4/§8).
+     */
     function SendRequestDialog(props) {
       const t = props.t
       const team = props.team
@@ -3572,14 +3878,14 @@ window.__ModuleLoader__.load({
       const [details, setDetails] = React.useState('')
       const [busy, setBusy] = React.useState(false)
       const [error, setError] = React.useState(null)
+      const [done, setDone] = React.useState(null)
       const numberRef = React.useRef(null)
       const detailsRef = React.useRef(null)
       const entry = choice === 'free' ? null : entries.find(function (item) { return item.id === choice }) || null
       const needsNumber = !!entry && entry.template.indexOf('{n}') >= 0
       const usesDetails = !entry || entry.template.indexOf('{pedido}') >= 0
       const card = parseCardNumber(number)
-      const bound = team.bindWorkspace ? null : boundTeamFor(team, props.teams)
-      const prompt = buildRequestPrompt(entry, card.digits, details, bound ? team : null)
+      const prompt = buildRequestPrompt(entry, card.digits, details)
       const numberMissing = needsNumber && !card.digits
       const blocked = busy || numberMissing || !card.valid || !prompt || (!entry && !details.trim())
 
@@ -3597,74 +3903,90 @@ window.__ModuleLoader__.load({
 
       async function submit(event) {
         if (event && typeof event.preventDefault === 'function') event.preventDefault()
-        if (blocked) return
+        if (blocked || done) return
         setBusy(true)
         setError(null)
         try {
-          await props.onSubmit(team, prompt)
+          const outcome = await props.onSubmit(team, prompt)
+          if (outcome && outcome.opened) return
+          setDone(outcome || {})
         } catch (reason) {
-          setBusy(false)
           setError(requestErrorText(reason, t))
+        } finally {
+          setBusy(false)
         }
       }
 
       const choices = entries.map(function (item) {
         return { id: item.id, name: item.label, description: item.template, mono: true }
       }).concat([{ id: 'free', name: t('sendFree'), description: t('sendFreeHint'), mono: false }])
-      const footer = [
-        h('button', { key: 'cancel', type: 'button', className: 'dsh-bots-button dsh-bots-button-outline', disabled: busy, onClick: props.onCancel }, t('cancel')),
-        h('button', {
-          key: 'ok', type: 'button', className: 'dsh-bots-button dsh-bots-button-primary', disabled: blocked,
-          'aria-busy': busy ? 'true' : undefined, onClick: submit,
-        }, h(SendIcon, { size: 14 }), busy ? t('sendOpening') : t('sendSubmit')),
-      ]
+      const footer = done
+        ? [h('button', { key: 'close', type: 'button', className: 'dsh-bots-button dsh-bots-button-primary', onClick: props.onCancel }, t('runClose'))]
+        : [
+          h('button', { key: 'cancel', type: 'button', className: 'dsh-bots-button dsh-bots-button-outline', disabled: busy, onClick: props.onCancel }, t('cancel')),
+          h('button', {
+            key: 'ok', type: 'button', className: 'dsh-bots-button dsh-bots-button-primary', disabled: blocked,
+            'aria-busy': busy ? 'true' : undefined, onClick: submit,
+          }, h(SendIcon, { size: 14 }), busy ? t('sendOpening') : t('sendSubmit')),
+        ]
       const detailsLabel = !entry ? t('sendDetailsFree') : (usesDetails ? t('sendDetails') : t('sendDetailsExtra'))
+
+      const doneText = done
+        ? (done.sessionId
+          ? t('sendStarted') + ': ' + done.sessionId
+          : t('sendStarted') + (done.teamName ? ' · ' + done.teamName : ''))
+        : ''
       return h(Modal, {
         t: t, title: tf(t, 'sendRequestTitle', { name: team.name }), wide: true,
         initialFocusRef: needsNumber ? numberRef : detailsRef,
         onClose: props.onCancel, dismissDisabled: busy, footer: footer,
       },
-        h('form', { onSubmit: submit, style: { display: 'flex', flexDirection: 'column', gap: 14 } },
-          h(Field, { label: t('sendTemplate'), htmlFor: 'dsh-send-template' },
-            h('ul', { className: 'dsh-team-choices', role: 'radiogroup', id: 'dsh-send-template', 'aria-label': t('sendTemplate') },
-              choices.map(function (item) {
-                return h('li', { key: item.id },
-                  h('button', {
-                    type: 'button', role: 'radio', className: 'dsh-team-choice',
-                    'aria-checked': choice === item.id ? 'true' : 'false',
-                    onClick: function () { pick(item.id) },
-                  },
-                    h('span', { className: 'dsh-team-choice-emoji', 'aria-hidden': 'true' }, item.id === 'free' ? h(EditIcon, { size: 16 }) : h(SendIcon, { size: 16 })),
-                    h('span', { className: 'dsh-team-choice-text' },
-                      h('span', { className: 'dsh-team-choice-name' }, item.name),
-                      item.description ? h('span', { className: 'dsh-team-choice-desc' + (item.mono ? ' dsh-team-choice-mono' : '') }, excerpt(item.description, 220)) : null)))
-              }))),
-          needsNumber
-            ? h(Field, {
-              label: t('sendNumber'), htmlFor: 'dsh-send-number',
-              hint: numberMissing && card.valid ? t('sendNumberRequired') + ' ' + t('sendNumberHint') : t('sendNumberHint'),
-              error: !card.valid ? t('sendNumberInvalid') : null,
-            },
-              h('input', {
-                id: 'dsh-send-number', ref: numberRef, className: 'dsh-bots-input', value: number, inputMode: 'numeric',
-                autoComplete: 'off', spellCheck: false, maxLength: 20, placeholder: '123',
-                style: { maxWidth: 180, fontFamily: 'var(--dsh-bots-mono)' },
-                'aria-invalid': !card.valid ? 'true' : undefined,
-                onChange: function (event) { changeNumber(event.target.value) },
-                onBlur: function () { if (card.valid && card.digits) setNumber(card.digits) },
-              }))
-            : null,
-          h(Field, { label: detailsLabel, htmlFor: 'dsh-send-details' },
-            h('textarea', {
-              id: 'dsh-send-details', ref: detailsRef, className: 'dsh-bots-textarea dsh-team-textarea-sm', value: details,
-              maxLength: 20000, placeholder: t('sendDetailsPlaceholder'),
-              onChange: function (event) { setDetails(event.target.value); setError(null) },
-            })),
-          h(Field, { label: t('sendPreview'), htmlFor: 'dsh-send-preview', hint: bound ? tf(t, 'sendPrefixHint', { bound: bound.name }) : null },
-            h('pre', { id: 'dsh-send-preview', className: 'dsh-team-preview' + (prompt ? '' : ' dsh-team-preview-empty'), 'aria-live': 'polite' }, prompt || t('sendPreviewEmpty'))),
-          error ? h('p', { className: 'dsh-bots-error dsh-bots-form-error', role: 'alert' }, error) : null,
-          h('button', { type: 'submit', hidden: true, tabIndex: -1 })
-        )
+        done
+          ? h('div', { className: 'dsh-bots-field' },
+            h('p', { className: 'dsh-team-okbox', role: 'status' }, doneText),
+            h('p', { className: 'dsh-bots-hint' }, t('sendStartedHint')),
+            h('p', { className: 'dsh-bots-hint' }, t('sendOpenFailed')))
+          : h('form', { onSubmit: submit, style: { display: 'flex', flexDirection: 'column', gap: 14 } },
+            h(Field, { label: t('sendTemplate'), htmlFor: 'dsh-send-template' },
+              h('ul', { className: 'dsh-team-choices', role: 'radiogroup', id: 'dsh-send-template', 'aria-label': t('sendTemplate') },
+                choices.map(function (item) {
+                  return h('li', { key: item.id },
+                    h('button', {
+                      type: 'button', role: 'radio', className: 'dsh-team-choice',
+                      'aria-checked': choice === item.id ? 'true' : 'false',
+                      onClick: function () { pick(item.id) },
+                    },
+                      h('span', { className: 'dsh-team-choice-emoji', 'aria-hidden': 'true' }, item.id === 'free' ? h(EditIcon, { size: 16 }) : h(SendIcon, { size: 16 })),
+                      h('span', { className: 'dsh-team-choice-text' },
+                        h('span', { className: 'dsh-team-choice-name' }, item.name),
+                        item.description ? h('span', { className: 'dsh-team-choice-desc' + (item.mono ? ' dsh-team-choice-mono' : '') }, excerpt(item.description, 220)) : null)))
+                }))),
+            needsNumber
+              ? h(Field, {
+                label: t('sendNumber'), htmlFor: 'dsh-send-number',
+                hint: numberMissing && card.valid ? t('sendNumberRequired') + ' ' + t('sendNumberHint') : t('sendNumberHint'),
+                error: !card.valid ? t('sendNumberInvalid') : null,
+              },
+                h('input', {
+                  id: 'dsh-send-number', ref: numberRef, className: 'dsh-bots-input', value: number, inputMode: 'numeric',
+                  autoComplete: 'off', spellCheck: false, maxLength: 20, placeholder: '123',
+                  style: { maxWidth: 180, fontFamily: 'var(--dsh-bots-mono)' },
+                  'aria-invalid': !card.valid ? 'true' : undefined,
+                  onChange: function (event) { changeNumber(event.target.value) },
+                  onBlur: function () { if (card.valid && card.digits) setNumber(card.digits) },
+                }))
+              : null,
+            h(Field, { label: detailsLabel, htmlFor: 'dsh-send-details' },
+              h('textarea', {
+                id: 'dsh-send-details', ref: detailsRef, className: 'dsh-bots-textarea dsh-team-textarea-sm', value: details,
+                maxLength: 20000, placeholder: t('sendDetailsPlaceholder'),
+                onChange: function (event) { setDetails(event.target.value); setError(null) },
+              })),
+            h(Field, { label: t('sendPreview'), htmlFor: 'dsh-send-preview' },
+              h('pre', { id: 'dsh-send-preview', className: 'dsh-team-preview' + (prompt ? '' : ' dsh-team-preview-empty'), 'aria-live': 'polite' }, prompt || t('sendPreviewEmpty'))),
+            error ? h('p', { className: 'dsh-bots-error dsh-bots-form-error', role: 'alert' }, error) : null,
+            h('button', { type: 'submit', hidden: true, tabIndex: -1 })
+          )
       )
     }
 
@@ -3802,6 +4124,10 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /**
+     * "Novo time": a blank team, or a template instantiated through
+     * `POST /api/bots.teams.fromTemplate` (which creates fresh bits, §5.2).
+     */
     function NewTeamDialog(props) {
       const t = props.t
       const nameRef = React.useRef(null)
@@ -3811,6 +4137,7 @@ window.__ModuleLoader__.load({
       const [error, setError] = React.useState(null)
       const [busy, setBusy] = React.useState(false)
       const templates = props.templates
+      const projectId = isProjectId(props.projectId) ? asString(props.projectId) : ''
       const chosen = choice === 'blank' ? null : templates.list.find(function (item) { return item.id === choice }) || null
 
       function pick(id) {
@@ -3829,20 +4156,32 @@ window.__ModuleLoader__.load({
           if (nameRef.current) nameRef.current.focus()
           return
         }
-        let base
+        let pending
         if (chosen) {
-          base = JSON.parse(JSON.stringify(chosen.team))
+          // A template always creates fresh bits before the team (§5.2).
+          pending = Promise.resolve(props.onCreateFromTemplate({
+            templateId: chosen.id,
+            name: trimmed.slice(0, MAX_NAME),
+            projectId: projectId || null,
+          }))
         } else {
-          base = {
-            name: trimmed, description: '', emoji: '👥', color: TYPE_COLOR.group, workspaceDir: null, members: [],
+          const base = {
+            name: trimmed.slice(0, MAX_NAME),
+            description: description,
+            emoji: '👥',
+            color: TYPE_COLOR.group,
+            workspaceDir: null,
+            members: [],
             flow: { nodes: [{ id: 'start', type: 'start', x: 0, y: 0, label: t('nodeStartDefault'), detail: '' }], edges: [] },
+            // A team created inside a project belongs to it and is never shared (§12.4).
+            projectIds: projectId ? [projectId] : [],
+            shared: false,
           }
+          pending = Promise.resolve(props.onCreate(base))
         }
-        base.name = trimmed.slice(0, MAX_NAME)
-        base.description = description
         setBusy(true)
         setError(null)
-        Promise.resolve(props.onCreate(base)).catch(function (reason) {
+        pending.catch(function (reason) {
           setBusy(false)
           setError(describeError(reason))
         })
@@ -3851,7 +4190,7 @@ window.__ModuleLoader__.load({
       const choices = [{ id: 'blank', name: t('blankTeam'), description: t('blankTeamHint'), emoji: '✳️' }].concat(templates.list)
       const footer = [
         h('button', { key: 'cancel', type: 'button', className: 'dsh-bots-button dsh-bots-button-outline', disabled: busy, onClick: props.onCancel }, t('cancel')),
-        h('button', { key: 'ok', type: 'button', className: 'dsh-bots-button dsh-bots-button-primary', disabled: busy, 'aria-busy': busy ? 'true' : undefined, onClick: submit }, busy ? t('saving') : t('createTeam')),
+        h('button', { key: 'ok', type: 'button', className: 'dsh-bots-button dsh-bots-button-primary', disabled: busy, 'aria-busy': busy ? 'true' : undefined, onClick: submit }, busy ? t('creating') : t('createTeam')),
       ]
       return h(Modal, { t: t, title: t('newTeam'), wide: true, initialFocusRef: nameRef, onClose: props.onCancel, dismissDisabled: busy, footer: footer },
         h('form', { onSubmit: submit, style: { display: 'flex', flexDirection: 'column', gap: 14 } },
@@ -3863,6 +4202,7 @@ window.__ModuleLoader__.load({
                     type: 'button',
                     role: 'radio',
                     className: 'dsh-team-choice',
+                    'data-template-id': item.id,
                     'aria-checked': choice === item.id ? 'true' : 'false',
                     onClick: function () { pick(item.id) },
                   },
@@ -3871,6 +4211,7 @@ window.__ModuleLoader__.load({
                       h('span', { className: 'dsh-team-choice-name' }, item.name),
                       item.description ? h('span', { className: 'dsh-team-choice-desc' }, excerpt(item.description, 180)) : null)))
               })),
+            chosen ? h('p', { className: 'dsh-bots-hint' }, t('addMemberHint')) : null,
             templates.phase === 'loading' ? h('p', { className: 'dsh-bots-hint', role: 'status' }, t('templatesLoading')) : null),
           h(Field, { label: t('teamName'), htmlFor: 'dsh-team-name', error: error },
             h('input', {
@@ -3878,12 +4219,14 @@ window.__ModuleLoader__.load({
               placeholder: t('teamNamePlaceholder'), 'aria-invalid': error ? 'true' : undefined,
               onChange: function (event) { setName(event.target.value); setError(null) },
             })),
-          h(Field, { label: t('teamDescription'), htmlFor: 'dsh-team-description' },
-            h('textarea', {
-              id: 'dsh-team-description', className: 'dsh-bots-textarea dsh-team-textarea-sm', value: description,
-              maxLength: 2000, placeholder: t('teamDescriptionPlaceholder'),
-              onChange: function (event) { setDescription(event.target.value) },
-            })),
+          chosen
+            ? null
+            : h(Field, { label: t('teamDescription'), htmlFor: 'dsh-team-description' },
+              h('textarea', {
+                id: 'dsh-team-description', className: 'dsh-bots-textarea dsh-team-textarea-sm', value: description,
+                maxLength: 2000, placeholder: t('teamDescriptionPlaceholder'),
+                onChange: function (event) { setDescription(event.target.value) },
+              })),
           h('button', { type: 'submit', hidden: true, tabIndex: -1 })
         )
       )
@@ -3909,7 +4252,9 @@ window.__ModuleLoader__.load({
       const [data, setData] = React.useState({ phase: 'loading', teams: [], error: null })
       const [templates, setTemplates] = React.useState({ phase: 'idle', list: [] })
       const [packs, setPacks] = React.useState({ phase: 'idle', list: [], error: null })
-      const [providers, setProviders] = React.useState({ phase: 'idle', list: [], error: null })
+      const [projects, setProjects] = React.useState({ phase: 'idle', list: [], error: null })
+      const [bits, setBits] = React.useState({ phase: 'loading', list: [], byId: {} })
+      const [models, setModels] = React.useState(function () { return emptyModels('idle') })
       const [dialog, setDialog] = React.useState(null)
       const [openId, setOpenId] = React.useState(null)
       const aliveRef = React.useRef(true)
@@ -3920,10 +4265,10 @@ window.__ModuleLoader__.load({
         return function () { aliveRef.current = false }
       }, [])
 
-      // Harness packs feed the card badges, the editor selects and the Harness dialog.
-      // A Host without the route (older bundle) just leaves the list empty.
       const tRef = React.useRef(t)
       tRef.current = t
+
+      // Harness packs feed the card badges, the editor selects and the Harness dialog.
       const loadPacks = React.useCallback(function () {
         setPacks(function (previous) { return { phase: previous.list.length > 0 ? 'ready' : 'loading', list: previous.list, error: null } })
         return harnessApi.list().then(function (list) {
@@ -3933,22 +4278,42 @@ window.__ModuleLoader__.load({
           setPacks(function (previous) { return { phase: 'error', list: previous.list, error: requestErrorText(error, tRef.current) } })
         })
       }, [])
-
       React.useEffect(function () { loadPacks() }, [loadPacks])
 
-      // Model providers (accounts) of the profile feed the member "Provedor" select.
-      // A Host without the route just leaves the list empty (the select hides).
-      const loadProviders = React.useCallback(function () {
-        setProviders(function (previous) { return { phase: 'loading', list: previous.list, error: null } })
-        return teamsApi.providers().then(function (list) {
-          if (aliveRef.current) setProviders({ phase: 'ready', list: list, error: null })
+      // Projects feed the card badges and the editor's project/shared fields (§12.4).
+      const loadProjects = React.useCallback(function () {
+        setProjects(function (previous) { return { phase: previous.list.length > 0 ? 'ready' : 'loading', list: previous.list, error: null } })
+        return projectsApi.list().then(function (list) {
+          if (aliveRef.current) setProjects({ phase: 'ready', list: list, error: null })
         }, function (error) {
           if (!aliveRef.current) return
-          setProviders(function (previous) { return { phase: 'error', list: previous.list, error: requestErrorText(error, tRef.current) } })
+          setProjects(function (previous) { return { phase: 'error', list: previous.list, error: requestErrorText(error, tRef.current) } })
         })
       }, [])
+      React.useEffect(function () { loadProjects() }, [loadProjects])
 
-      React.useEffect(function () { loadProviders() }, [loadProviders])
+      // Team members reference bits: the list feeds the member picker and display.
+      const loadBits = React.useCallback(function () {
+        setBits(function (previous) { return { phase: previous.list.length > 0 ? 'ready' : 'loading', list: previous.list, byId: previous.byId } })
+        return api.list().then(function (payload) {
+          if (aliveRef.current) setBits({ phase: 'ready', list: payload.bits, byId: payload.byId })
+        }, function (error) {
+          if (!aliveRef.current) return
+          setBits(function (previous) { return { phase: 'error', list: previous.list, byId: previous.byId, error: requestErrorText(error, tRef.current) } })
+        })
+      }, [])
+      React.useEffect(function () { loadBits() }, [loadBits])
+
+      // Model catalog labels the members' read-only model/effort line.
+      const loadModels = React.useCallback(function () {
+        return api.models().then(function (payload) {
+          if (aliveRef.current) setModels({ phase: 'ready', list: payload.list, byId: payload.byId, error: payload.error })
+        }, function (error) {
+          if (!aliveRef.current) return
+          setModels(function (previous) { return { phase: 'error', list: previous.list, byId: previous.byId, error: requestErrorText(error, tRef.current) } })
+        })
+      }, [])
+      React.useEffect(function () { loadModels() }, [loadModels])
 
       function packImported(pack) {
         setPacks(function (previous) {
@@ -3963,20 +4328,37 @@ window.__ModuleLoader__.load({
       }
 
       async function createFromPack(pack) {
-        const team = await teamsApi.fromPack(pack.id)
-        upsert(team)
+        const result = await teamsApi.fromPack(pack.id)
+        upsert(result.team)
+        loadBits()
         setDialog(null)
         showToast('success', t('teamFromPackCreated'))
+        setOpenId(result.team.id)
       }
 
+      /**
+       * "Enviar pedido": the host starts the mission and returns the created
+       * session; open it when the page can, otherwise the dialog shows its id.
+       */
       async function sendRequest(team, prompt) {
-        if (typeof props.startSession !== 'function') throw new Error(t('sendUnavailable'))
-        const result = await teamsApi.workspace(team.id)
-        if (!result.workspaceId) throw new Error(t('sendNoWorkspace'))
-        await Promise.resolve(props.startSession(result.workspaceId, { prompt: prompt, whenDraftExists: 'replace' }))
-        if (!aliveRef.current) return
-        setDialog(null)
-        showToast('success', t('sendDone'))
+        const result = await teamsApi.run(team.id, prompt)
+        let opened = false
+        if (result.sessionId && result.workspaceId && typeof props.openSession === 'function') {
+          try {
+            await Promise.resolve(props.openSession(result.sessionId))
+            opened = true
+          } catch (error) {
+            opened = false
+          }
+        }
+        if (!aliveRef.current) return { sessionId: result.sessionId, teamName: result.teamName, workspaceId: result.workspaceId, opened: false }
+        // Opened: the page navigates away, so close the dialog. Otherwise the
+        // dialog keeps the created session id visible (§8).
+        if (opened) {
+          setDialog(null)
+          showToast('success', t('sendStarted'))
+        }
+        return { sessionId: result.sessionId, teamName: result.teamName, workspaceId: result.workspaceId, opened: opened }
       }
 
       const load = React.useCallback(function () {
@@ -4019,12 +4401,28 @@ window.__ModuleLoader__.load({
         })
       }
 
+      // Saving a team with a project while unshared moves it to the Projects tab.
+      function onTeamSaved(team) {
+        upsert(team)
+        if (teamIsProjectExclusive(team)) showToast('success', t('teamMovedToProject'))
+      }
+
       async function createTeam(base) {
         const team = await teamsApi.create(base)
         upsert(team)
         setDialog(null)
         showToast('success', t('teamCreated'))
         setOpenId(team.id)
+      }
+
+      /** Template instantiation creates fresh bits before the team (§5.2). */
+      async function createFromTemplate(input) {
+        const result = await teamsApi.fromTemplate(input)
+        upsert(result.team)
+        loadBits()
+        setDialog(null)
+        showToast('success', t('teamCreated'))
+        setOpenId(result.team.id)
       }
 
       async function duplicate(team) {
@@ -4045,7 +4443,10 @@ window.__ModuleLoader__.load({
       function exportTeam(team) {
         const slug = foldText(team.name).replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'time'
         try {
-          downloadJson(slug + '.team.json', { format: TEAM_EXPORT_FORMAT, version: 1, team: teamPayload(team) })
+          const payload = teamPayload(team)
+          // Project ids are profile-local; the export keeps `shared` only (§12.1).
+          delete payload.projectIds
+          downloadJson(slug + '.team.json', { format: TEAM_EXPORT_FORMAT, version: 1, team: payload })
         } catch (error) {
           showToast('error', t('failed') + ': ' + describeError(error))
         }
@@ -4061,9 +4462,12 @@ window.__ModuleLoader__.load({
           const raw = isObject(parsed) && isObject(parsed.team) ? parsed.team : parsed
           const team = normalizeTeamRecord(raw)
           if (!team || !asString(raw.name)) throw new Error(t('importInvalid'))
+          // Project ids are profile-local; an imported team starts with no project (§12.1).
+          team.projectIds = []
           return teamsApi.create(team)
         }).then(function (created) {
           upsert(created)
+          loadBits()
           showToast('success', t('teamImported'))
         }, function (error) {
           showToast('error', describeError(error))
@@ -4089,14 +4493,22 @@ window.__ModuleLoader__.load({
           onRetryCatalog: props.onRetryCatalog,
           team: openTeam,
           teams: data.teams,
+          projects: projects.list,
           packs: packs,
-          providers: providers,
+          bits: bits,
+          models: models,
           onReloadPacks: loadPacks,
           showToast: showToast,
-          onSaved: upsert,
+          onSaved: onTeamSaved,
           onClose: function () { setOpenId(null) },
         })
       }
+
+      // An unshared team belongs to its project, so the Times tab lists only the
+      // teams that are not exclusive to one (shared teams and project-less
+      // teams). Hidden ones stay reachable through the Projects tab (§12.4).
+      const listedTeams = data.teams.filter(function (team) { return !teamIsProjectExclusive(team) })
+      const projectTeams = data.teams.length - listedTeams.length
 
       let body
       if (data.phase === 'loading') {
@@ -4113,14 +4525,35 @@ window.__ModuleLoader__.load({
           h('p', { className: 'dsh-bots-state-title' }, t('teamsEmpty')),
           h('p', { className: 'dsh-bots-state-text' }, t('teamsEmptyHint')),
           h(Button, { variant: 'primary', onClick: openNew }, h(PlusIcon, { size: 14 }), t('newTeam')))
+      } else if (listedTeams.length === 0) {
+        body = h('div', { className: 'dsh-bots-state' },
+          h('span', { className: 'dsh-bots-state-icon', 'aria-hidden': 'true' }, h(ProjectsGlyph, { size: 40 })),
+          h('p', { className: 'dsh-bots-state-title' }, t('teamsInProjectsTitle')),
+          h('p', { className: 'dsh-bots-state-text' }, tf(t, 'teamsInProjectsHint', { n: projectTeams })),
+          typeof props.onSelectTab === 'function'
+            ? h(Button, { variant: 'primary', onClick: function () { props.onSelectTab('projects') } }, h(ProjectsGlyph, { size: 14 }), t('openProjectsTab'))
+            : null)
       } else {
         body = h(React.Fragment, null,
           data.error ? h('div', { className: 'dsh-bots-banner', role: 'alert' },
             h('span', { className: 'dsh-bots-banner-text' }, t('teamsError') + ' ' + data.error),
             h(Button, { variant: 'outline', size: 'sm', onClick: load }, t('retry'))) : null,
-          h('ul', { className: 'dsh-bots-cards' }, data.teams.map(function (team) {
+          bits.phase === 'error'
+            ? h('div', { className: 'dsh-bots-banner', role: 'alert' },
+              h('span', { className: 'dsh-bots-banner-text' }, t('error') + ' ' + (bits.error || '')),
+              h(Button, { variant: 'outline', size: 'sm', onClick: loadBits }, t('retry')))
+            : null,
+          projectTeams > 0
+            ? h('div', { className: 'dsh-bots-banner' },
+              h('span', { className: 'dsh-bots-banner-text' }, tf(t, 'teamsInProjectsNotice', { n: projectTeams })),
+              typeof props.onSelectTab === 'function'
+                ? h(Button, { variant: 'outline', size: 'sm', onClick: function () { props.onSelectTab('projects') } }, t('openProjectsTab'))
+                : null)
+            : null,
+          h('ul', { className: 'dsh-bots-cards' }, listedTeams.map(function (team) {
             return h(TeamCard, {
-              key: team.id, t: t, team: team, catalog: catalog, packs: packs,
+              key: team.id, t: t, team: team, catalog: catalog, packs: packs, projects: projects.list,
+              bitsById: bits.byId, models: models,
               onOpen: function (item) { setOpenId(item.id) },
               onSend: function (item) { setDialog({ kind: 'send', team: item }) },
               onDuplicate: duplicate,
@@ -4132,7 +4565,12 @@ window.__ModuleLoader__.load({
 
       let dialogNode = null
       if (dialog && dialog.kind === 'new') {
-        dialogNode = h(NewTeamDialog, { key: 'new', t: t, templates: templates, onCancel: function () { setDialog(null) }, onCreate: createTeam })
+        dialogNode = h(NewTeamDialog, {
+          key: 'new', t: t, templates: templates,
+          onCancel: function () { setDialog(null) },
+          onCreate: createTeam,
+          onCreateFromTemplate: createFromTemplate,
+        })
       } else if (dialog && dialog.kind === 'delete') {
         dialogNode = h(ConfirmDialog, {
           key: 'delete', t: t, destructive: true,
@@ -4145,7 +4583,7 @@ window.__ModuleLoader__.load({
       } else if (dialog && dialog.kind === 'send') {
         const current = data.teams.find(function (item) { return item.id === dialog.team.id }) || dialog.team
         dialogNode = h(SendRequestDialog, {
-          key: 'send-' + current.id, t: t, team: current, teams: data.teams,
+          key: 'send-' + current.id, t: t, team: current,
           onCancel: function () { setDialog(null) },
           onSubmit: sendRequest,
         })
@@ -4173,12 +4611,589 @@ window.__ModuleLoader__.load({
                 }, h(PackageIcon, { size: 14 }), t('harnessButton')),
                 h('input', { ref: fileRef, type: 'file', accept: 'application/json,.json', hidden: true, onChange: onImportFile }),
                 h(Button, { variant: 'outline', title: t('importTeamHint'), onClick: function () { if (fileRef.current) fileRef.current.click() } }, h(UploadIcon, { size: 14 }), t('importTeam')),
-                h(IconButton, { label: t('refresh'), onClick: function () { load(); loadPacks(); loadProviders() } }, h(RefreshIcon, { size: 16 })),
+                h(IconButton, { label: t('refresh'), onClick: function () { load(); loadPacks(); loadProjects(); loadBits(); loadModels() } }, h(RefreshIcon, { size: 16 })),
                 h(Button, { variant: 'primary', onClick: openNew }, h(PlusIcon, { size: 14 }), t('newTeam')))),
             h('div', { className: 'dsh-bots-tabrow' }, props.tabs),
             h('div', { className: 'dsh-bots-body', 'aria-busy': data.phase === 'loading' ? 'true' : undefined }, body))),
         dialogNode
       )
+    }
+
+    /* ------------------------ projects layer ---------------------- */
+
+    /** Project avatar: the project emoji over a tint of its colour. */
+    function ProjectAvatar(props) {
+      const project = props.project
+      const size = props.size || 44
+      return h('span', {
+        className: 'dsh-bots-avatar',
+        'aria-hidden': 'true',
+        style: { width: size, height: size, fontSize: Math.round(size / 2), background: hexAlpha(project.color, 0.16) },
+      }, project.emoji || PROJECT_EMOJI)
+    }
+
+    /** Project card of the Projects list (CONTRACT.md §12.4). */
+    function ProjectCard(props) {
+      const t = props.t
+      const project = props.project
+      const counts = props.counts
+      const description = excerpt(project.description, 220)
+      return h('li', { className: 'dsh-bots-card' },
+        h('div', { className: 'dsh-bots-card-head' },
+          h(ProjectAvatar, { project: project }),
+          h('div', { className: 'dsh-bots-card-titles' },
+            h('div', { className: 'dsh-bots-name-row' },
+              h('h3', { className: 'dsh-bots-name', title: project.name }, project.name)),
+            h('p', { className: 'dsh-bots-role' }, tf(t, 'projectTeamsCount', { n: counts.teams })))),
+        h('p', { className: 'dsh-bots-persona' + (description ? '' : ' dsh-bots-persona-empty'), title: description || undefined }, description || t('noDescription')),
+        counts.shared > 0
+          ? h('div', { className: 'dsh-team-badges' },
+            h(Badge, { dot: false, tone: 'info', label: tf(t, 'projectSharedCount', { n: counts.shared }) }))
+          : null,
+        h('div', { className: 'dsh-bots-actions' },
+          h(Button, { variant: 'primary', size: 'sm', onClick: function () { props.onOpen(project) } }, h(ProjectsGlyph, { size: 14 }), t('openProject')),
+          h(IconButton, { label: t('editProject'), className: 'dsh-bots-icon-button-sm', onClick: function () { props.onEdit(project) } }, h(EditIcon, { size: 14 })),
+          h('span', { className: 'dsh-bots-actions-grow' }),
+          h(Button, { variant: 'ghost', size: 'sm', className: 'dsh-bots-button-danger', onClick: function () { props.onDelete(project) } }, h(TrashIcon, { size: 14 }), t('deleteProject')))
+      )
+    }
+
+    /** Create/edit project dialog: name, description, emoji and a colour swatch (§12.4). */
+    function ProjectDialog(props) {
+      const t = props.t
+      const project = props.project || null
+      const nameRef = React.useRef(null)
+      const [name, setName] = React.useState(project ? project.name : '')
+      const [description, setDescription] = React.useState(project ? project.description : '')
+      const [emoji, setEmoji] = React.useState(project ? project.emoji : PROJECT_EMOJI)
+      const [color, setColor] = React.useState(project ? project.color : PROJECT_COLOR)
+      const [error, setError] = React.useState(null)
+      const [busy, setBusy] = React.useState(false)
+
+      function submit(event) {
+        if (event && typeof event.preventDefault === 'function') event.preventDefault()
+        if (busy) return
+        const trimmed = name.trim()
+        if (!trimmed) {
+          setError(t('projectNameRequired'))
+          if (nameRef.current) nameRef.current.focus()
+          return
+        }
+        setBusy(true)
+        setError(null)
+        Promise.resolve(props.onSubmit({ name: trimmed, description: description, emoji: emoji, color: color })).catch(function (reason) {
+          setBusy(false)
+          setError(describeError(reason))
+        })
+      }
+
+      const footer = [
+        h('button', { key: 'cancel', type: 'button', className: 'dsh-bots-button dsh-bots-button-outline', disabled: busy, onClick: props.onCancel }, t('cancel')),
+        h('button', {
+          key: 'ok', type: 'button', className: 'dsh-bots-button dsh-bots-button-primary',
+          disabled: busy, 'aria-busy': busy ? 'true' : undefined, onClick: submit,
+        }, busy ? t('saving') : (project ? t('save') : t('createProject'))),
+      ]
+      return h(Modal, {
+        t: t, title: project ? t('editProject') : t('newProject'), wide: true,
+        initialFocusRef: nameRef, onClose: props.onCancel, dismissDisabled: busy, footer: footer,
+      },
+        h('form', { onSubmit: submit, style: { display: 'flex', flexDirection: 'column', gap: 14 } },
+          h(Field, { label: t('projectName'), htmlFor: 'dsh-project-name', error: error },
+            h('input', {
+              id: 'dsh-project-name', ref: nameRef, className: 'dsh-bots-input', value: name, maxLength: MAX_NAME,
+              placeholder: t('projectNamePlaceholder'), 'aria-invalid': error ? 'true' : undefined,
+              onChange: function (event) { setName(event.target.value); setError(null) },
+            })),
+          h(Field, { label: t('projectDescription'), htmlFor: 'dsh-project-description' },
+            h('textarea', {
+              id: 'dsh-project-description', className: 'dsh-bots-textarea dsh-team-textarea-sm', value: description,
+              maxLength: 2000, placeholder: t('projectDescriptionPlaceholder'),
+              onChange: function (event) { setDescription(event.target.value) },
+            })),
+          h('div', { className: 'dsh-bots-row' },
+            h(Field, { label: t('projectEmoji'), htmlFor: 'dsh-project-emoji' },
+              h('input', { id: 'dsh-project-emoji', className: 'dsh-bots-input', style: { width: 64, textAlign: 'center' }, value: emoji, maxLength: 8, onChange: function (event) { setEmoji(event.target.value) } })),
+            h(Field, { label: t('projectColor'), htmlFor: 'dsh-project-color', grow: true },
+              h('div', { className: 'dsh-bots-palette', id: 'dsh-project-color' }, GROUP_COLORS.map(function (swatch) {
+                return h('button', {
+                  key: swatch, type: 'button', className: 'dsh-bots-swatch', style: { backgroundColor: swatch },
+                  'aria-pressed': color === swatch ? 'true' : 'false', 'aria-label': swatch,
+                  onClick: function () { setColor(swatch) },
+                })
+              })))),
+          h('button', { type: 'submit', hidden: true, tabIndex: -1 })
+        )
+      )
+    }
+
+    /** "Adicionar times": checkbox picker over every team; only changed memberships are patched. */
+    function ProjectTeamsDialog(props) {
+      const t = props.t
+      const project = props.project
+      const teams = Array.isArray(props.teams) ? props.teams : []
+      const projects = Array.isArray(props.projects) ? props.projects : []
+      const [selected, setSelected] = React.useState(function () {
+        const map = {}
+        teams.forEach(function (team) { if (team.projectIds.indexOf(project.id) >= 0) map[team.id] = true })
+        return map
+      })
+
+      function otherProjectOf(team) {
+        for (let index = 0; index < team.projectIds.length; index += 1) {
+          if (team.projectIds[index] !== project.id) return projectLabel(projects, team.projectIds[index], t)
+        }
+        return ''
+      }
+
+      function toggle(team, checked) {
+        setSelected(function (previous) {
+          const next = Object.assign({}, previous)
+          if (checked) next[team.id] = true
+          else delete next[team.id]
+          return next
+        })
+      }
+
+      const ids = Object.keys(selected).filter(function (id) { return selected[id] })
+      const footer = [
+        h('button', { key: 'cancel', type: 'button', className: 'dsh-bots-button dsh-bots-button-outline', onClick: props.onCancel }, t('cancel')),
+        h('button', { key: 'ok', type: 'button', className: 'dsh-bots-button dsh-bots-button-primary', onClick: function () { props.onConfirm(ids) } }, t('addTeamsConfirm')),
+      ]
+      let body
+      if (teams.length === 0) {
+        body = h('p', { className: 'dsh-bots-hint' }, t('teamsEmpty'))
+      } else {
+        body = h('div', { className: 'dsh-project-picker' }, teams.map(function (team) {
+          const inProject = team.projectIds.indexOf(project.id) >= 0
+          // A non-shared team that already belongs to another project cannot be added here (§12.4).
+          const blocked = !inProject && team.shared !== true && team.projectIds.length > 0
+          return h(Checkbox, {
+            key: team.id,
+            checked: selected[team.id] === true,
+            disabled: blocked,
+            label: h('span', { className: 'dsh-project-picker-label' },
+              h('span', null, (team.emoji ? team.emoji + ' ' : '') + team.name),
+              blocked ? h('span', { className: 'dsh-project-picker-note' }, t('projectTeamNotShared') + ' (' + otherProjectOf(team) + ')') : null),
+            onChange: function (checked) { toggle(team, checked) },
+          })
+        }))
+      }
+      return h(Modal, { t: t, title: t('addTeamsTitle'), wide: true, onClose: props.onCancel, footer: footer },
+        h('p', { className: 'dsh-bots-hint' }, t('addTeamsHint')),
+        body)
+    }
+
+    /** Projects tab: list of projects and the project detail with its teams (§12.4). */
+    function ProjectsView(props) {
+      const t = props.t
+      const lang = props.lang
+      const catalog = props.catalog
+      const showToast = props.showToast
+      const [data, setData] = React.useState({ phase: 'loading', projects: [], teams: [], error: null })
+      const [templates, setTemplates] = React.useState({ phase: 'idle', list: [] })
+      const [packs, setPacks] = React.useState({ phase: 'idle', list: [], error: null })
+      const [bits, setBits] = React.useState({ phase: 'loading', list: [], byId: {} })
+      const [models, setModels] = React.useState(function () { return emptyModels('idle') })
+      const [dialog, setDialog] = React.useState(null)
+      const [openProjectId, setOpenProjectId] = React.useState(null)
+      const [openTeamId, setOpenTeamId] = React.useState(null)
+      const aliveRef = React.useRef(true)
+
+      React.useEffect(function () {
+        aliveRef.current = true
+        return function () { aliveRef.current = false }
+      }, [])
+
+      // Same optional side data as the Teams tab: pack badges and team templates.
+      const tRef = React.useRef(t)
+      tRef.current = t
+      const loadPacks = React.useCallback(function () {
+        setPacks(function (previous) { return { phase: previous.list.length > 0 ? 'ready' : 'loading', list: previous.list, error: null } })
+        return harnessApi.list().then(function (list) {
+          if (aliveRef.current) setPacks({ phase: 'ready', list: list, error: null })
+        }, function (error) {
+          if (!aliveRef.current) return
+          setPacks(function (previous) { return { phase: 'error', list: previous.list, error: requestErrorText(error, tRef.current) } })
+        })
+      }, [])
+      React.useEffect(function () { loadPacks() }, [loadPacks])
+
+      // Member references and read-only routes: bits + the model catalog labels.
+      const loadBits = React.useCallback(function () {
+        setBits(function (previous) { return { phase: previous.list.length > 0 ? 'ready' : 'loading', list: previous.list, byId: previous.byId } })
+        return api.list().then(function (payload) {
+          if (aliveRef.current) setBits({ phase: 'ready', list: payload.bits, byId: payload.byId })
+        }, function (error) {
+          if (!aliveRef.current) return
+          setBits(function (previous) { return { phase: 'error', list: previous.list, byId: previous.byId, error: requestErrorText(error, tRef.current) } })
+        })
+      }, [])
+      React.useEffect(function () { loadBits() }, [loadBits])
+
+      const loadModels = React.useCallback(function () {
+        return api.models().then(function (payload) {
+          if (aliveRef.current) setModels({ phase: 'ready', list: payload.list, byId: payload.byId, error: payload.error })
+        }, function (error) {
+          if (!aliveRef.current) return
+          setModels(function (previous) { return { phase: 'error', list: previous.list, byId: previous.byId, error: requestErrorText(error, tRef.current) } })
+        })
+      }, [])
+      React.useEffect(function () { loadModels() }, [loadModels])
+
+      const load = React.useCallback(function () {
+        setData(function (previous) {
+          return { phase: previous.projects.length > 0 ? 'ready' : 'loading', projects: previous.projects, teams: previous.teams, error: null }
+        })
+        return Promise.all([projectsApi.list(), teamsApi.list()]).then(function (result) {
+          if (aliveRef.current) setData({ phase: 'ready', projects: result[0], teams: result[1], error: null })
+        }, function (error) {
+          if (!aliveRef.current) return
+          setData(function (previous) {
+            return {
+              phase: previous.projects.length > 0 ? 'ready' : 'error',
+              projects: previous.projects,
+              teams: previous.teams,
+              error: requestErrorText(error, tRef.current),
+            }
+          })
+        })
+      }, [])
+      React.useEffect(function () { load() }, [load])
+
+      function loadTemplates() {
+        if (templates.phase === 'ready' || templates.phase === 'loading') return
+        setTemplates({ phase: 'loading', list: [] })
+        teamsApi.templates().then(function (list) {
+          if (aliveRef.current) setTemplates({ phase: 'ready', list: list })
+        }, function () {
+          if (aliveRef.current) setTemplates({ phase: 'error', list: [] })
+        })
+      }
+
+      const teams = data.teams
+      const projects = data.projects
+      const projectsById = React.useMemo(function () { return indexBy(projects) }, [projects])
+      const detailProject = openProjectId ? projectsById[openProjectId] || null : null
+      const openTeam = openTeamId ? teams.find(function (team) { return team.id === openTeamId }) || null : null
+
+      function teamsOf(project) {
+        return teams.filter(function (team) { return team.projectIds.indexOf(project.id) >= 0 })
+      }
+      function countsOf(project) {
+        const list = teamsOf(project)
+        return {
+          teams: list.length,
+          shared: list.filter(function (team) { return team.shared === true }).length,
+        }
+      }
+
+      function upsertTeam(team) {
+        setData(function (previous) {
+          const exists = previous.teams.some(function (item) { return item.id === team.id })
+          return {
+            phase: 'ready',
+            projects: previous.projects,
+            error: null,
+            teams: exists
+              ? previous.teams.map(function (item) { return item.id === team.id ? team : item })
+              : previous.teams.concat([team]),
+          }
+        })
+      }
+
+      function openNewProject() { setDialog({ kind: 'project', project: null }) }
+      function openEditProject(project) { setDialog({ kind: 'project', project: project }) }
+      function openDeleteProject(project) { setDialog({ kind: 'deleteProject', project: project }) }
+      function openNewTeam(project) { loadTemplates(); setDialog({ kind: 'newTeam', project: project }) }
+      function openAddTeams(project) { setDialog({ kind: 'teams', project: project }) }
+
+      async function saveProject(values) {
+        const editing = dialog && dialog.project ? dialog.project : null
+        if (editing) await projectsApi.update(editing.id, values)
+        else await projectsApi.create(values)
+        setDialog(null)
+        showToast('success', t(editing ? 'projectSaved' : 'projectCreated'))
+        await load()
+      }
+
+      async function confirmDeleteProject() {
+        const project = dialog && dialog.project
+        if (!project) return
+        const result = await projectsApi.remove(project.id)
+        setOpenProjectId(null)
+        setDialog(null)
+        await load()
+        // Teams are detached, never deleted; report how many when the host says so (§12.3).
+        const detached = result.detachedTeams > 0 ? ' ' + tf(t, 'projectTeamsDetached', { n: result.detachedTeams }) : ''
+        showToast('success', t('projectDeleted') + detached)
+      }
+
+      async function createTeam(base) {
+        const team = await teamsApi.create(base)
+        upsertTeam(team)
+        setDialog(null)
+        showToast('success', t('teamCreated'))
+        await load()
+      }
+
+      /** Template instantiation creates fresh bits before the team (§5.2). */
+      async function createFromTemplate(input) {
+        const result = await teamsApi.fromTemplate(input)
+        upsertTeam(result.team)
+        setDialog(null)
+        showToast('success', t('teamCreated'))
+        await Promise.all([load(), loadBits()])
+      }
+
+      async function applyTeams(project, selectedIds) {
+        try {
+          const changed = teams.filter(function (team) {
+            return (team.projectIds.indexOf(project.id) >= 0) !== (selectedIds.indexOf(team.id) >= 0)
+          })
+          for (let index = 0; index < changed.length; index += 1) {
+            const team = changed[index]
+            const next = selectedIds.indexOf(team.id) >= 0
+              ? team.projectIds.concat([project.id])
+              : team.projectIds.filter(function (id) { return id !== project.id })
+            await teamsApi.update(team.id, Object.assign({}, team, { projectIds: next }))
+          }
+          setDialog(null)
+          await load()
+        } catch (error) {
+          showToast('error', t('saveFailed') + ': ' + describeError(error))
+          await load()
+        }
+      }
+
+      async function detachTeam(project, team) {
+        if (!project) return
+        try {
+          await teamsApi.update(team.id, Object.assign({}, team, {
+            projectIds: team.projectIds.filter(function (id) { return id !== project.id }),
+          }))
+          showToast('success', t('removeFromProjectDone'))
+          await load()
+        } catch (error) {
+          showToast('error', t('saveFailed') + ': ' + describeError(error))
+        }
+      }
+
+      async function confirmDeleteTeam() {
+        const team = dialog && dialog.team
+        if (!team) return
+        await teamsApi.remove(team.id)
+        setDialog(null)
+        showToast('success', t('teamDeleted'))
+        await load()
+      }
+
+      async function duplicate(team) {
+        try {
+          const copy = JSON.parse(JSON.stringify(team))
+          const suffix = ' ' + t('copySuffix')
+          copy.name = team.name.slice(0, MAX_NAME - suffix.length) + suffix
+          copy.bindWorkspace = false
+          const created = await teamsApi.create(copy)
+          upsertTeam(created)
+          showToast('success', t('teamDuplicated'))
+        } catch (error) {
+          showToast('error', t('failed') + ': ' + describeError(error))
+        }
+      }
+
+      function exportTeam(team) {
+        const slug = foldText(team.name).replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'time'
+        try {
+          const payload = teamPayload(team)
+          delete payload.projectIds
+          downloadJson(slug + '.team.json', { format: TEAM_EXPORT_FORMAT, version: 1, team: payload })
+        } catch (error) {
+          showToast('error', t('failed') + ': ' + describeError(error))
+        }
+      }
+
+      async function sendRequest(team, prompt) {
+        const result = await teamsApi.run(team.id, prompt)
+        let opened = false
+        if (result.sessionId && result.workspaceId && typeof props.openSession === 'function') {
+          try {
+            await Promise.resolve(props.openSession(result.sessionId))
+            opened = true
+          } catch (error) {
+            opened = false
+          }
+        }
+        if (!aliveRef.current) return { sessionId: result.sessionId, teamName: result.teamName, workspaceId: result.workspaceId, opened: false }
+        // Opened: the page navigates away, so close the dialog. Otherwise the
+        // dialog keeps the created session id visible (§8).
+        if (opened) {
+          setDialog(null)
+          showToast('success', t('sendStarted'))
+        }
+        return { sessionId: result.sessionId, teamName: result.teamName, workspaceId: result.workspaceId, opened: opened }
+      }
+
+      // Opening a card renders the same TeamEditor inside the Projects tab (§12.4).
+      if (openTeam) {
+        return h(TeamEditor, {
+          key: openTeam.id,
+          t: t,
+          lang: lang,
+          catalog: catalog,
+          onRetryCatalog: props.onRetryCatalog,
+          team: openTeam,
+          teams: teams,
+          projects: projects,
+          packs: packs,
+          bits: bits,
+          models: models,
+          onReloadPacks: loadPacks,
+          showToast: showToast,
+          onSaved: upsertTeam,
+          backLabel: t('backToProjects'),
+          onClose: function () { setOpenTeamId(null) },
+        })
+      }
+
+      let dialogNode = null
+      if (dialog && dialog.kind === 'project') {
+        dialogNode = h(ProjectDialog, {
+          key: 'project', t: t, project: dialog.project,
+          onCancel: function () { setDialog(null) },
+          onSubmit: saveProject,
+        })
+      } else if (dialog && dialog.kind === 'deleteProject') {
+        dialogNode = h(ConfirmDialog, {
+          key: 'deleteProject', t: t, destructive: true,
+          title: tf(t, 'deleteProjectTitle', { name: dialog.project.name }),
+          description: t('deleteProjectBody'),
+          confirmLabel: t('deleteProject'),
+          onCancel: function () { setDialog(null) },
+          onConfirm: confirmDeleteProject,
+        })
+      } else if (dialog && dialog.kind === 'newTeam') {
+        dialogNode = h(NewTeamDialog, {
+          key: 'newTeam', t: t, templates: templates, projectId: dialog.project.id,
+          onCancel: function () { setDialog(null) },
+          onCreate: createTeam,
+          onCreateFromTemplate: createFromTemplate,
+        })
+      } else if (dialog && dialog.kind === 'teams') {
+        dialogNode = h(ProjectTeamsDialog, {
+          key: 'teams', t: t, project: dialog.project, teams: teams, projects: projects,
+          onCancel: function () { setDialog(null) },
+          onConfirm: function (ids) { return applyTeams(dialog.project, ids) },
+        })
+      } else if (dialog && dialog.kind === 'deleteTeam') {
+        dialogNode = h(ConfirmDialog, {
+          key: 'deleteTeam', t: t, destructive: true,
+          title: tf(t, 'deleteTeamTitle', { name: dialog.team.name }),
+          description: t('deleteTeamBody'),
+          confirmLabel: t('deleteTeam'),
+          onCancel: function () { setDialog(null) },
+          onConfirm: confirmDeleteTeam,
+        })
+      } else if (dialog && dialog.kind === 'send') {
+        const current = teams.find(function (item) { return item.id === dialog.team.id }) || dialog.team
+        dialogNode = h(SendRequestDialog, {
+          key: 'send-' + current.id, t: t, team: current,
+          onCancel: function () { setDialog(null) },
+          onSubmit: sendRequest,
+        })
+      }
+
+      if (detailProject) {
+        const projectTeams = teamsOf(detailProject)
+        const counts = countsOf(detailProject)
+        const description = excerpt(detailProject.description, 400)
+        let projectBody
+        if (projectTeams.length === 0) {
+          projectBody = h('div', { className: 'dsh-bots-state' },
+            h('span', { className: 'dsh-bots-state-icon', 'aria-hidden': 'true' }, h(ProjectsGlyph, { size: 40 })),
+            h('p', { className: 'dsh-bots-state-title' }, t('noProjectTeams')),
+            h('p', { className: 'dsh-bots-state-text' }, t('noProjectTeamsHint')),
+            h(Button, { variant: 'primary', onClick: function () { openAddTeams(detailProject) } }, h(PlusIcon, { size: 14 }), t('addExistingTeams')))
+        } else {
+          projectBody = h('ul', { className: 'dsh-bots-cards' }, projectTeams.map(function (team) {
+            return h(TeamCard, {
+              key: team.id, t: t, team: team, catalog: catalog, packs: packs, projects: projects,
+              bitsById: bits.byId, models: models,
+              onOpen: function (item) { setOpenTeamId(item.id) },
+              onSend: function (item) { setDialog({ kind: 'send', team: item }) },
+              onDuplicate: duplicate,
+              onExport: exportTeam,
+              onDetach: function (item) { return detachTeam(detailProject, item) },
+              onDelete: function (item) { setDialog({ kind: 'deleteTeam', team: item }) },
+            })
+          }))
+        }
+        return h(React.Fragment, null,
+          h('div', { className: 'dsh-bots-page' },
+            h('div', { className: 'dsh-bots-inner' },
+              h('header', { className: 'dsh-bots-head' },
+                h('div', { className: 'dsh-project-head' },
+                  h(IconButton, { label: t('backToProjects'), onClick: function () { setOpenProjectId(null) } }, h(ArrowLeftIcon, { size: 16 })),
+                  h(ProjectAvatar, { project: detailProject, size: 48 }),
+                  h('div', { className: 'dsh-project-heading' },
+                    h('h1', { className: 'dsh-project-name', title: detailProject.name }, detailProject.name),
+                    description ? h('p', { className: 'dsh-project-desc' }, description) : null,
+                    h('div', { className: 'dsh-project-meta' },
+                      h(Badge, { dot: false, tone: 'info', label: tf(t, 'projectTeamsCount', { n: counts.teams }) }),
+                      counts.shared > 0 ? h(Badge, { dot: false, label: tf(t, 'projectSharedCount', { n: counts.shared }) }) : null))),
+                h('div', { className: 'dsh-bots-toolbar' },
+                  h(Button, { variant: 'primary', onClick: function () { openNewTeam(detailProject) } }, h(PlusIcon, { size: 14 }), t('projectNewTeam')),
+                  h(Button, { variant: 'outline', onClick: function () { openAddTeams(detailProject) } }, h(TeamGlyph, { size: 14 }), t('addExistingTeams')),
+                  h(IconButton, { label: t('editProject'), onClick: function () { openEditProject(detailProject) } }, h(EditIcon, { size: 16 })),
+                  h(IconButton, { label: t('deleteProject'), onClick: function () { openDeleteProject(detailProject) } }, h(TrashIcon, { size: 16 })))),
+              h('div', { className: 'dsh-bots-tabrow' }, props.tabs),
+              h('div', { className: 'dsh-bots-body' }, projectBody))),
+          dialogNode)
+      }
+
+      let body
+      if (data.phase === 'loading') {
+        body = h('p', { className: 'dsh-bots-hint', role: 'status' }, t('projectsLoading'))
+      } else if (data.phase === 'error') {
+        body = h('div', { className: 'dsh-bots-state dsh-bots-state-error' },
+          h('span', { className: 'dsh-bots-state-icon', 'aria-hidden': 'true' }, h(WarningIcon, { size: 28 })),
+          h('p', { className: 'dsh-bots-state-title' }, t('projectsError')),
+          data.error ? h('p', { className: 'dsh-bots-state-text' }, data.error) : null,
+          h(Button, { variant: 'outline', onClick: load }, t('retry')))
+      } else if (projects.length === 0) {
+        body = h('div', { className: 'dsh-bots-state' },
+          h('span', { className: 'dsh-bots-state-icon', 'aria-hidden': 'true' }, h(ProjectsGlyph, { size: 40 })),
+          h('p', { className: 'dsh-bots-state-title' }, t('projectsEmpty')),
+          h('p', { className: 'dsh-bots-state-text' }, t('projectsEmptyHint')),
+          h(Button, { variant: 'primary', onClick: openNewProject }, h(PlusIcon, { size: 14 }), t('newProject')))
+      } else {
+        body = h(React.Fragment, null,
+          data.error ? h('div', { className: 'dsh-bots-banner', role: 'alert' },
+            h('span', { className: 'dsh-bots-banner-text' }, t('projectsError') + ' ' + data.error),
+            h(Button, { variant: 'outline', size: 'sm', onClick: load }, t('retry'))) : null,
+          h('ul', { className: 'dsh-bots-cards' }, projects.map(function (project) {
+            return h(ProjectCard, {
+              key: project.id, t: t, project: project, counts: countsOf(project),
+              onOpen: function (item) { setOpenProjectId(item.id) },
+              onEdit: openEditProject,
+              onDelete: openDeleteProject,
+            })
+          })))
+      }
+
+      return h(React.Fragment, null,
+        h('div', { className: 'dsh-bots-page' },
+          h('div', { className: 'dsh-bots-inner' },
+            h('header', { className: 'dsh-bots-head' },
+              h('div', { className: 'dsh-bots-heading' },
+                h('h1', { className: 'dsh-bots-title' }, t('title')),
+                h('p', { className: 'dsh-bots-intro' }, t('projectsSubtitle'))),
+              h('div', { className: 'dsh-bots-toolbar' },
+                h(IconButton, { label: t('refresh'), onClick: function () { load(); loadPacks(); loadBits(); loadModels() } }, h(RefreshIcon, { size: 16 })),
+                h(Button, { variant: 'primary', onClick: openNewProject }, h(PlusIcon, { size: 14 }), t('newProject')))),
+            h('div', { className: 'dsh-bots-tabrow' }, props.tabs),
+            h('div', { className: 'dsh-bots-body', 'aria-busy': data.phase === 'loading' ? 'true' : undefined }, body))),
+        dialogNode)
     }
 
     /* -------------------------- editor ---------------------------- */
@@ -4198,6 +5213,8 @@ window.__ModuleLoader__.load({
         rules: asString(team.rules),
         skills: Array.isArray(team.skills) ? team.skills : [],
         entry: Array.isArray(team.entry) ? team.entry : [],
+        shared: team.shared === true,
+        projectIds: Array.isArray(team.projectIds) ? team.projectIds : [],
       }
     }
 
@@ -4222,6 +5239,8 @@ window.__ModuleLoader__.load({
       const lang = props.lang
       const catalog = props.catalog
       const showToast = props.showToast
+      // "Voltar" returns to the tab the editor was opened from (Times by default, Projects inside a project).
+      const backLabel = asString(props.backLabel) || t('backToTeams')
       const history = useFlowHistory(draftOf(props.team))
       const draft = history.draft
       const [savedJson, setSavedJson] = React.useState(function () { return canonicalJson(draftOf(props.team)) })
@@ -4256,8 +5275,10 @@ window.__ModuleLoader__.load({
       const otherTeams = allTeams.filter(function (item) { return item.id !== props.team.id })
       const packs = props.packs || { phase: 'idle', list: [], error: null }
       const pack = findPack(packs, draft.harness)
-      const providersState = props.providers || { phase: 'idle', list: [], error: null }
-      const providerList = Array.isArray(providersState.list) ? providersState.list : []
+      // Member references resolve through the bits list; the model catalog labels routes.
+      const bitsState = props.bits || { phase: 'loading', list: [], byId: {} }
+      const bitsById = bitsState.byId || {}
+      const models = props.models || emptyModels('idle')
 
       // Selections may point at things an undo removed: keep only live ids.
       const liveSelection = React.useMemo(function () {
@@ -4448,6 +5469,16 @@ window.__ModuleLoader__.load({
           showToast('error', t('entryInvalid'))
           select(EMPTY_SELECTION)
           return
+        }
+        // The lead must be an orchestrator bit (V5-CONTRACT.md §5.1).
+        if (payload.lead) {
+          const leadMember = payload.members.find(function (member) { return member.id === payload.lead })
+          const leadBit = leadMember && leadMember.bitId ? bitsById[leadMember.bitId] : null
+          if (!leadBit || leadBit.isOrchestrator !== true) {
+            showToast('error', t('leadNotOrchestrator'))
+            select(EMPTY_SELECTION)
+            return
+          }
         }
         setSaving(true)
         try {
@@ -4792,22 +5823,21 @@ window.__ModuleLoader__.load({
       /* ----- members ----- */
 
       function addMemberFromBit(bit) {
-        const member = memberFromBit(bit, draftRef.current.members, lang)
+        const member = memberFromBit(bit, draftRef.current.members, catalog, lang)
         history.commit(function (previous) { return Object.assign({}, previous, { members: previous.members.concat([member]) }) })
         setDialog(null)
         select({ nodes: [], edge: null, member: member.id })
       }
 
-      function changeMemberBit(memberId, bit) {
+      /** Re-point one member at another bit; role stays (only filled when empty). */
+      function changeMemberBit(memberId, bitId) {
         const member = membersById[memberId]
-        if (!member) return
-        const previousBit = member.character ? catalog.byId[member.character] : null
-        const patch = { character: bit.id }
-        if (!previousBit || member.name === previousBit.name) patch.name = bit.name
-        if (!previousBit || member.instructions === previousBit.instructions || !member.instructions) patch.instructions = bit.instructions
-        if (!previousBit || member.role === summaryOf(previousBit, lang) || !member.role) patch.role = summaryOf(bit, lang).slice(0, 200)
+        const bit = bitId ? bitsById[bitId] || null : null
+        if (!member || !bit) return
+        const character = bitCharacter(bit, catalog)
+        const patch = { bitId: bit.id }
+        if (!member.role) patch.role = character ? summaryOf(character, lang).slice(0, 200) : excerpt(bit.instructions, 200)
         history.commit(function (previous) { return patchMember(previous, memberId, patch) })
-        setDialog(null)
       }
 
       /* ----- render: board ----- */
@@ -4885,7 +5915,7 @@ window.__ModuleLoader__.load({
       const groupNodes = []
       const plainNodes = []
       draft.flow.nodes.forEach(function (node) {
-        const color = nodeColor(node, membersById, catalog)
+        const color = nodeColor(node, membersById, catalog, bitsById)
         const selected = !!selectedNodes[node.id]
         const dimmed = !!highlightMember && !(node.type === 'step' && node.memberId === highlightMember)
         const target = overlay && overlay.kind === 'connect' && overlay.target === node.id
@@ -4906,13 +5936,13 @@ window.__ModuleLoader__.load({
         let content
         if (node.type === 'step') {
           const member = node.memberId ? membersById[node.memberId] : null
-          const bit = member && member.character ? catalog.byId[member.character] : null
+          const memberBitRecord = member ? memberBit(member, bitsById) : null
           const meta = member
-            ? [member.name, member.model, member.effort].filter(Boolean).join(' · ')
+            ? [memberName(member, bitsById), memberRouteText(member, bitsById, models)].filter(Boolean).join(' · ')
             : t('noMember')
           content = [
             member
-              ? h(BitAvatar, { key: 'avatar', bit: bit, size: 42, emoji: '🤖', color: color })
+              ? h(BitAvatar, { key: 'avatar', bit: avatarBitOf(memberBitRecord, catalog), size: 42, emoji: '🤖', color: color })
               : h('span', { key: 'avatar', className: 'dsh-flow-avatar-empty', 'aria-hidden': 'true' }, '?'),
             h('span', { key: 'text', className: 'dsh-flow-text' },
               h('span', { className: 'dsh-flow-label' + (node.label ? '' : ' dsh-flow-label-empty') }, labelText),
@@ -5062,13 +6092,13 @@ window.__ModuleLoader__.load({
           draft.members.length === 0
             ? h('p', { className: 'dsh-bots-hint' }, t('membersEmpty'))
             : h('ul', { className: 'dsh-team-members' }, draft.members.map(function (member) {
-              const bit = member.character ? catalog.byId[member.character] : null
+              const memberBitRecord = memberBit(member, bitsById)
               const ref = member.teamRef ? teamsById[member.teamRef] || null : null
               const meta = member.teamRef
                 ? '→ ' + (ref ? ref.name : t('teamNodeMissing'))
-                : ([memberRouteText(member, providerList), member.access === 'read' ? t('accessRead') : null].filter(Boolean).join(' · ') || member.role)
+                : ([memberRouteText(member, bitsById, models), member.access === 'read' ? t('accessRead') : null].filter(Boolean).join(' · ') || member.role)
               const isLead = draft.lead === member.id
-              return h('li', { key: member.id },
+              return h('li', { key: member.id, 'data-member-id': member.id },
                 h('button', {
                   type: 'button',
                   className: 'dsh-team-member',
@@ -5080,10 +6110,10 @@ window.__ModuleLoader__.load({
                     select(liveSelection.member === member.id ? EMPTY_SELECTION : { nodes: [], edge: null, member: member.id })
                   },
                 },
-                  h(BitAvatar, { bit: bit, size: 30, emoji: '🤖', color: TYPE_COLOR.end }),
+                  h(BitAvatar, { bit: avatarBitOf(memberBitRecord, catalog), size: 30, emoji: '🤖', color: TYPE_COLOR.end }),
                   h('span', { className: 'dsh-team-member-text' },
                     h('span', { className: 'dsh-team-member-row' },
-                      h('span', { className: 'dsh-team-member-name' }, member.name),
+                      h('span', { className: 'dsh-team-member-name' }, memberName(member, bitsById)),
                       isLead ? h('span', { className: 'dsh-team-tag' }, t('leadBadge')) : null),
                     meta ? h('span', { className: 'dsh-team-member-meta' + (member.teamRef ? ' dsh-team-member-ref' : '') }, meta) : null),
                   h('span', { className: 'dsh-team-count', title: tf(t, 'memberSteps', { n: stepCounts[member.id] || 0 }) }, String(stepCounts[member.id] || 0))))
@@ -5107,9 +6137,11 @@ window.__ModuleLoader__.load({
           harnessId: draft.harness,
           pack: pack,
           packs: packs,
-          providers: providerList,
+          bits: bitsState,
+          bitsById: bitsById,
+          models: models,
           commit: history.commit,
-          onChangeBit: function () { setDialog({ kind: 'changeBit', memberId: liveSelection.member }) },
+          onChangeBit: changeMemberBit,
           onRemove: function () { requestRemoveMember(liveSelection.member) },
         })
       } else if (liveSelection.edge) {
@@ -5126,6 +6158,7 @@ window.__ModuleLoader__.load({
         inspector = h(NodeInspector, {
           key: 'node-' + node.id,
           t: t, node: node, draft: draft, nodesById: nodesById, membersById: membersById, catalog: catalog,
+          bitsById: bitsById, models: models,
           otherTeams: otherTeams, teamsById: teamsById,
           focusToken: focusRequest && focusRequest.nodeId === node.id ? focusRequest.seq : 0,
           commit: history.commit,
@@ -5144,7 +6177,9 @@ window.__ModuleLoader__.load({
         inspector = h(TeamInspector, {
           t: t, draft: draft, commit: history.commit,
           teamId: props.team.id, teams: allTeams,
+          projects: Array.isArray(props.projects) ? props.projects : [],
           packs: packs, pack: pack, onReloadPacks: props.onReloadPacks,
+          bits: bitsState, bitsById: bitsById, models: models,
         })
       }
 
@@ -5152,7 +6187,7 @@ window.__ModuleLoader__.load({
 
       const zoomPercent = Math.round(view.k * 100) + '%'
       const bar = h('div', { className: 'dsh-team-bar' },
-        h(IconButton, { label: t('backToTeams'), onClick: requestClose }, h(ArrowLeftIcon, { size: 16 })),
+        h(IconButton, { label: backLabel, onClick: requestClose }, h(ArrowLeftIcon, { size: 16 })),
         h('div', { className: 'dsh-team-bar-title' },
           h('span', { 'aria-hidden': 'true', style: { fontSize: 18 } }, draft.emoji || '👥'),
           h('span', { className: 'dsh-team-bar-name', title: draft.name }, draft.name || t('untitled')),
@@ -5180,25 +6215,24 @@ window.__ModuleLoader__.load({
           onCancel: function () { setDialog(null) },
           onConfirm: function () { setDialog(null); props.onClose() },
         })
-      } else if (dialog && (dialog.kind === 'addMember' || dialog.kind === 'changeBit')) {
-        const member = dialog.kind === 'changeBit' ? membersById[dialog.memberId] : null
-        dialogNode = h(Modal, {
-          key: dialog.kind, t: t, size: 'xl',
-          title: member ? tf(t, 'changeBitTitle', { name: member.name }) : t('addMemberTitle'),
-          onClose: function () { setDialog(null) },
-        }, h(CharacterPicker, {
-          t: t, lang: lang, catalog: catalog,
-          onRetry: props.onRetryCatalog,
-          selectedId: member ? member.character : null,
-          onPick: function (bit) {
-            if (member) changeMemberBit(member.id, bit)
-            else addMemberFromBit(bit)
-          },
-        }))
+      } else if (dialog && dialog.kind === 'addMember') {
+        const memberNames = {}
+        draft.members.forEach(function (member) { memberNames[member.bitId] = true })
+        const available = bitsState.list.filter(function (bit) { return !memberNames[bit.id] })
+        dialogNode = h(AddMemberDialog, {
+          key: 'addMember',
+          t: t,
+          lang: lang,
+          catalog: catalog,
+          bits: available,
+          phase: bitsState.phase,
+          onCancel: function () { setDialog(null) },
+          onPick: addMemberFromBit,
+        })
       } else if (dialog && dialog.kind === 'removeMember') {
         dialogNode = h(ConfirmDialog, {
           key: 'removeMember', t: t, destructive: true,
-          title: tf(t, 'removeMemberTitle', { name: dialog.member.name }),
+          title: tf(t, 'removeMemberTitle', { name: memberName(dialog.member, bitsById) }),
           description: tf(t, 'removeMemberBody', { n: dialog.uses }),
           confirmLabel: t('removeMember'),
           onCancel: function () { setDialog(null) },
@@ -5228,12 +6262,40 @@ window.__ModuleLoader__.load({
       const stats = teamStats(draft)
       const workspace = asString(draft.workspaceDir)
       const workspaceBad = workspace.trim() !== '' && !/^(\/|[A-Za-z]:[\\/]|~\/)/.test(workspace.trim())
+      const projects = Array.isArray(props.projects) ? props.projects : []
+      const projectIds = Array.isArray(draft.projectIds) ? draft.projectIds : []
+      const [sharedHint, setSharedHint] = React.useState(false)
+      // Referenced projects missing from the list stay visible so they can be cleared (§12.4).
+      const projectItems = projects.slice()
+      projectIds.forEach(function (id) {
+        if (!findProject(projects, id)) projectItems.push({ id: id, name: t('projectUnknown') + ' (' + id + ')', emoji: '' })
+      })
       function set(field, value) {
         props.commit(function (previous) {
           const patch = {}
           patch[field] = value
           return Object.assign({}, previous, patch)
         }, 'team:' + field)
+      }
+      function changeShared(checked) {
+        const hadMany = projectIds.length > 1
+        props.commit(function (previous) {
+          const ids = Array.isArray(previous.projectIds) ? previous.projectIds : []
+          const next = Object.assign({}, previous, { shared: checked === true })
+          if (!checked && ids.length > 1) next.projectIds = [ids[0]]
+          return next
+        }, 'team:shared')
+        setSharedHint(!checked && hadMany)
+      }
+      function toggleProject(id, checked) {
+        const next = projectIds.filter(function (other) { return other !== id })
+        if (checked) next.push(id)
+        setSharedHint(false)
+        set('projectIds', next)
+      }
+      function pickProject(id) {
+        setSharedHint(false)
+        set('projectIds', id ? [id] : [])
       }
       return h(React.Fragment, null,
         h('section', { className: 'dsh-team-section' },
@@ -5256,7 +6318,42 @@ window.__ModuleLoader__.load({
           h(Field, { label: t('teamWorkspace'), htmlFor: 'dsh-team-prop-workspace', hint: t('teamWorkspaceHint'), error: workspaceBad ? t('workspaceInvalid') : null },
             h('input', { id: 'dsh-team-prop-workspace', className: 'dsh-bots-input', style: { fontFamily: 'var(--dsh-bots-mono)' }, value: workspace, maxLength: 1024, placeholder: '/home/…/projeto', spellCheck: false, onChange: function (event) { set('workspaceDir', event.target.value) } })),
           h('p', { className: 'dsh-team-kv' }, tf(t, 'teamStats', stats))),
-        h(TeamRunSection, { t: t, draft: draft, set: set, commit: props.commit, teamId: props.teamId, teams: props.teams || [], packs: props.packs, pack: props.pack, onReloadPacks: props.onReloadPacks }),
+        // v4: shared flag + project assignment live in the team properties (§12.4).
+        h('section', { className: 'dsh-team-section' },
+          h('h2', { className: 'dsh-team-section-title' }, t('tabProjects')),
+          h('div', { className: 'dsh-bots-field', id: 'dsh-team-prop-shared' },
+            h(Checkbox, {
+              checked: draft.shared === true,
+              label: t('sharedTeam'),
+              onChange: changeShared,
+            }),
+            h('p', { className: 'dsh-bots-hint' }, t('sharedTeamHint')),
+            sharedHint ? h('p', { className: 'dsh-bots-hint', role: 'status' }, t('sharedSingleProjectHint')) : null),
+          draft.shared === true
+            ? h(Field, { label: t('teamProjects'), htmlFor: 'dsh-team-prop-projects', hint: t('teamProjectsHint') },
+              projectItems.length === 0
+                ? h('p', { className: 'dsh-bots-hint' }, t('projectsEmpty'))
+                : h('div', { className: 'dsh-team-launches', id: 'dsh-team-prop-projects' }, projectItems.map(function (project) {
+                  return h(Checkbox, {
+                    key: project.id,
+                    checked: projectIds.indexOf(project.id) >= 0,
+                    label: project.emoji ? project.emoji + ' ' + project.name : project.name,
+                    onChange: function (checked) { toggleProject(project.id, checked) },
+                  })
+                })))
+            : h(Field, { label: t('teamProjects'), htmlFor: 'dsh-team-prop-project', hint: t('teamProjectsHint') },
+              h('select', {
+                id: 'dsh-team-prop-project', className: 'dsh-bots-select', value: projectIds[0] || '',
+                onChange: function (event) { pickProject(event.target.value) },
+              },
+                h('option', { value: '' }, t('noProject')),
+                projects.map(function (project) {
+                  return h('option', { key: project.id, value: project.id }, (project.emoji ? project.emoji + ' ' : '') + project.name)
+                }),
+                projectIds.length > 0 && !findProject(projects, projectIds[0])
+                  ? h('option', { value: projectIds[0] }, t('projectUnknown') + ' (' + projectIds[0] + ')')
+                  : null))),
+        h(TeamRunSection, { t: t, draft: draft, set: set, commit: props.commit, teamId: props.teamId, teams: props.teams || [], packs: props.packs, pack: props.pack, onReloadPacks: props.onReloadPacks, bitsById: props.bitsById || {} }),
         h('section', { className: 'dsh-team-section' },
           h('h2', { className: 'dsh-team-section-title' }, t('shortcuts')),
           h('ul', { className: 'dsh-team-help' },
@@ -5314,7 +6411,12 @@ window.__ModuleLoader__.load({
       const conflict = draft.bindWorkspace && workspace
         ? props.teams.find(function (other) { return other.id !== props.teamId && other.bindWorkspace === true && sameDir(other.workspaceDir, workspace) }) || null
         : null
-      const leadKnown = !draft.lead || draft.members.some(function (member) { return member.id === draft.lead })
+      // Only orchestrator bits may lead a team (V5-CONTRACT.md §5.1).
+      const bitsById = props.bitsById || {}
+      const leadOptions = draft.members.filter(function (member) { return memberIsOrchestrator(member, bitsById) })
+      const leadMember = draft.lead ? draft.members.find(function (member) { return member.id === draft.lead }) || null : null
+      const leadKnown = !draft.lead || !!leadMember
+      const leadInvalid = !!leadMember && !memberIsOrchestrator(leadMember, bitsById)
 
       function setEntries(next, coalesce) {
         props.commit(function (previous) { return Object.assign({}, previous, { entry: next }) }, coalesce || null)
@@ -5350,11 +6452,15 @@ window.__ModuleLoader__.load({
           h('h2', { className: 'dsh-team-section-title' }, t('runSection')),
           h(Field, { label: t('leadLabel'), htmlFor: 'dsh-team-prop-lead', hint: t('leadHint') },
             h('select', {
-              id: 'dsh-team-prop-lead', className: 'dsh-bots-select', value: leadKnown ? (draft.lead || '') : '',
+              id: 'dsh-team-prop-lead', className: 'dsh-bots-select',
+              value: leadKnown && !leadInvalid ? (draft.lead || '') : '',
               onChange: function (event) { set('lead', event.target.value || null) },
             },
               h('option', { value: '' }, t('leadNone')),
-              draft.members.map(function (member) { return h('option', { key: member.id, value: member.id }, member.name) }))),
+              leadOptions.map(function (member) { return h('option', { key: member.id, value: member.id }, memberName(member, bitsById)) }),
+              leadInvalid ? h('option', { value: draft.lead }, memberName(leadMember, bitsById)) : null),
+            leadInvalid ? h('p', { className: 'dsh-bots-warn', role: 'alert' }, t('leadInvalid')) : null,
+            draft.members.length > 0 && leadOptions.length === 0 ? h('p', { className: 'dsh-bots-warn' }, t('noOrchestratorMembers')) : null),
           h(Field, { label: t('harnessLabel'), htmlFor: 'dsh-team-prop-harness' },
             h('select', {
               id: 'dsh-team-prop-harness', className: 'dsh-bots-select', value: draft.harness || '',
@@ -5509,7 +6615,7 @@ window.__ModuleLoader__.load({
             ? h(Field, { label: t('member'), htmlFor: 'dsh-node-member' },
               h('select', { id: 'dsh-node-member', className: 'dsh-bots-select', value: node.memberId || '', onChange: function (event) { set({ memberId: event.target.value || null }, 'member') } },
                 h('option', { value: '' }, t('noMember')),
-                props.draft.members.map(function (member) { return h('option', { key: member.id, value: member.id }, member.name) })))
+                props.draft.members.map(function (member) { return h('option', { key: member.id, value: member.id }, memberName(member, props.bitsById)) })))
             : null,
           node.type === 'team'
             ? h(Field, {
@@ -5577,20 +6683,116 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /**
+     * "Adicionar bit": pick one existing bit (grouped by catalog group) to add
+     * as a team member. Bits are created on the Bits tab (V5-CONTRACT.md §8).
+     */
+    function AddMemberDialog(props) {
+      const t = props.t
+      const lang = props.lang
+      const catalog = props.catalog
+      const bits = Array.isArray(props.bits) ? props.bits : []
+      const [choice, setChoice] = React.useState(bits.length > 0 ? bits[0].id : '')
+      const selectRef = React.useRef(null)
+      const chosen = bits.find(function (bit) { return bit.id === choice }) || null
+      const chosenCharacter = bitCharacter(chosen, catalog)
+
+      // Group by catalog group, in catalog order; unknown/legacy groups last.
+      const sections = []
+      const byGroup = {}
+      function sectionFor(id) {
+        if (!byGroup[id]) {
+          byGroup[id] = { id: id, label: id, bits: [] }
+          sections.push(byGroup[id])
+        }
+        return byGroup[id]
+      }
+      catalog.groups.forEach(function (group) {
+        const section = sectionFor(group.id)
+        section.label = lang === 'en' ? group.label.en : group.label.pt
+      })
+      const other = sectionFor('__other')
+      other.label = t('otherGroup')
+      bits.forEach(function (bit) {
+        const character = bitCharacter(bit, catalog)
+        sectionFor(character && character.group ? character.group : '__other').bits.push(bit)
+      })
+      const visible = sections.filter(function (section) { return section.bits.length > 0 })
+
+      const footer = [
+        h('button', { key: 'cancel', type: 'button', className: 'dsh-bots-button dsh-bots-button-outline', onClick: props.onCancel }, t('cancel')),
+        h('button', {
+          key: 'add',
+          type: 'button',
+          className: 'dsh-bots-button dsh-bots-button-primary',
+          disabled: !chosen,
+          onClick: function () { if (chosen) props.onPick(chosen) },
+        }, t('addMemberConfirm')),
+      ]
+
+      let body
+      if (props.phase === 'loading') {
+        body = h('p', { className: 'dsh-bots-hint', role: 'status' }, t('loading'))
+      } else if (bits.length === 0) {
+        body = h('div', { className: 'dsh-bots-state' },
+          h('span', { className: 'dsh-bots-state-icon', 'aria-hidden': 'true' }, h(BotsGlyph, { size: 36 })),
+          h('p', { className: 'dsh-bots-state-title' }, t('addMemberNoBits')),
+          h('p', { className: 'dsh-bots-state-text' }, t('addMemberNoBitsHint')))
+      } else {
+        body = h(React.Fragment, null,
+          h('p', { className: 'dsh-bots-hint' }, t('addMemberHint')),
+          h(Field, { label: t('addMemberPick'), htmlFor: 'dsh-add-member-bit' },
+            h('select', {
+              id: 'dsh-add-member-bit',
+              ref: selectRef,
+              className: 'dsh-bots-select',
+              value: choice,
+              onChange: function (event) { setChoice(event.target.value) },
+            }, visible.map(function (section) {
+              return h('optgroup', { key: section.id, label: section.label }, section.bits.map(function (bit) {
+                const character = bitCharacter(bit, catalog)
+                return h('option', { key: bit.id, value: bit.id }, character ? bit.name + ' · ' + character.name : bit.name)
+              }))
+            }))),
+          chosen
+            ? h('div', { className: 'dsh-bots-bit-hero' },
+              h(BitAvatar, { bit: avatarBitOf(chosen, catalog), size: 64, emoji: chosen.emoji, color: chosen.color }),
+              h('div', { className: 'dsh-bots-bit-hero-text' },
+                h('p', { className: 'dsh-bots-bit-hero-role' }, chosen.name),
+                h('p', { className: 'dsh-bots-hint' }, chosenCharacter
+                  ? chosenCharacter.name + ' · ' + groupLabelOf(catalog, chosenCharacter.group, lang, t)
+                  : t('noCharacter')),
+                h('div', { className: 'dsh-team-badges' },
+                  h(Badge, {
+                    dot: false,
+                    tone: chosen.isOrchestrator === true ? 'info' : 'neutral',
+                    label: chosen.isOrchestrator === true ? t('orchestrator') : t('worker'),
+                  }),
+                  bitRouteText(chosen, props.models)
+                    ? h(Badge, { dot: false, label: bitRouteText(chosen, props.models) })
+                    : null)))
+            : null)
+      }
+
+      return h(Modal, { t: t, title: t('addMemberTitle'), initialFocusRef: selectRef, onClose: props.onCancel, footer: footer },
+        body)
+    }
+
+    /** Member editor: the bit reference (read-only route) + team-scoped fields (§8). */
     function MemberInspector(props) {
       const t = props.t
       const member = props.member
       if (!member) return null
-      const bit = member.character ? props.catalog.byId[member.character] : null
+      const bitsById = props.bitsById || {}
+      const models = props.models || emptyModels('idle')
+      const catalog = props.catalog
+      const bit = memberBit(member, bitsById)
+      const character = bitCharacter(bit, catalog)
+      const bitList = props.bits && Array.isArray(props.bits.list) ? props.bits.list : []
       const others = props.members.filter(function (item) { return item.id !== member.id })
-      // The profile's providers (accounts) pin a member's model route to one account.
-      const providers = Array.isArray(props.providers) ? props.providers : []
-      const pinnedProvider = member.provider ? providers.find(function (item) { return item.id === member.provider }) || null : null
-      const models = (pinnedProvider && pinnedProvider.models.length > 0
-        ? pinnedProvider.models.map(function (item) { return item.name })
-        : MODEL_SUGGESTIONS).slice()
-      props.members.forEach(function (item) { if (item.model && models.indexOf(item.model) < 0) models.push(item.model) })
-      const listId = 'dsh-member-models-' + member.id
+      const routeText = memberRouteText(member, bitsById, models)
+      const leadEligible = memberIsOrchestrator(member, bitsById)
+
       function set(patch, field) {
         props.commit(function (previous) { return patchMember(previous, member.id, patch) }, field ? 'member:' + member.id + ':' + field : null)
       }
@@ -5600,8 +6802,41 @@ window.__ModuleLoader__.load({
         set({ launches: next })
       }
       function makeLead() {
+        if (!leadEligible) return
         props.commit(function (previous) { return previous.lead === member.id ? previous : Object.assign({}, previous, { lead: member.id }) })
       }
+      function changeBit(bitId) {
+        if (!bitId || bitId === member.bitId) return
+        props.onChangeBit(member.id, bitId)
+      }
+
+      // Group the bit options by catalog group (same order as the add dialog).
+      const bitGroups = []
+      const bitGroupMap = {}
+      function bitGroupFor(id) {
+        if (!bitGroupMap[id]) {
+          bitGroupMap[id] = { id: id, label: id, bits: [] }
+          bitGroups.push(bitGroupMap[id])
+        }
+        return bitGroupMap[id]
+      }
+      catalog.groups.forEach(function (group) {
+        const section = bitGroupFor(group.id)
+        section.label = props.lang === 'en' ? group.label.en : group.label.pt
+      })
+      const otherBits = bitGroupFor('__other')
+      otherBits.label = t('otherGroup')
+      bitList.forEach(function (record) {
+        const recordCharacter = bitCharacter(record, catalog)
+        bitGroupFor(recordCharacter && recordCharacter.group ? recordCharacter.group : '__other').bits.push(record)
+      })
+      const bitOptions = bitGroups.filter(function (group) { return group.bits.length > 0 }).map(function (group) {
+        return h('optgroup', { key: group.id, label: group.label }, group.bits.map(function (record) {
+          return h('option', { key: record.id, value: record.id }, record.name)
+        }))
+      })
+      if (member.bitId && !bit) bitOptions.push(h('option', { key: 'missing', value: member.bitId }, tf(t, 'memberBitMissing', { id: member.bitId })))
+
       const pack = props.pack || null
       const otherTeams = Array.isArray(props.otherTeams) ? props.otherTeams : []
       const teamsById = props.teamsById || {}
@@ -5627,45 +6862,40 @@ window.__ModuleLoader__.load({
       if (mcpOptions.length > 0 || mcp.length > 0) {
         mcpControl = h(NameChecklist, { id: 'dsh-member-mcp', options: mcpOptions, selected: mcp, max: MAX_MEMBER_MCP, onChange: function (next) { set({ mcp: next.slice(0, MAX_MEMBER_MCP) }) } })
       } else {
-        // Without a pack the skills field above already explains why both lists are empty.
         mcpControl = h('p', { className: 'dsh-bots-hint' }, pack ? t('memberMcpNone') : (props.harnessId ? packStateHint(t, props.packs, props.harnessId) : t('packNeeded')))
       }
 
       return h('section', { className: 'dsh-team-section' },
         h('h2', { className: 'dsh-team-section-title' }, t('memberProps')),
         h('div', { className: 'dsh-bots-bit-hero' },
-          h(BitAvatar, { bit: bit, size: 64, emoji: '🤖', color: TYPE_COLOR.end }),
+          h(BitAvatar, { bit: avatarBitOf(bit, catalog), size: 64, emoji: bit ? bit.emoji : '🤖', color: bit ? bit.color : TYPE_COLOR.end }),
           h('div', { className: 'dsh-bots-bit-hero-text' },
-            h('p', { className: 'dsh-bots-bit-hero-role' }, bit ? bit.name : t('noCharacter')),
+            h('p', { className: 'dsh-bots-bit-hero-role' }, bit ? bit.name : (member.bitId || t('memberBitMissing'))),
+            character ? h('p', { className: 'dsh-bots-hint' }, character.name + ' · ' + groupLabelOf(catalog, character.group, props.lang, t)) : null,
+            h('div', { className: 'dsh-team-badges' },
+              h(Badge, {
+                dot: false,
+                tone: bit && bit.isOrchestrator === true ? 'info' : 'neutral',
+                label: bit && bit.isOrchestrator === true ? t('orchestrator') : t('worker'),
+              }),
+              routeText ? h(Badge, { dot: false, label: routeText, title: t('memberRoute') }) : null),
             h('p', { className: 'dsh-bots-hint' }, tf(t, 'memberSteps', { n: props.uses })),
-            h('button', { type: 'button', className: 'dsh-bots-link-button', onClick: props.onChangeBit }, t('changeBit')))),
+            h('p', { className: 'dsh-bots-hint' }, t('memberReadOnlyHint')))),
         h('div', { className: 'dsh-team-lead-row' },
           props.isLead
             ? h(Badge, { tone: 'info', dot: false, label: h(React.Fragment, null, h(CrownIcon, { size: 12 }), t('leadBadge')), title: t('leadHint') })
-            : h(Button, { variant: 'outline', size: 'sm', title: t('leadHint'), onClick: makeLead }, h(CrownIcon, { size: 13 }), t('makeLead'))),
-        h(Field, { label: t('memberName'), htmlFor: 'dsh-member-name', hint: 'id: ' + member.id },
-          h('input', { id: 'dsh-member-name', className: 'dsh-bots-input', value: member.name, maxLength: MAX_NAME, onChange: function (event) { set({ name: event.target.value }, 'name') } })),
+            : h(Button, { variant: 'outline', size: 'sm', disabled: !leadEligible, title: leadEligible ? t('leadHint') : t('leadNotOrchestrator'), onClick: makeLead }, h(CrownIcon, { size: 13 }), t('makeLead')),
+          !leadEligible ? h('p', { className: 'dsh-bots-hint' }, t('leadNotOrchestrator')) : null),
+        h(Field, { label: t('memberBit'), htmlFor: 'dsh-member-bit', hint: t('memberBitHint') },
+          h('select', {
+            id: 'dsh-member-bit', className: 'dsh-bots-select', value: member.bitId || '',
+            onChange: function (event) { changeBit(event.target.value) },
+          },
+            !member.bitId ? h('option', { value: '' }, t('noCharacter')) : null,
+            bitOptions),
+          bitList.length === 0 ? h('p', { className: 'dsh-bots-warn' }, t('addMemberNoBitsHint')) : null),
         h(Field, { label: t('memberRole'), htmlFor: 'dsh-member-role' },
           h('input', { id: 'dsh-member-role', className: 'dsh-bots-input', value: member.role, maxLength: 200, placeholder: t('memberRolePlaceholder'), onChange: function (event) { set({ role: event.target.value }, 'role') } })),
-        providers.length > 0 || member.provider
-          ? h(Field, { label: t('memberProvider'), htmlFor: 'dsh-member-provider', hint: t('memberProviderHint') },
-            h('select', {
-              id: 'dsh-member-provider', className: 'dsh-bots-select', value: member.provider || '',
-              onChange: function (event) { set({ provider: event.target.value }, 'provider') },
-            },
-              h('option', { value: '' }, t('providerAuto')),
-              providers.map(function (item) { return h('option', { key: item.id, value: item.id }, item.name || item.id) }),
-              member.provider && !pinnedProvider ? h('option', { value: member.provider }, member.provider) : null))
-          : null,
-        h('div', { className: 'dsh-bots-row' },
-          h(Field, { label: t('memberModel'), htmlFor: 'dsh-member-model', grow: true },
-            h('input', { id: 'dsh-member-model', className: 'dsh-bots-input', list: listId, value: member.model, maxLength: 60, onChange: function (event) { set({ model: event.target.value }, 'model') } }),
-            h('datalist', { id: listId }, models.map(function (model) { return h('option', { key: model, value: model }) }))),
-          h(Field, { label: t('memberEffort'), htmlFor: 'dsh-member-effort' },
-            h('select', { id: 'dsh-member-effort', className: 'dsh-bots-select', style: { width: 96 }, value: member.effort, onChange: function (event) { set({ effort: event.target.value }) } },
-              EFFORTS.concat(EFFORTS.indexOf(member.effort) < 0 ? [member.effort] : []).map(function (effort) {
-                return h('option', { key: effort || 'none', value: effort }, effort || t('effortNone'))
-              })))),
         h(Field, { label: t('memberAccess'), htmlFor: 'dsh-member-access' },
           h('select', { id: 'dsh-member-access', className: 'dsh-bots-select', value: member.access, onChange: function (event) { set({ access: event.target.value === 'read' ? 'read' : 'write' }) } },
             h('option', { value: 'write' }, t('accessWrite')),
@@ -5685,14 +6915,12 @@ window.__ModuleLoader__.load({
               return h(Checkbox, {
                 key: other.id,
                 checked: member.launches.indexOf(other.id) >= 0,
-                label: other.name,
+                label: memberName(other, bitsById),
                 onChange: function (checked) { toggleLaunch(other.id, checked) },
               })
             }))),
         h(Field, { label: t('memberSkills'), htmlFor: 'dsh-member-skills', hint: pack && pack.skills.length > 0 ? t('memberSkillsHint') : null }, skillsControl),
         h(Field, { label: t('memberMcp'), htmlFor: 'dsh-member-mcp', hint: mcpOptions.length > 0 ? t('memberMcpHint') : null }, mcpControl),
-        h(Field, { label: t('memberInstructions'), htmlFor: 'dsh-member-instructions' },
-          h('textarea', { id: 'dsh-member-instructions', className: 'dsh-bots-textarea', value: member.instructions, maxLength: MAX_TEAM_INSTRUCTIONS, onChange: function (event) { set({ instructions: event.target.value }, 'instructions') } })),
         h('div', { className: 'dsh-team-inline' },
           h(Button, { variant: 'ghost', size: 'sm', className: 'dsh-bots-button-danger', onClick: props.onRemove }, h(TrashIcon, { size: 13 }), t('removeMember')))
       )
@@ -5704,25 +6932,25 @@ window.__ModuleLoader__.load({
 
     function BotsPage(props) {
       const t = typeof props.t === 'function' ? props.t : fallbackT
-      const startSession = typeof props.startSession === 'function' ? props.startSession : null
+      const openSession = typeof props.openSession === 'function' ? props.openSession : null
       const usePanelInfo = typeof props.usePanelInfo === 'function' ? props.usePanelInfo : useAlwaysActivePanelInfo
       const panelActive = usePanelInfo(selectPanelActive)
 
       const [data, setData] = React.useState(function () {
-        return { phase: 'loading', bots: [], docker: null, defaultImage: DEFAULT_IMAGE, error: null }
+        return { phase: 'loading', bits: [], byId: {}, error: null }
       })
+      const [models, setModels] = React.useState(function () { return emptyModels('loading') })
+      // Teams are only read for the orchestrator cards ("Líder em: …").
+      const [teams, setTeams] = React.useState([])
       const [dialog, setDialog] = React.useState(null)
-      const [busy, setBusy] = React.useState(null)
       const [toast, setToast] = React.useState(null)
       const [refreshing, setRefreshing] = React.useState(false)
-      const [localImages, setLocalImages] = React.useState(null)
       const [catalog, setCatalog] = React.useState(function () { return emptyCatalog('loading') })
       const [tab, setTabState] = React.useState(readStoredTab)
       const setTab = React.useCallback(function (next) {
         setTabState(next)
         storeTab(next)
       }, [])
-      const imagesLoadedRef = React.useRef(false)
       const lang = t('lang') === 'en' ? 'en' : 'pt'
 
       const aliveRef = React.useRef(true)
@@ -5768,55 +6996,52 @@ window.__ModuleLoader__.load({
         loadCatalog()
       }, [loadCatalog])
 
+      // Model catalog: feeds the card route labels and the editor selects (§1).
+      const loadModels = React.useCallback(function () {
+        setModels(function (previous) {
+          return { phase: previous.list.length > 0 ? 'ready' : 'loading', list: previous.list, byId: previous.byId, error: null }
+        })
+        return api.models().then(function (payload) {
+          if (!aliveRef.current) return
+          setModels({ phase: 'ready', list: payload.list, byId: payload.byId, error: payload.error })
+        }, function (error) {
+          if (!aliveRef.current) return
+          setModels(function (previous) {
+            return { phase: 'error', list: previous.list, byId: previous.byId, error: requestErrorText(error, t) }
+          })
+        })
+      }, [t])
+
+      React.useEffect(function () {
+        loadModels()
+      }, [loadModels])
+
       const load = React.useCallback(async function (quiet) {
         if (inFlightRef.current) return
         inFlightRef.current = true
         if (quiet !== true) {
           setData(function (previous) {
-            return {
-              phase: previous.bots.length > 0 ? 'ready' : 'loading',
-              bots: previous.bots,
-              docker: previous.docker,
-              defaultImage: previous.defaultImage,
-              error: null,
-            }
+            return { phase: previous.bits.length > 0 ? 'ready' : 'loading', bits: previous.bits, byId: previous.byId, error: null }
           })
         }
         try {
-          const payload = await api.list()
+          // Teams are optional context: a Host without them still renders the bits.
+          const [payload, teamList] = await Promise.all([
+            api.list(),
+            teamsApi.list().then(function (list) { return list }, function () { return null }),
+          ])
           if (!aliveRef.current) return
           loadedRef.current = true
-          // Local images change rarely: probe them on explicit loads only, not on every poll.
-          if ((quiet !== true || !imagesLoadedRef.current) && payload.bots.some(function (bot) { return bot.vm.enabled === true })) {
-            imagesLoadedRef.current = true
-            api.images().then(function (images) {
-              if (!aliveRef.current) return
-              setLocalImages(new Set(images.images.map(function (image) { return canonicalImage(image.reference) })))
-            }, function () {
-              if (aliveRef.current) setLocalImages(null)
-            })
-          }
-          setData({
-            phase: 'ready',
-            bots: payload.bots,
-            docker: payload.docker,
-            defaultImage: payload.defaultImage,
-            error: null,
-          })
+          if (teamList) setTeams(teamList)
+          setData({ phase: 'ready', bits: payload.bits, byId: payload.byId, error: null })
         } catch (error) {
           if (!aliveRef.current) return
           if (quiet !== true) {
             setData(function (previous) {
-              return {
-                phase: previous.bots.length > 0 ? 'ready' : 'error',
-                bots: previous.bots,
-                docker: previous.docker,
-                defaultImage: previous.defaultImage,
-                error: describeError(error),
-              }
+              return { phase: previous.bits.length > 0 ? 'ready' : 'error', bits: previous.bits, byId: previous.byId, error: describeError(error) }
             })
           } else {
-            console.warn('[bots] background refresh failed:', describeError(error))
+            console.warn('[bits] background refresh failed:', describeError(error))
           }
         } finally {
           inFlightRef.current = false
@@ -5826,44 +7051,29 @@ window.__ModuleLoader__.load({
       React.useEffect(function () {
         if (!panelActive || tab !== 'bots') return undefined
         load(loadedRef.current)
-        const timer = setInterval(function () {
-          if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
-          load(true)
-        }, POLL_MS)
-        return function () { clearInterval(timer) }
       }, [panelActive, load, tab])
 
       function openCreate() {
         setDialog({ kind: 'form', bot: null })
       }
 
-      function openEdit(bot) {
-        setDialog({ kind: 'form', bot: bot })
+      function openEdit(bit) {
+        setDialog({ kind: 'form', bot: bit })
       }
 
-      function openDelete(bot) {
-        setDialog({ kind: 'delete', bot: bot })
+      function openDelete(bit) {
+        setDialog({ kind: 'delete', bot: bit })
       }
 
-      function openVmRemove(bot) {
-        setDialog({ kind: 'removeVm', bot: bot })
+      function openRun(bit) {
+        setDialog({ kind: 'run', bit: bit })
       }
 
       function closeDialog() {
         setDialog(null)
       }
 
-      function handleChat(bot) {
-        if (!bot.workspaceId) return
-        try {
-          if (!startSession) throw new Error(t('chatUnavailable'))
-          startSession(bot.workspaceId)
-        } catch (error) {
-          showToast('error', t('chatUnavailable') + ' ' + describeError(error))
-        }
-      }
-
-      async function saveBot(fields) {
+      async function saveBit(fields) {
         // `fields` is already the FormDialog payload (formPayload ran there).
         if (dialog && dialog.bot) {
           await api.update(dialog.bot.id, fields)
@@ -5885,60 +7095,32 @@ window.__ModuleLoader__.load({
         await load(true)
       }
 
-      async function confirmVmRemove() {
-        if (!dialog || !dialog.bot) return
-        await api.vm(dialog.bot.id, 'remove')
-        setDialog(null)
-        showToast('success', t('vmRemoved'))
-        await load(true)
-      }
-
-      async function runNotifyTest(bot) {
-        if (busy) return
-        setBusy({ kind: 'notify', botId: bot.id, action: 'notify' })
-        try {
-          await api.notifyTest(bot.id, t('notifyTestBody'))
-          showToast('success', t('notifyTestSent'))
-        } catch (error) {
-          showToast('error', t('notifyTestFailed') + ': ' + describeError(error))
-        } finally {
-          setBusy(null)
-        }
-      }
-
-      async function runVmAction(bot, action) {
-        if (action === 'remove') {
-          openVmRemove(bot)
-          return
-        }
-        if (busy) return
-        const labels = { start: 'vmStarted', stop: 'vmStoppedMsg', restart: 'vmRestarted' }
-        setBusy({ kind: 'vm', botId: bot.id, action: action })
-        try {
-          await api.vm(bot.id, action)
-          showToast('success', t(labels[action] || 'saved'))
-        } catch (error) {
-          showToast('error', t('failed') + ': ' + describeError(error))
-        } finally {
-          setBusy(null)
-          await load(true)
-        }
+      async function runBit(bit, request, readOnly) {
+        return api.run(bit.id, request, readOnly)
       }
 
       async function handleRefresh() {
         if (refreshing) return
         setRefreshing(true)
         try {
-          await load(false)
+          await Promise.all([load(false), loadModels()])
         } finally {
           setRefreshing(false)
         }
       }
 
-      const bots = data.bots
+      /** Teams whose lead member references this bit (orchestrator cards). */
+      function teamsLedBy(bit) {
+        return teams.filter(function (team) {
+          if (!team.lead) return false
+          const lead = team.members.find(function (member) { return member.id === team.lead })
+          return !!lead && lead.bitId === bit.id
+        })
+      }
+
+      const bits = data.bits
       const phase = data.phase
       const toolbar = h('div', { className: 'dsh-bots-toolbar' },
-        h(DockerPill, { docker: data.docker, t: t }),
         h(IconButton, {
           label: refreshing ? t('refreshing') : t('refresh'),
           disabled: refreshing,
@@ -5970,14 +7152,14 @@ window.__ModuleLoader__.load({
             })
           )
         )
-      } else if (phase === 'error' && bots.length === 0) {
+      } else if (phase === 'error' && bits.length === 0) {
         body = h('div', { className: 'dsh-bots-state dsh-bots-state-error' },
           h('span', { className: 'dsh-bots-state-icon', 'aria-hidden': 'true' }, h(WarningIcon, { size: 28 })),
           h('p', { className: 'dsh-bots-state-title' }, t('error')),
           data.error ? h('p', { className: 'dsh-bots-state-text' }, data.error) : null,
           h(Button, { variant: 'outline', onClick: handleRefresh }, t('retry'))
         )
-      } else if (bots.length === 0) {
+      } else if (bits.length === 0) {
         body = h('div', { className: 'dsh-bots-state' },
           catalog.byId[MASCOT_ID]
             ? h(BitAvatar, { bit: catalog.byId[MASCOT_ID], size: 112, eager: true })
@@ -5994,21 +7176,19 @@ window.__ModuleLoader__.load({
               h(Button, { variant: 'outline', size: 'sm', onClick: handleRefresh }, t('retry')))
             : null,
           h('ul', { className: 'dsh-bots-cards' },
-            bots.map(function (bot) {
-              return h(BotCard, {
-                key: bot.id,
-                bot: bot,
-                docker: data.docker,
-                localImages: localImages,
-                busy: busy,
+            bits.map(function (bit) {
+              return h(BitCard, {
+                key: bit.id,
+                bit: bit,
+                models: models,
                 catalog: catalog,
                 lang: lang,
                 t: t,
-                onChat: handleChat,
+                leadTeams: bit.isOrchestrator === true ? teamsLedBy(bit) : [],
+                onRun: openRun,
                 onEdit: openEdit,
                 onDelete: openDelete,
-                onVmAction: runVmAction,
-                onNotifyTest: runNotifyTest,
+                onOpenTeams: function () { setTab('teams') },
               })
             })
           )
@@ -6023,10 +7203,10 @@ window.__ModuleLoader__.load({
           bot: dialog.bot,
           lang: lang,
           catalog: catalog,
+          models: models,
           onRetryCatalog: loadCatalog,
-          defaultImage: data.defaultImage,
           onCancel: closeDialog,
-          onSubmit: saveBot,
+          onSubmit: saveBit,
         })
       } else if (dialog && dialog.kind === 'delete') {
         dialogNode = h(DeleteDialog, {
@@ -6036,16 +7216,14 @@ window.__ModuleLoader__.load({
           onCancel: closeDialog,
           onConfirm: confirmDelete,
         })
-      } else if (dialog && dialog.kind === 'removeVm') {
-        dialogNode = h(ConfirmDialog, {
-          key: 'removeVm',
+      } else if (dialog && dialog.kind === 'run') {
+        dialogNode = h(RunBitDialog, {
+          key: 'run-' + dialog.bit.id,
           t: t,
-          title: t('vmRemoveTitle', { name: dialog.bot.name }),
-          description: t('vmRemoveBody'),
-          confirmLabel: t('vmRemove'),
-          destructive: true,
-          onCancel: closeDialog,
-          onConfirm: confirmVmRemove,
+          bit: dialog.bit,
+          models: models,
+          onClose: closeDialog,
+          onRun: runBit,
         })
       }
 
@@ -6067,7 +7245,23 @@ window.__ModuleLoader__.load({
             catalog: catalog,
             onRetryCatalog: loadCatalog,
             showToast: showToast,
-            startSession: startSession,
+            openSession: openSession,
+            tabs: tabsNode,
+            onSelectTab: setTab,
+          }),
+          toastNode)
+      }
+
+      if (tab === 'projects') {
+        return h('div', { className: 'dsh-bots-root', style: { height: '100%' } },
+          h('style', { key: 'dsh-bots-styles' }, STYLES + TEAM_STYLES),
+          h(ProjectsView, {
+            t: t,
+            lang: lang,
+            catalog: catalog,
+            onRetryCatalog: loadCatalog,
+            showToast: showToast,
+            openSession: openSession,
             tabs: tabsNode,
           }),
           toastNode)
@@ -6123,23 +7317,20 @@ window.__ModuleLoader__.load({
       }
     }
 
-    /** Navigate to a bot chat through the workspace service (main slot injection). */
-    function makeStartSession(ctx, t) {
+    /** Open an existing session through the workspace service (mission from a flow). */
+    function makeOpenSession(ctx, t) {
       /**
-       * @param workspaceId - Harness workspace id.
-       * @param options - optional draft options forwarded verbatim, e.g.
-       *   `{ prompt, whenDraftExists: 'replace' }` ("Enviar pedido", CONTRACT.md §11.4).
+       * @param sessionId - Harness session id created by `POST /api/bots.teams.run`.
        */
-      return function startBotSession(workspaceId, options) {
-        if (typeof workspaceId !== 'string' || !workspaceId) throw new Error(t('chatUnavailable'))
+      return function openBitsSession(sessionId) {
+        if (typeof sessionId !== 'string' || !sessionId) throw new Error(t('sendOpenFailed'))
         const service = readService(ctx, 'uiWorkspace')
-        if (!service || typeof service.startSession !== 'function') throw new Error(t('chatUnavailable'))
-        if (isObject(options)) return service.startSession(workspaceId, options)
-        return service.startSession(workspaceId)
+        if (!service || typeof service.openSession !== 'function') throw new Error(t('sendOpenFailed'))
+        return service.openSession(sessionId)
       }
     }
 
-    /** Services the registrations need; `uiWorkspace` gates the chat navigation. */
+    /** Services the registrations need; `uiWorkspace` opens a started mission. */
     const inject = ['slots', 'locale', 'layout', 'uiWorkspace']
 
     /**
@@ -6159,7 +7350,7 @@ window.__ModuleLoader__.load({
         layout = null
       }
       const panelInfo = layout && layout.panelInfo ? layout.panelInfo : null
-      const startSession = makeStartSession(ctx, t)
+      const openSession = makeOpenSession(ctx, t)
 
       ctx.slots.inject('main', function () {
         return ctx.slots.register({
@@ -6167,7 +7358,7 @@ window.__ModuleLoader__.load({
           key: PANEL_ID,
           locale: NS,
           inject: function () {
-            const face = { t: t, startSession: startSession }
+            const face = { t: t, openSession: openSession }
             if (panelInfo) face.hooks = { panelInfo: panelInfo }
             return face
           },

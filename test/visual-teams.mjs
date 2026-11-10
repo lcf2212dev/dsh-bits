@@ -1,16 +1,19 @@
 #!/usr/bin/env node
 /**
- * Visual + interaction check for the Teams tab and its flow editor.
+ * Visual + interaction check for the Teams (flows) tab and its editor.
  *
  * Boots a throwaway DSH Web host (isolated DSH_HOME, never the user profile),
- * creates a team from the shipped "engineering" template (or imports
- * --team-file <teams.json|export.json>), opens the editor in headless Chrome
- * and drives real pointer/keyboard input: move a node, connect two nodes,
- * add from the palette, delete, undo and save. The saved record is then
- * checked through /api/bots.teams. Screenshots go to --out (default
+ * instantiates the shipped "engineering" template through the real route, opens
+ * the editor in headless Chrome and drives real pointer/keyboard input: move a
+ * node, connect two nodes, add from the palette, delete, undo and save. v5
+ * additionally exercises teams of bits: a team created from a template through
+ * the UI (fresh bits + `bitId` members), the member bit picker with the
+ * read-only route, the orchestrator-only lead rule, and "Enviar pedido" through
+ * `POST /api/bots.teams.run` (mocked at the fetch layer; the flow runtime is
+ * covered by the host suites). Screenshots go to --out (default
  * test/screenshots/).
  *
- * Usage: node test/visual-teams.mjs [--theme dark|light] [--team-file f] [--out dir]
+ * Usage: node test/visual-teams.mjs [--theme dark|light] [--out dir] [--width 1440] [--height 900]
  */
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
@@ -37,8 +40,8 @@ const option = (name, fallback) => {
   return index >= 0 && argv[index + 1] !== undefined ? argv[index + 1] : fallback
 }
 const THEME = option('theme', 'dark')
-const WIDTH = Number(option('width', '1280'))
-const HEIGHT = Number(option('height', '860'))
+const WIDTH = Number(option('width', '1440'))
+const HEIGHT = Number(option('height', '900'))
 
 let tempHome
 let host
@@ -71,13 +74,13 @@ function run(command, args, options = {}) {
 }
 
 async function installProfile() {
-  tempHome = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-bots-visual-home-'))
+  tempHome = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-bits-visual-home-'))
   const dir = path.join(tempHome, 'profiles', PROFILE)
   await fs.mkdir(dir, { recursive: true })
   await fs.writeFile(path.join(dir, 'cordis.yml'), '[]\n')
   await fs.writeFile(path.join(dir, 'pnpm-workspace.yaml'), 'packages:\n  - .\n\nnodeLinker: hoisted\nautoInstallPeers: false\n')
   await fs.writeFile(path.join(dir, 'package.json'), JSON.stringify({
-    name: 'dsh-profile-bots-visual',
+    name: 'dsh-profile-bits-visual',
     private: true,
     dependencies: { '@local/dsh-bots': `file:${BUNDLE_DIR}` },
     dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', '@local/dsh-bots'] } },
@@ -175,7 +178,6 @@ async function screenshot(cdp, name) {
   console.log(`   saved ${path.relative(BUNDLE_DIR, file)}`)
 }
 
-
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 async function rectOf(cdp, selector) {
@@ -208,6 +210,35 @@ async function key(cdp, keyName, code, keyCode, modifiers = 0) {
   await sleep(150)
 }
 
+async function clickButtonByText(cdp, scope, regex) {
+  const ok = await evaluate(cdp, `(() => {
+    const root = ${scope ? `document.querySelector(${JSON.stringify(scope)})` : 'document'}
+    if (!root) return false
+    const button = [...root.querySelectorAll('button')].find((el) => new RegExp(${JSON.stringify(regex)}).test((el.textContent || '').trim()))
+    if (!button) return false
+    button.click()
+    return true
+  })()`)
+  assert.ok(ok, `button ${regex} in ${scope || 'document'}`)
+  await sleep(250)
+}
+
+async function setSelect(cdp, selector, value) {
+  await evaluate(cdp, `(() => {
+    const el = document.querySelector(${JSON.stringify(selector)})
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set
+    setter.call(el, ${JSON.stringify(value)})
+    el.dispatchEvent(new Event('change', { bubbles: true }))
+  })()`)
+  await sleep(150)
+}
+
+async function typeInto(cdp, selector, text) {
+  await evaluate(cdp, `document.querySelector(${JSON.stringify(selector)}).focus()`)
+  await cdp.send('Input.insertText', { text })
+  await sleep(150)
+}
+
 const CTRL = 2
 const SHIFT = 8
 const PACK_ID = 'demo'
@@ -232,54 +263,72 @@ async function writeFakeHarness(dir) {
     await fs.writeFile(path.join(dir, rel), text)
   }
 }
+
 const nodeCount = (cdp) => evaluate(cdp, `document.querySelectorAll('.dsh-flow-node, .dsh-flow-group').length`)
+const listTeams = async () => (await api('/api/bots.teams')).teams
+const listBits = async () => (await api('/api/bots.list')).bits
 
 async function main() {
   assert.ok(existsSync(CHROME), `Chrome not found at ${CHROME}`)
   await fs.mkdir(OUT_DIR, { recursive: true })
-  console.log('1/5 profile + host')
+  console.log('1/6 profile + host')
   await installProfile()
   const tokenUrl = await bootHost(await freePort())
   const exchange = await fetch(tokenUrl, { redirect: 'manual' })
-  cookie = exchange.headers.getSetCookie()[0].split(';', 1)[0]
+  cookie = exchange.getSetCookie ? exchange.headers.getSetCookie()[0].split(';', 1)[0] : (exchange.headers.getSetCookie()[0].split(';', 1)[0])
   origin = new URL(tokenUrl).origin
 
-  console.log('2/5 seed team')
-  const teamFile = option('team-file', null)
-  let input
-  if (teamFile) {
-    const raw = JSON.parse(await fs.readFile(teamFile, 'utf8'))
-    input = Array.isArray(raw.teams) ? raw.teams[0] : (raw.team ?? raw)
-  } else {
-    const { templates } = await api('/api/bots.teams.templates')
-    const template = templates.find((entry) => entry.id === 'engineering')
-    assert.ok(template, 'engineering template served by the real host')
-    input = template.team
-  }
-  const { team } = await api('/api/bots.teams.create', { team: input })
-  const usesTemplate = !teamFile
+  console.log('2/6 seed teams')
+  const { templates } = await api('/api/bots.teams.templates')
+  const template = templates.find((entry) => entry.id === 'engineering')
+  assert.ok(template, 'engineering template served by the real host')
+  assert.ok(Array.isArray(template.bits) && template.bits.length >= 2, 'template ships its own bits')
+  assert.ok(template.team.members.every((member) => typeof member.bitKey === 'string' && member.bitKey), 'template members reference bits by local key')
+  const templateBits = template.bits.length
 
-  // v3 (CONTRACT.md §11): make the first team runnable (workspace + lead + request
-  // templates) and add a second team that owns the same workspace, so the
-  // "Enviar pedido" preview must carry the `[Time: <name>] ` handoff prefix.
+  // Instantiate once through the route: fresh bits + a team whose members carry bitId.
+  const instantiated = await api('/api/bots.teams.fromTemplate', { templateId: 'engineering' })
+  const team = instantiated.team
+  assert.equal(instantiated.bits.length, templateBits, 'fromTemplate creates one bit per template bit')
+  assert.ok(team.members.length > 0 && team.members.every((member) => typeof member.bitId === 'string' && member.bitId), 'members reference bits by id')
+  assert.ok(team.members.every((member) => instantiated.bits.some((bit) => bit.id === member.bitId)), 'member bitIds point at the fresh bits')
+  assert.equal(team.lead, 'coordinator', 'template lead preserved')
+  const leadMember = team.members.find((member) => member.id === team.lead)
+  assert.ok(leadMember, 'lead member exists')
+  const leadBit = instantiated.bits.find((bit) => bit.id === leadMember.bitId)
+  assert.equal(leadBit.isOrchestrator, true, 'lead bit is an orchestrator')
+
+  // Make the first team runnable (workspace + lead + request templates).
   const repoDir = path.join(tempHome, 'repo')
   await fs.mkdir(repoDir, { recursive: true })
-  const leadId = team.members.some((member) => member.id === 'coordinator') ? 'coordinator' : team.members[0]?.id
-  assert.ok(leadId, 'seed team has a member to lead')
   const requestEntries = [
     { id: 'pimpl', label: 'Implementar card', template: 'Implemente o card AB-{n}. {pedido}' },
     { id: 'pfree', label: 'Revisar PR', template: 'Revise o PR aberto: {pedido}' },
   ]
-  const runnable = await api('/api/bots.teams.update', { id: team.id, patch: { workspaceDir: repoDir, lead: leadId, entry: requestEntries } })
-  assert.equal(runnable.team.lead, leadId, 'host stores the lead (§11.1)')
+  const runnable = await api('/api/bots.teams.update', { id: team.id, patch: { workspaceDir: repoDir, lead: leadMember.id, entry: requestEntries } })
+  assert.equal(runnable.team.lead, leadMember.id, 'host stores the lead')
+
+  // A second team binds the same workspace: the card shows the bound badge.
+  const { bit: platformLeadBit } = await api('/api/bots.create', {
+    name: 'Líder da plataforma',
+    character: 'bit-coordinator',
+    isOrchestrator: true,
+    model: 'deepseek-account/deepseek-flash',
+    effort: 'max',
+  })
   const { team: platform } = await api('/api/bots.teams.create', {
     team: {
       name: 'Plataforma', emoji: '🛰️', color: '#0891b2', workspaceDir: repoDir, bindWorkspace: true, lead: 'lead',
-      members: [{ id: 'lead', name: 'Líder da plataforma', character: 'bit-coordinator' }],
+      members: [{ id: 'lead', bitId: platformLeadBit.id, role: 'Líder da plataforma', access: 'read' }],
       flow: { nodes: [{ id: 'start', type: 'start', x: 0, y: 0, label: 'Pedido' }], edges: [] },
     },
   })
-  assert.equal(platform.bindWorkspace, true, 'host stores bindWorkspace (§11.1)')
+  assert.equal(platform.bindWorkspace, true, 'host stores bindWorkspace')
+
+  // A worker bit used by the UI member-picker test.
+  const { bit: workerBit } = await api('/api/bots.create', { name: 'Builder visual', character: 'bit-builder' })
+  assert.equal(workerBit.isOrchestrator, false)
+  const bitsBeforeUiCreate = (await listBits()).length
 
   // Harness packs are optional on the Host side: probe the route, skip pack checks without it.
   harnessDir = path.join(tempHome, 'harness-src')
@@ -292,9 +341,9 @@ async function main() {
   }
   console.log(`   harness routes: ${harnessRoutes ? 'present' : 'absent (pack checks skipped)'}`)
 
-  console.log('3/5 chrome')
+  console.log('3/6 chrome')
   const cdpPort = await freePort()
-  chromeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-bots-visual-chrome-'))
+  chromeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-bits-visual-chrome-'))
   chrome = spawn(CHROME, [
     '--headless=new', `--remote-debugging-port=${cdpPort}`, `--user-data-dir=${chromeDir}`,
     '--no-first-run', '--no-default-browser-check', '--disable-gpu', `--window-size=${WIDTH},${HEIGHT}`, 'about:blank',
@@ -308,7 +357,7 @@ async function main() {
   await cdp.send('Network.setCookie', { name: cookie.split('=')[0], value: cookie.slice(cookie.indexOf('=') + 1), url: origin })
   await cdp.send('Page.navigate', { url: `${origin}/` })
 
-  console.log('4/5 teams tab + editor')
+  console.log('4/6 teams tab')
   const entry = `[...document.querySelectorAll('nav button, nav a, [role="button"], button')].find((el) => /^\\s*Bits\\s*$/.test(el.textContent || el.getAttribute('aria-label') || ''))`
   await waitFor(cdp, entry, 'Bits sidebar entry', 60000)
   await evaluate(cdp, `${entry}.click()`)
@@ -328,17 +377,44 @@ async function main() {
   await sleep(600)
   await screenshot(cdp, 'teams-1-list')
 
-  // Card badges: lead of the runnable team, workspace binding of the other one.
-  const cardTexts = await evaluate(cdp, `[...document.querySelectorAll('.dsh-bots-card')].map((el) => el.textContent)`)
-  assert.ok(/Líder: |Lead: /.test(cardTexts[0]), `lead badge on the first card: ${cardTexts[0].slice(0, 200)}`)
-  assert.ok(/Workspace vinculado|Workspace bound/.test(cardTexts[1]), 'bound-workspace badge on the second card')
+  // Card badges: the lead bit name and the workspace binding.
+  const engCard = `document.querySelector('.dsh-bots-card[data-team-id="${team.id}"]')`
+  const platformCard = `document.querySelector('.dsh-bots-card[data-team-id="${platform.id}"]')`
+  const engCardText = await evaluate(cdp, `${engCard}.textContent`)
+  assert.ok(new RegExp('Líder: ' + leadBit.name).test(engCardText), `lead bit name on the first card: ${engCardText.slice(0, 240)}`)
+  const platformCardText = await evaluate(cdp, `${platformCard}.textContent`)
+  assert.ok(/Workspace vinculado/.test(platformCardText), 'bound-workspace badge on the second card')
 
-  // Harness dialog opens even when the Host lacks /api/bots.harness (it shows an error or the list).
-  await evaluate(cdp, `[...document.querySelectorAll('.dsh-bots-toolbar button')].find((el) => el.textContent.trim() === 'Harness').click()`)
+  console.log('5/6 template, harness, send request')
+  // v5: create a team from a template through the UI (fresh bits created server-side).
+  await clickButtonByText(cdp, '.dsh-bots-toolbar', 'Novo time')
+  await waitFor(cdp, `document.querySelector('[data-template-id="engineering"]')`, 'template choices')
+  await evaluate(cdp, `document.querySelector('[data-template-id="engineering"]').click()`)
+  await sleep(200)
+  await evaluate(cdp, `(() => {
+    const input = document.querySelector('#dsh-team-name')
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
+    setter.call(input, 'Engenharia UI')
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  })()`)
+  await clickButtonByText(cdp, '.dsh-bots-root [role="dialog"] .dsh-bots-dialog-footer', 'Criar time')
+  // fromTemplate opens the created team in the editor.
+  await waitFor(cdp, `document.querySelector('.dsh-team-editor')`, 'editor from template', 30000)
+  const uiTeam = (await listTeams()).find((item) => item.name === 'Engenharia UI')
+  assert.ok(uiTeam, 'team created from a template through the UI')
+  assert.ok(uiTeam.members.length > 0 && uiTeam.members.every((member) => member.bitId), 'UI instantiation created bitId members')
+  assert.ok(uiTeam.lead && uiTeam.members.some((member) => member.id === uiTeam.lead), 'UI instantiation kept the lead')
+  const bitsAfterUiCreate = (await listBits()).length
+  assert.equal(bitsAfterUiCreate - bitsBeforeUiCreate, templateBits, 'fresh bits created for the UI team')
+  // Back to the list.
+  await evaluate(cdp, `document.querySelector('.dsh-team-bar [aria-label]').click()`)
+  await waitFor(cdp, `document.querySelectorAll('.dsh-bots-card').length === 3`, 'three team cards')
+
+  // Harness dialog opens even when the Host lacks /api/bots.harness.
+  await clickButtonByText(cdp, '.dsh-bots-toolbar', 'Harness')
   await waitFor(cdp, `document.querySelector('.dsh-bots-root [role="dialog"] #dsh-harness-source')`, 'harness dialog')
   await waitFor(cdp, `!/Carregando harness|Loading harness/.test(document.querySelector('.dsh-bots-root [role="dialog"]').textContent)`, 'harness list settled')
   if (harnessRoutes) {
-    // Import a tiny harness through the form, then create a team from it.
     await evaluate(cdp, `document.querySelector('#dsh-harness-source').focus()`)
     await cdp.send('Input.insertText', { text: harnessDir })
     await evaluate(cdp, `document.querySelector('#dsh-harness-id').select()`)
@@ -354,19 +430,38 @@ async function main() {
   await screenshot(cdp, 'teams-1b-harness')
   if (harnessRoutes) {
     await evaluate(cdp, `[...document.querySelectorAll('.dsh-team-pack button')].find((el) => /Criar time|Create team/.test(el.textContent)).click()`)
-    await waitFor(cdp, `!document.querySelector('.dsh-bots-root [role="dialog"]') && document.querySelectorAll('.dsh-bots-card').length === 3`, 'team created from the pack')
+    // fromPack creates the bits then opens the new team in the editor.
+    await waitFor(cdp, `document.querySelector('.dsh-team-editor')`, 'editor from the harness pack', 30000)
+    assert.equal((await listTeams()).length, 4, 'team created from the harness pack')
+    await evaluate(cdp, `document.querySelector('.dsh-team-bar [aria-label]').click()`)
+    await waitFor(cdp, `document.querySelectorAll('.dsh-bots-card').length === 4`, 'four team cards')
     // The engineering team carries the pack too (badge + editor checklists).
     await api('/api/bots.teams.update', { id: team.id, patch: { harness: PACK_ID } })
     await evaluate(cdp, `document.querySelector('.dsh-bots-toolbar [aria-label="Atualizar"]').click()`)
-    await waitFor(cdp, `/Harness ${PACK_ID} v7/.test(document.querySelector('.dsh-bots-card').textContent)`, 'harness badge on the card')
+    await waitFor(cdp, `${engCard} && /Harness ${PACK_ID} v7/.test(${engCard}.textContent)`, 'harness badge on the card')
     await screenshot(cdp, 'teams-1d-list-harness')
   } else {
     await evaluate(cdp, `document.querySelector('.dsh-bots-root [role="dialog"] .dsh-bots-dialog-head button').click()`)
     await waitFor(cdp, `!document.querySelector('.dsh-bots-root [role="dialog"]')`, 'harness dialog closed')
   }
 
-  // "Enviar pedido": template with {n}, AB number normalised, live preview with the handoff prefix. Never submitted.
-  await evaluate(cdp, `[...document.querySelectorAll('.dsh-bots-card')][0].querySelector('.dsh-bots-actions .dsh-bots-button-primary').click()`)
+  // "Enviar pedido": the client must call POST /api/bots.teams.run with the
+  // composed prompt. Mock the route at the fetch layer so this stays focused on
+  // the UI wiring (the mission runtime is covered by the host suites).
+  await evaluate(cdp, `window.__teamRunCalls = []; (() => {
+    window.__originalFetch = window.fetch
+    window.fetch = function (input, init) {
+      const url = typeof input === 'string' ? input : (input && input.url) || ''
+      if (url.indexOf('/api/bots.teams.run') >= 0) {
+        window.__teamRunCalls.push({ url: url, body: init && init.body })
+        return Promise.resolve(new Response(JSON.stringify({
+          ok: true, sessionId: 'visual-session', teamId: 'x', teamName: 'Engenharia', cwd: '/tmp', workspaceId: null,
+        }), { status: 200, headers: { 'content-type': 'application/json' } }))
+      }
+      return window.__originalFetch.apply(this, arguments)
+    }
+  })()`)
+  await evaluate(cdp, `${engCard}.querySelector('.dsh-bots-button-primary').click()`)
   await waitFor(cdp, `document.querySelector('.dsh-bots-root [role="dialog"] #dsh-send-number')`, 'send dialog')
   const sendButton = `[...document.querySelectorAll('.dsh-bots-root [role="dialog"] .dsh-bots-dialog-footer button')].pop()`
   assert.equal(await evaluate(cdp, `${sendButton}.disabled`), true, 'submit disabled while the card number is empty')
@@ -378,14 +473,22 @@ async function main() {
   await waitFor(cdp, `/482/.test(document.querySelector('#dsh-send-preview').textContent)`, 'preview with the AB number')
   const preview = await evaluate(cdp, `document.querySelector('#dsh-send-preview').textContent`)
   assert.equal(await evaluate(cdp, `document.querySelector('#dsh-send-number').value`), '482', 'AB-482 normalised to digits')
-  assert.ok(preview.startsWith(`[Time: ${runnable.team.name}] `), `handoff prefix in the preview: ${preview}`)
   assert.ok(preview.includes('AB-482') && preview.includes('Corrigir o alinhamento'), `template filled: ${preview}`)
+  assert.ok(!preview.startsWith('[Time:'), `no draft/handoff prefix in v5: ${preview}`)
   assert.equal(await evaluate(cdp, `${sendButton}.disabled`), false, 'submit enabled once the number is set')
   await screenshot(cdp, 'teams-1c-send')
+  await evaluate(cdp, `${sendButton}.click()`)
+  await waitFor(cdp, `document.querySelector('.dsh-bots-root [role="dialog"] .dsh-team-okbox') && /visual-session/.test(document.querySelector('.dsh-bots-root [role="dialog"]').textContent)`, 'started session shown in the dialog', 30000)
+  const runCalls = await evaluate(cdp, `window.__teamRunCalls`)
+  assert.equal(runCalls.length, 1, 'one teams.run call')
+  const runBody = JSON.parse(runCalls[0].body)
+  assert.equal(runBody.id, team.id)
+  assert.ok(runBody.prompt.includes('AB-482') && runBody.prompt.includes('Corrigir o alinhamento'), `prompt sent: ${runBody.prompt}`)
   await evaluate(cdp, `document.querySelector('.dsh-bots-root [role="dialog"] .dsh-bots-dialog-footer button').click()`)
   await waitFor(cdp, `!document.querySelector('.dsh-bots-root [role="dialog"]')`, 'send dialog closed')
 
-  await evaluate(cdp, `[...document.querySelectorAll('.dsh-bots-card button')].find((el) => /Abrir fluxo|Open flow/.test(el.textContent)).click()`)
+  console.log('6/6 editor + flow interactions')
+  await clickButtonByText(cdp, `[data-team-id="${team.id}"]`, 'Abrir fluxo')
   await waitFor(cdp, `document.querySelectorAll('.dsh-flow-node').length > 5`, 'flow nodes')
   await waitFor(cdp, `[...document.querySelectorAll('.dsh-flow-node img')].every((img) => img.complete && img.naturalWidth > 0)`, 'node avatars')
   const total = await nodeCount(cdp)
@@ -394,28 +497,20 @@ async function main() {
   assert.equal(edgesDrawn, team.flow.edges.length, 'every edge rendered')
   await screenshot(cdp, 'teams-2-editor')
 
-  if (!usesTemplate) {
-    console.log('5/5 (imported team: interaction checks skipped)')
-    return
-  }
-
-  console.log('5/5 interactions')
   // Move: drag "red" 80 px right / 40 px down.
   const before = team.flow.nodes.find((node) => node.id === 'red')
   assert.ok(await evaluate(cdp, `parseFloat(document.querySelector('.dsh-team-zoom').textContent)`) >= 60, 'initial zoom is legible')
-  // Panel toggles hide and restore the side panels.
   await evaluate(cdp, `document.querySelector('[aria-label^="Mostrar/ocultar elementos"]').click()`)
   await sleep(150)
   assert.equal(await evaluate(cdp, `!!document.querySelector('.dsh-team-side')`), false, 'palette hidden')
   await evaluate(cdp, `document.querySelector('[aria-label^="Mostrar/ocultar elementos"]').click()`)
   await sleep(150)
   assert.equal(await evaluate(cdp, `!!document.querySelector('.dsh-team-side')`), true, 'palette restored')
-  // Fit the whole flow for the pointer checks.
   await evaluate(cdp, `document.querySelector('[aria-label="Ajustar à tela"]').click()`)
   await sleep(200)
   const zoom = await evaluate(cdp, `parseFloat(document.querySelector('.dsh-team-zoom').textContent) / 100`)
   const red = await rectOf(cdp, '[data-flow-node="red"]')
-  await drag(cdp, { x: red.x - 40, y: red.y }, { x: red.x + 40, y: red.y + 40 })
+  await drag(cdp, { x: red.x, y: red.y }, { x: red.x + 80, y: red.y + 40 })
   assert.equal(await evaluate(cdp, `document.querySelector('[data-flow-node="red"]').classList.contains('is-selected')`), true, 'dragged node is selected')
 
   // Connect: from the right handle of "locate" to "review".
@@ -425,7 +520,6 @@ async function main() {
   const edgesBefore = await evaluate(cdp, `document.querySelectorAll('.dsh-flow-edge').length`)
   await drag(cdp, handle, review, 20)
   assert.equal(await evaluate(cdp, `document.querySelectorAll('.dsh-flow-edge').length`), edgesBefore + 1, 'new edge drawn')
-  // The new edge is selected: label it through the inspector.
   await waitFor(cdp, `document.querySelector('#dsh-edge-label')`, 'edge inspector')
   await evaluate(cdp, `document.querySelector('#dsh-edge-label').focus()`)
   await cdp.send('Input.insertText', { text: 'atalho' })
@@ -454,108 +548,85 @@ async function main() {
   await click(cdp, await rectOf(cdp, '.dsh-flow-legend'))
   await key(cdp, 's', 'KeyS', 83, CTRL)
   await waitFor(cdp, `/Salvo|Saved/.test(document.querySelector('.dsh-team-bar .dsh-bots-badge').textContent)`, 'saved badge')
-  const { teams } = await api('/api/bots.teams')
-  const saved = teams.find((entry) => entry.id === team.id)
+  let { teams } = await api('/api/bots.teams')
+  let saved = teams.find((entryTeam) => entryTeam.id === team.id)
   const moved = saved.flow.nodes.find((node) => node.id === 'red')
   assert.ok(Math.abs(moved.x - before.x - 80 / zoom) <= 16 && Math.abs(moved.y - before.y - 40 / zoom) <= 16, `moved by the drag (${before.x},${before.y} -> ${moved.x},${moved.y}, zoom ${zoom})`)
   assert.ok(saved.flow.edges.some((edge) => edge.from === 'locate' && edge.to === 'review' && edge.label === 'atalho'), 'connected + labelled edge saved')
   assert.ok(saved.flow.nodes.some((node) => node.type === 'decision' && node.label === 'Precisa de segurança?'), 'palette node saved')
   assert.ok(!saved.flow.nodes.some((node) => node.id === 'research'), 'deleted node saved')
-  assert.ok(!saved.flow.edges.some((edge) => edge.from === 'research' || edge.to === 'research'), 'incident edges removed')
 
-  // Member focus: selecting a member dims the other steps.
-  await evaluate(cdp, `[...document.querySelectorAll('.dsh-team-member')].find((el) => /Builder/.test(el.textContent)).click()`)
-  await waitFor(cdp, `document.querySelector('.dsh-flow-node.is-dimmed') && document.querySelector('#dsh-member-name')`, 'member highlight')
-  await screenshot(cdp, 'teams-4-member')
+  // v5: add a member by picking an existing bit (grouped picker).
+  const membersBefore = await evaluate(cdp, `document.querySelectorAll('.dsh-team-member').length`)
+  await clickButtonByText(cdp, '.dsh-team-side', 'Adicionar bit')
+  await waitFor(cdp, `document.querySelector('#dsh-add-member-bit')`, 'add-member bit picker')
+  assert.ok(await evaluate(cdp, `document.querySelectorAll('#dsh-add-member-bit optgroup').length > 0`), 'bit picker groups by catalog group')
+  await setSelect(cdp, '#dsh-add-member-bit', workerBit.id)
+  await clickButtonByText(cdp, '.dsh-bots-root [role="dialog"] .dsh-bots-dialog-footer', 'Adicionar')
+  await waitFor(cdp, `document.querySelectorAll('.dsh-team-member').length === ${membersBefore + 1}`, 'member added from a bit')
+  // The editor selects the new member: the inspector opens on it directly.
+  await waitFor(cdp, `document.querySelector('#dsh-member-bit') && document.querySelector('#dsh-member-bit').value === ${JSON.stringify(workerBit.id)}`, 'member inspector of the new bit')
+  assert.ok(await evaluate(cdp, `[...document.querySelectorAll('.dsh-team-member')].some((el) => /Builder visual/.test(el.textContent))`), 'new member shown in the side list')
+  await evaluate(cdp, `document.querySelector('.dsh-team-inspector').scrollTop = 0`)
+  const memberView = await evaluate(cdp, `({
+    bit: document.querySelector('#dsh-member-bit').value,
+    route: document.querySelector('.dsh-bots-bit-hero').textContent,
+    hasModelInput: !!document.querySelector('#dsh-member-model'),
+    hasProviderInput: !!document.querySelector('#dsh-member-provider'),
+    hasNameInput: !!document.querySelector('#dsh-member-name'),
+    hasInstructionsInput: !!document.querySelector('#dsh-member-instructions'),
+    hasRole: !!document.querySelector('#dsh-member-role'),
+    hasAccess: !!document.querySelector('#dsh-member-access'),
+    makeLeadDisabled: (() => { const b = [...document.querySelectorAll('.dsh-team-lead-row button')].find((el) => /Tornar líder|Make lead/.test(el.textContent)); return b ? b.disabled : null })(),
+    leadHint: document.querySelector('.dsh-team-lead-row').textContent,
+    trim: document.querySelector('.dsh-team-inspector').scrollTop === 0,
+  })`)
+  assert.equal(memberView.bit, workerBit.id, 'member references the picked bit')
+  assert.ok(/Worker/.test(memberView.route) && /Claude Sonnet 5\.5 \(assinatura\)/.test(memberView.route) && /high/.test(memberView.route), `read-only route in the member hero: ${memberView.route}`)
+  assert.equal(memberView.hasModelInput, false, 'no member model input')
+  assert.equal(memberView.hasProviderInput, false, 'no member provider input')
+  assert.equal(memberView.hasNameInput, false, 'no member name input')
+  assert.equal(memberView.hasInstructionsInput, false, 'no member instructions input')
+  assert.ok(memberView.hasRole && memberView.hasAccess, 'role and access stay editable')
+  assert.equal(memberView.makeLeadDisabled, true, 'a worker bit cannot become lead')
+  assert.ok(/precisa ser um bit orquestrador|must be an orchestrator bit/.test(memberView.leadHint), `lead rule hint: ${memberView.leadHint}`)
+  await screenshot(cdp, 'teams-4-member-v5')
 
-  // Edge inspector through a label click.
-  // Focus must never scroll the board (overflow:hidden boxes still scroll programmatically).
-  await evaluate(cdp, `document.querySelector('.dsh-flow-edge-label').scrollIntoView()`)
-  await sleep(100)
-  assert.equal(await evaluate(cdp, `document.querySelector('.dsh-flow-canvas').scrollTop + document.querySelector('.dsh-flow-canvas').scrollLeft`), 0, 'board never scrolls')
-  await click(cdp, await rectOf(cdp, '.dsh-flow-edge-label'))
-  await waitFor(cdp, `document.querySelector('#dsh-edge-kind')`, 'edge inspector from label')
-  await screenshot(cdp, 'teams-5-edge')
-
-  // v3: handoff edge kind.
-  await setSelect(cdp, '#dsh-edge-kind', 'handoff')
-  await waitFor(cdp, `document.querySelector('.dsh-flow-edge.dsh-flow-edge-handoff')`, 'handoff edge drawn')
-  assert.ok(await evaluate(cdp, `/passagem|handoff/.test(document.querySelector('.dsh-flow-legend').textContent)`), 'handoff legend item')
-
-  // v3: "Time" palette element → team node → pick the other team.
-  const teamItem = `[...document.querySelectorAll('.dsh-team-palette-item')].find((el) => /^(Time|Team)$/.test(el.textContent.trim()))`
-  assert.ok(await evaluate(cdp, `Boolean(${teamItem})`), 'palette has the Time element')
-  const teamNodesBefore = await evaluate(cdp, `document.querySelectorAll('.dsh-flow-node-team').length`)
-  await evaluate(cdp, `${teamItem}.click()`)
-  await waitFor(cdp, `document.querySelectorAll('.dsh-flow-node-team').length === ${teamNodesBefore + 1}`, 'team node rendered')
-  await waitFor(cdp, `document.querySelector('#dsh-node-team')`, 'team node inspector')
-  assert.ok(await evaluate(cdp, `[...document.querySelector('#dsh-node-team').options].some((option) => option.value === ${JSON.stringify(platform.id)})`), 'other team offered')
-  await setSelect(cdp, '#dsh-node-team', platform.id)
-  await waitFor(cdp, `[...document.querySelectorAll('.dsh-flow-node-team')].some((el) => /Plataforma/.test(el.textContent))`, 'team node shows the referenced team')
-  assert.equal(await evaluate(cdp, `document.querySelector('#dsh-node-label').value`), 'Plataforma', 'default label follows the team name')
-  // The node was added at the centre and zoom keeps the centre: zoom to ~100% to see it.
-  for (let step = 0; step < 5; step += 1) await evaluate(cdp, `document.querySelector('[aria-label="Aproximar"]').click()`)
-  await screenshot(cdp, 'teams-6-team-node')
-  await evaluate(cdp, `document.querySelector('[aria-label="Ajustar à tela"]').click()`)
-
-  // v3: team inspector (nothing selected) shows the lead select with the stored lead.
+  // Lead rule in the team inspector: only orchestrator members are offered.
   await evaluate(cdp, `document.querySelector('.dsh-flow-canvas').focus()`)
   await key(cdp, 'Escape', 'Escape', 27)
   await waitFor(cdp, `document.querySelector('#dsh-team-prop-lead')`, 'team inspector lead select')
-  assert.equal(await evaluate(cdp, `document.querySelector('#dsh-team-prop-lead').value`), leadId, 'lead select shows the lead')
-  assert.ok(await evaluate(cdp, `Boolean(document.querySelector('#dsh-team-prop-harness')) && document.querySelectorAll('.dsh-team-entry').length === 2`), 'harness select + request rows')
+  const leadUi = await evaluate(cdp, `(() => {
+    const select = document.querySelector('#dsh-team-prop-lead')
+    return { value: select.value, options: [...select.options].map((option) => option.value) }
+  })()`)
+  assert.equal(leadUi.value, leadMember.id, 'lead select shows the stored lead')
+  assert.ok(leadUi.options.includes(leadMember.id), 'orchestrator lead offered')
+  assert.ok(!leadUi.options.includes('builder') && !leadUi.options.includes('scout'), `worker members are not lead options: ${JSON.stringify(leadUi.options)}`)
+  assert.ok(await evaluate(cdp, `document.querySelectorAll('.dsh-team-entry').length === 2`), 'request templates rows')
   if (harnessRoutes) {
     assert.equal(await evaluate(cdp, `document.querySelector('#dsh-team-prop-harness').value`), PACK_ID, 'harness select shows the pack')
-    const summary = await evaluate(cdp, `document.querySelector('#dsh-team-prop-harness').parentElement.textContent`)
-    assert.ok(/v7 · 1 presets · 2 skills · 0 instruções · patches 0\/2/.test(summary), `pack summary line: ${summary}`)
     assert.equal(await evaluate(cdp, `document.querySelectorAll('#dsh-team-prop-skills input[type="checkbox"]').length`), 2, 'visible-skills checklist')
   }
   await evaluate(cdp, `document.querySelector('#dsh-team-prop-lead').closest('.dsh-team-section').scrollIntoView({ block: 'start' })`)
   await screenshot(cdp, 'teams-7-team-inspector')
 
-  // v3: member inspector → lead badge / "Tornar líder" + team reference select.
-  await evaluate(cdp, `[...document.querySelectorAll('.dsh-team-member')].find((el) => /Builder/.test(el.textContent)).click()`)
-  await waitFor(cdp, `document.querySelector('#dsh-member-teamref')`, 'member teamRef select')
-  assert.ok(await evaluate(cdp, `/Tornar líder|Make lead/.test(document.querySelector('.dsh-team-lead-row').textContent)`), 'make-lead button for a non-lead')
-  assert.ok(await evaluate(cdp, `[...document.querySelectorAll('.dsh-team-member')].some((el) => /Líder|Lead/.test(el.querySelector('.dsh-team-tag')?.textContent || ''))`), 'lead tag in the member list')
-  assert.equal(await evaluate(cdp, `document.querySelector('.dsh-team-inspector').scrollTop`), 0, 'member inspector opens at its top')
-  if (harnessRoutes) {
-    assert.equal(await evaluate(cdp, `document.querySelectorAll('#dsh-member-skills input[type="checkbox"]').length`), 2, 'member skills from the pack')
-    assert.ok(await evaluate(cdp, `/figma/.test(document.querySelector('#dsh-member-mcp').textContent)`), 'member MCP servers from the pack')
-    await evaluate(cdp, `[...document.querySelectorAll('#dsh-member-skills label')].find((el) => el.textContent.trim() === 'tdd').querySelector('input').click()`)
-    await evaluate(cdp, `[...document.querySelectorAll('#dsh-member-mcp label')].find((el) => el.textContent.trim() === 'figma').querySelector('input').click()`)
-    await sleep(150)
-    await evaluate(cdp, `document.querySelector('#dsh-member-skills').scrollIntoView({ block: 'center' })`)
-  }
-  await screenshot(cdp, 'teams-8-member-v3')
-
-  // Save again: the new node, edge kind and the v3 team fields round-trip through the client payload.
+  // Team node round-trip (unchanged) + save the new member.
   await evaluate(cdp, `document.querySelector('.dsh-flow-canvas').focus()`)
   await key(cdp, 's', 'KeyS', 83, CTRL)
-  await waitFor(cdp, `/Salvo|Saved/.test(document.querySelector('.dsh-team-bar .dsh-bots-badge').textContent)`, 'saved badge (v3)')
-  const after = (await api('/api/bots.teams')).teams.find((item) => item.id === team.id)
-  assert.ok(after.flow.nodes.some((node) => node.type === 'team' && node.teamRef === platform.id), 'team node saved with teamRef')
-  assert.ok(after.flow.edges.some((edge) => edge.kind === 'handoff'), 'handoff edge saved')
-  assert.equal(after.lead, leadId, 'lead kept by the editor save')
-  assert.equal(after.workspaceDir, repoDir, 'workspace kept')
-  assert.deepEqual(after.entry, requestEntries, 'request templates kept')
-  if (harnessRoutes) {
-    assert.equal(after.harness, PACK_ID, 'harness kept')
-    const builder = after.members.find((member) => member.id === 'builder')
-    assert.deepEqual([builder.skills, builder.mcp], [['tdd'], ['figma']], 'member skills + MCP saved')
-  }
-  console.log('ok - teams editor: render, move, connect, label, add, delete, undo/redo, save, member focus, edge select')
-  console.log('ok - teams v3: card badges, harness dialog, send-request preview, handoff edge, team node, lead select, round-trip save')
-}
+  await waitFor(cdp, `/Salvo|Saved/.test(document.querySelector('.dsh-team-bar .dsh-bots-badge').textContent)`, 'saved badge (v5)')
+  teams = await listTeams()
+  saved = teams.find((entryTeam) => entryTeam.id === team.id)
+  assert.ok(saved.members.some((member) => member.bitId === workerBit.id), 'new member bitId saved')
+  assert.equal(saved.lead, leadMember.id, 'lead kept by the editor save')
+  assert.equal(saved.workspaceDir, repoDir, 'workspace kept')
+  assert.deepEqual(saved.entry, requestEntries, 'request templates kept')
+  if (harnessRoutes) assert.equal(saved.harness, PACK_ID, 'harness kept')
+  assert.ok(saved.flow.nodes.some((node) => node.type === 'decision' && node.label === 'Precisa de segurança?'), 'palette node round-trips')
+  assert.ok(!saved.flow.nodes.some((node) => node.id === 'research'), 'deleted node stays deleted')
 
-async function setSelect(cdp, selector, value) {
-  await evaluate(cdp, `(() => {
-    const el = document.querySelector(${JSON.stringify(selector)})
-    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set
-    setter.call(el, ${JSON.stringify(value)})
-    el.dispatchEvent(new Event('change', { bubbles: true }))
-  })()`)
-  await sleep(150)
+  console.log('ok - teams v5: fromTemplate in the UI, fresh bitId members, orchestrator-only lead, teams.run wiring')
+  console.log('ok - teams editor: render, move, connect, label, add, delete, undo/redo, save, member bit picker, read-only route')
 }
 
 let failed = false

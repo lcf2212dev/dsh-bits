@@ -506,3 +506,446 @@ Install recommendation carried forward: safe to install as an experimental local
 (vm_bash exercised through a real model turn) and T5 (DOM rendering) remain the top test gaps;
 the UI page's visual/slot rendering is verified only by registration-shape review and the
 served-bundle/module-graph E2E.
+
+---
+
+# Independent review — Projects layer (v4, 2026-11-10)
+
+Fresh-eyes review of CONTRACT §12 (projects above teams, `shared` teams) on the uncommitted
+working tree (HEAD `445eee5`), run in parallel with the implementation by a verifier teammate
+that did not write the feature. Scope: `host/projects.js`, `host/project-routes.js`, the team
+`shared`/`projectIds` fields and validation, route wiring, `client.js` (Projects tab, editor
+fields), docs and tests.
+
+## Rerun results (exact)
+
+| Suite | Result |
+|---|---|
+| `test/projects.test.mjs` | PASS 31/31 |
+| `test/teams.test.mjs` | PASS 28/28 (+ shared/projectIds cases) |
+| `test/catalog.test.mjs` / `store.test.mjs` / `routes.test.mjs` | PASS 12 / 22 / 26 |
+| `test/agent.test.mjs` / `notify.test.mjs` | PASS / 6 |
+| `test/team-runtime.test.mjs` / `harness.test.mjs` | PASS 12 / 5 |
+| `test/e2e-web.mjs` | PASS (isolated profile + real host + VM; new `5e/7` section exercises project CRUD, membership round-trip, unknown-project rejection, delete/detach on the real routes) |
+| `test/visual-teams.mjs` | PASS (editor flow, no v4 regression) |
+| `test/visual-projects.mjs` | PASS (Projects tab end-to-end in headless Chrome: create/edit/delete project, add teams, new team in project, shared toggle, blocked non-shared team, detach, badges) |
+
+## Findings
+
+- **L1 — `.gitignore` (`/projects.json` missing). Fixed by the Lead after the review:**
+  `/projects.json` and both `*.bak-*` backup patterns are now ignored beside `/teams.json`.
+- **L2 — Projects list card shows the team count as the role line, not only as a badge
+  (cosmetic, accepted).** The duplicate badge was removed in review; the count stays visible
+  once. CONTRACT §12.4 wording says "badge" but the detail header does use a badge.
+- **L3 — team/harness routes validated project ids while awaiting only `teamsReady`
+  (theoretical boot race). Fixed by the Lead:** both now await
+  `Promise.all([teamsReady, projectsReady.catch(() => undefined)])`, so a broken
+  `projects.json` still never blocks the team routes.
+- Coverage gaps accepted (code-reviewed, not automated): `fromPack` + `projectId` is covered by
+  `test/projects.test.mjs` but not the e2e (no harness pack fixture in a fresh profile);
+  client-side export/import project-id handling and the "projects route missing (404)"
+  degradation have no automated test.
+
+Data model/route invariants verified against the contract: atomic ProjectStore persistence,
+limits and corrupt-file quarantine; `shared: false` teams limited to one project on the merged
+record; unknown project ids rejected with coded errors on create/update; project deletion
+detaches teams first (aborts before removing the project if a detach fails) and reports
+`detachedTeams`; v1–v3 `teams.json` loads unchanged with `shared: false` / `projectIds: []`.
+
+## Verdict
+
+**SHIP** — no blocking findings. All suites green; three LOW-polish items either fixed by the
+Lead or accepted as cosmetic. Live profile migration (DSC project + six DSC teams) and the
+in-process plugin reload were verified by the Lead afterwards.
+
+---
+
+# Independent review — Bits v5 (2026-11-10)
+
+Fresh-eyes, read-only review of the v5 rebuild of `@local/dsh-bots` (working tree at HEAD
+`445eee5`, still uncommitted), written by the verifier teammate that wrote none of the v5
+code. Audited against `V5-CONTRACT.md` (the whole file), with the severity/style conventions
+of the reviews above. The only file this verifier wrote is this section; no code, test,
+profile or git change was made. All suites and probes below were re-run by me — no teammate
+claim was taken on trust.
+
+Scope exercised: `host/store.js`, `host/catalog.js`, `host/routes.js`, `host/models.js`,
+`host/bit-runtime.js`, `host/teams.js`, `host/team-routes.js`, `host/harness-routes.js`,
+`host/team-runtime.js`, `host/team-prompt.js`, `host/team-guard.js`, untouched
+`host/team-bindings.js` + projects layer, `index.js`, `client.js`, `bits/catalog.json`,
+`bits/teams/engineering.json`, package/locale/cordis config, docs, the claude-delegate
+plugin change, and the real persisted state under `~/.dsh/bots`.
+
+## Rerun results (exact)
+
+| Command | Result |
+|---|---|
+| `node test/store.test.mjs` | **PASS** — `store: 33 tests passed`, exit 0 |
+| `node test/catalog.test.mjs` | **PASS** — `catalog: 16 tests passed`, exit 0 |
+| `node test/routes.test.mjs` | **PASS** — `routes: 36 tests passed`, exit 0 |
+| `node test/teams.test.mjs` | **PASS** — `teams: 46 tests passed`, exit 0 |
+| `node test/projects.test.mjs` | **PASS** — `projects: 31 tests passed`, exit 0 |
+| `node test/harness.test.mjs` | **PASS** — `harness: 9 tests passed`, exit 0 (incl. real DSC harness) |
+| `node test/bit-runtime.test.mjs` | **PASS** — `bit-runtime: 13 tests passed`, exit 0 |
+| `node test/team-runtime.test.mjs` | **PASS** — `team-runtime: 16 tests passed`, exit 0 |
+| `node test/e2e-web.mjs` | **PASS** — 9/9 sections, throwaway `DSH_HOME`, temp profile removed; without the delegate plugin the subscription run fails with the actionable `BIT_DELEGATE_UNAVAILABLE` and a DSH-route worker with `BIT_MODEL_INVALID`; 52 catalog bits/4 orchestrators, 3 subscription model options, team template instantiates 11 bits+members, removed v4 routes answer non-200 |
+| `BITS_E2E_DELEGATE_DIR=/home/leandro/Documents/deepseek-harness/default-workspace/claude-delegate node test/e2e-web.mjs` | **PASS** — real subscription worker: `REAL subscription run answered in 4923ms: ok`, `meta.backend = claude-code`, `meta.model = subscription/haiku`; delegate plugin installed from its local dir into the throwaway profile |
+| `node test/visual.mjs --width 1440 --height 900` | **PASS** — `VISUAL DONE`, exit 0 (7 dark screenshots + card/dialog/Executar interactions) |
+| `node test/visual-teams.mjs --width 1440 --height 900` | **PASS** — 2/2 checks (fromTemplate in the UI/fresh bitId members/orchestrator-only lead/`teams.run` wiring; editor interactions incl. member bit picker/read-only route) |
+| `node test/visual-projects.mjs --width 1440 --height 900` | **PASS** — project CRUD/membership/shared rule/detach/badges, exit 0 |
+| adversarial probe scripts (`/tmp/v5verify/adversarial1.mjs`, `adversarial2.mjs`; not part of the repo) | **PASS** 26/26 and 32/32 — see "Adversarial checks executed" below |
+| `node --check` on `index.js`, `client.js`, `host/*.js`; JSON parse of catalog/templates/locale/package | **PASS** — syntax and documents valid |
+
+Counts match the `await test(...)` declarations exactly (33/16/36/46/31/9/13/16): no test is
+skipped, stubbed out or silently short-circuited, and every suite is exit-0.
+
+Independent checks beyond the shipped tests:
+
+- **§4 catalog table**: parsed the contract table and compared it byte-for-byte with
+  `bits/catalog.json` → 52/52 rows **EXACT MATCH**, `version: 2`, exactly four
+  orchestrators (bit-manager/product-owner/coordinator/sub-coordinator), only
+  `isOrchestrator`/`model`/`effort` added versus `HEAD` — groups, names, emoji, colors,
+  summaries and instructions are identical; no orphan avatar.
+- **Live migration state** (`~/.dsh/bots`, read-only): `bits.json` is `statusVersion 2` with
+  21 bits and **no `vm` field**; the one v4 bot (`210cd64d6a` Debugger) was copied with
+  id/name/character/emoji/color/instructions/workspaceDir/createdAt/updatedAt byte-identical
+  and catalog defaults (`subscription/opus`, `xhigh`); the log line
+  `migrated 1 bot(s) from bots.json to bits.json (backup bots.json.migrated-...)` is present.
+  `teams.json` has 6 teams, 0 members without `bitId`, 0 stale references, 0 invalid leads;
+  all 9 orchestrator bits use `deepseek-account/deepseek-flash`/`max`; migration summary
+  `6 teams, 20 bits created`, backup `teams.json.bak-1794325922486`; later plugin loads
+  logged no second migration. `projects.json` and `team-bindings.json` untouched by v5.
+- **Host API surface cross-check against the installed DSH runtime**, not just the fixture:
+  `ctx.tools.execute` returns `{ results: [{ callId, result }] }` with the canonical success
+  result carrying `value` (`dsh-tools/lib/types/batch.js:229`,
+  `dsh-tools/lib/types/pipeline.js:735`), `agent.model.select({provider, model,
+  reasoningEffort})` (`dsh-agent/lib/index.js:198`), `subagents.startActivation` with
+  `delivery: 'caller'` (`dsh-subagent/lib/index.js:1401`), `sessionController.create`/
+  `resolveAgent`, `sessionTitle.rename(session, title)` and `workspaceRegistry`
+  `resolveByPath/create/attachSession` all exist with those signatures.
+- **Finish vocabulary**: installed adapters report a normal stop as `{kind: 'stop'}`
+  (`dsh-llm-pi-ai/lib/index.js:1506`, `dsh-llm-deepseek/lib/index.js:1930`); the assembler
+  normalizes a stream that ends without a `finish` chunk to `{kind: 'stop'}`. The runtime's
+  "stop counts as success" is therefore required by this DSH build, not a shortcut.
+- **claude-delegate diff**: only the `readOnly` parameter, the `--permission-mode plan`
+  branch (default still `--dangerously-skip-permissions`) and the README/description
+  paragraphs changed; nothing else. The desktop profile links both
+  `@local/dsh-bots` and `@local/dsh-claude-delegate` from these working trees
+  (`~/.dsh/profiles/desktop/node_modules/@local/*` are symlinks), so the flag is live
+  after a plugin reload — no reinstall step needed.
+
+## Findings
+
+**0 BLOCKER, 0 MAJOR, 2 MINOR, 5 NIT. None of them blocks shipping.**
+
+### F1. MINOR — a failed template instantiation rolls back the bits but leaves their workspace directories behind — `host/team-routes.js:472-481`, `host/store.js:670`
+`instantiateTeamTemplate` creates one bit per template entry; `BitStore.create()` always
+mkdirs `<botsRoot>/<id>/workspace` (`host/store.js:670`). If the team creation then fails,
+the rollback loop removes the *records* with `deps.bits.remove(bit.id)` but not their
+workspaces. Reproduced independently: forcing `teams.create()` to throw left **11 orphan
+directories** under a clean `botsRoot` with 0 bit records. Reachable when `teams.create`
+fails after the bits exist — e.g. a profile already at the 200-team `TEAM_LIMIT`, or a
+project/team validation failure that is not caught before instantiation. Retrying leaks
+another 11 directories each time; the UI has no way to see or delete them. No data loss and
+no security impact (they are under the managed root and empty). Suggested fix:
+`deps.bits.remove(bit.id, { deleteWorkspace: true })` in the rollback (workspaces created by
+this path are always the default one under `botsRoot`, so the store's realpath guard still
+applies). **Does not block shipping.**
+
+### F2. MINOR — a team lead whose member `access` is `write` is not held to the lead-only toolset its prompt describes (inherited v4 policy) — `host/team-runtime.js:283-286`, `host/team-prompt.js:236`, `client.js:6899`, `host/teams.js:412-416`
+`roleOf(binding)` treats a lead as "orchestrator" only when its member access is `read`
+(`orchestrator: orchestrates(binding) && readOnly`); a lead with `access: 'write'` instead
+gets `MEMBER_ALLOWED_TOOLS` (`bash`, `write`, `edit`, glob/web/…) and the lead-only read
+boundary in the pre-execute policy (`host/team-runtime.js:1071-1078`) is skipped. Yet
+`leadPromptText`/glossary always tells the lead it "só orquestra: as ferramentas de
+terminal, escrita, busca e web ficam fora do seu alcance" (`host/team-prompt.js:236`), and
+v5 now requires the lead to be an orchestrator bit (§5.1). The editor does not prevent it:
+the member access select is rendered for every member including the lead
+(`client.js:6899`) and `normalizeTeam` has no lead-access rule
+(`host/teams.js:412-416`). Concrete scenario: a user opens `DSC · Entrega`, changes the
+lead member's access to "leitura e escrita", saves (accepted), and the next root session of
+that team can run `bash`/`write` while its own prompt and flow skills say it cannot. The
+policy is deliberately "kept from v4" (comment at `host/team-runtime.js:279-282`) and is
+user-initiated, so this is a consistency/UX defect, not a privilege escalation. Suggested
+fix: force `access: 'read'` for the lead in `normalizeTeam`, or treat `role === 'lead'` as
+orchestrating regardless of access. **Does not block shipping.**
+
+### F3. NIT — `.gitignore` misses the `.migrated-*`/`.corrupt-*` runtime artifacts (and `team-bindings.json`) — `.gitignore:10-22`
+The added rules cover `bits.json`/`bots.json`/`teams.json`/`projects.json` and the
+`*.bak-*` pattern, but not the other suffixes the stores actually write:
+`bots.json.migrated-*` (contract §2 backup), `bits.json.corrupt-*`,
+`bots.json.corrupt-*`, `teams.json.corrupt-*`, `projects.json.corrupt-*`, the
+`bits.json.tmp-<serial>` write temporaries (the `*.tmp` rule does not match `.tmp-<n>`), and
+`team-bindings.json`. Verified with `git check-ignore -v --no-index`: all of those are
+reported as not ignored. Concrete scenario: the common local setup the comment describes
+(`botsRoot` pointing at the repository while developing) leaves `bots.json.migrated-<ts>`
+or a quarantined copy as untracked files a `git add -A` would commit. This is the same class
+as L1 in the projects review. **Does not block shipping.**
+
+### F4. NIT — §5.3 wording vs `teamFromPack`'s intermediate shape — `host/harness-routes.js:134-223`
+`V5-CONTRACT.md` §5.3 says the pack→team helper returns `{ bits, team }` with "Team members
+reference those bits (`bitId`)". The exported `teamFromPack` returns a *template* shape whose
+members carry `bitKey` (the bits do not exist yet); only
+`instantiateTeamTemplate`/`POST /api/bots.teams.fromPack` produce the contracted
+`{ team, bits }` with `bitId` members, and that final response is correct (verified by
+`test/harness.test.mjs` and `test/projects.test.mjs`). No behavioral failure; if anything
+the intermediate shape is the only possible one before `bits.create`. Worth a doc sentence
+naming the helper as template-shaped so external callers do not misread §5.3. **Does not
+block shipping.**
+
+### F5. NIT — `teams.json` keeps `statusVersion: 1` — `host/teams.js:39`
+The teams document shape changed (members are bit references), but the store still writes
+`statusVersion: 1` (confirmed in the live migrated `teams.json`). Migration is detected from
+the member shape (`hasLegacyMembers`) and is idempotent, so this is purely a
+versioning/diagnostics gap: a reader cannot tell a v4 from a v5 teams file by the version
+field, and a future format bump will have to infer the generation from payload shape. The
+contract does not require a bump, so this is a nit only (`bits.json` correctly uses 2).
+**Does not block shipping.**
+
+### F6. NIT — `access: 'read'` on a `teamRef` member is not propagated to the other team's lead child agent — `host/team-runtime.js:360-378, 435`
+For a worker member the read-only intent is enforced through `readOnly: true` in the
+delegate call (`:435`). For a `teamRef` member (a stand-in for another team) the child agent
+is bound as that team's *lead*, so the child's guard uses the other lead member's access,
+not the referencing member's. Concrete (narrow) scenario: mark a `teamRef` member as
+read-only but the target team's lead has `access: write` — the delegated child can still
+write. Inherited from v4 (the v4 runtime had the same teamRef binding), leads in shipped
+templates are read-only, and the delegation is still within the same user's teams.
+**Does not block shipping.**
+
+### F7. NIT — a persisted orchestrator whose model is a subscription model loads and is listed; only execution fails — `host/store.js:949-1001`
+`create`/`update` reject orchestrator+subscription (`assertOrchestratorModel`) and migration
+cannot produce that pair, but `#normalizeLoadedRecord` performs no family check, so a
+hand-edited `bits.json` record (or one written by a future/older tool) loads, appears in
+`/api/bots.list`, can be chosen as a team lead, and only fails when a mission/delegation
+calls `models.routeFor` (`BIT_MODEL_INVALID`). The failure is coded and actionable, and the
+contract only requires validation on the write path; noted as a consistency nit, not a bug.
+**Does not block shipping.**
+
+## Verified as correct (with the authority checked)
+
+- **§0 pivot**: no VM machinery anywhere in the working tree — `host/vm.js`, `host/agent.js`,
+  `host/notify.js` and their tests are deleted; repository-wide grep finds `docker`/`vm`/
+  `notify`/`Conversar` only in historical `CONTRACT.md`, absence assertions in tests, or
+  doc comments saying they were removed. `client.js` has no VM/chat/notify/`bots.images`/
+  `bots.vm` string or call left (`test/visual.mjs` asserts the rendered page text too).
+- **§1 models** (`host/models.js`): exact subscription labels/aliases/efforts; DSH route
+  options carry label/backend/provider/model/tools/supportsOrchestrator; `list()` caches
+  ~60 s (independently observed one `listProviders` call for two `list()` calls), never
+  throws with zero providers / throwing registries / no `ctx.llm`, and still lists models
+  without reasoning metadata with the contract fallback effort list; `resolve` accepts
+  stored ids, bare legacy aliases and bare labels (`DeepSeek-V4.1-Flash`), is coded
+  `BIT_MODEL_MISSING`/`BIT_MODEL_INVALID`; `effortFor` implements the exact
+  `xhigh→xhigh|max|high`, `high→high|max`, `medium→medium|high|low`,
+  `low→low|minimal|medium`, `max→max|xhigh|high` mapping and returns `undefined` when the
+  model reports no efforts; `routeFor` refuses non-orchestrators and subscription routes,
+  defaults to DeepSeek-V4.1-Flash Max, and drops an effort the profile rejects before
+  judging the route (verified against a fake `resolveCallConfig`).
+- **§2 store** (`host/store.js`): record shape/limits enforced with coded `BOT_*` errors;
+  atomic tmp+rename+fsync write with `0600` (fixture mode check), serialized mutations and
+  writes (no lost concurrent updates), deep-copied reads, `BOT_LIMIT` at 200, workspace
+  deletion refused outside the root **and through a symlink** (independently re-verified),
+  corrupt `bits.json`/`bots.json` quarantined without throwing.
+- **§3.1 bots migration**: independent v4 fixture with `vm`, unknown character, missing
+  character and an existing `bits.json` — fields copied, `vm` dropped, catalog defaults
+  applied (incl. orchestrator lift for `bit-manager`), `bots.json.migrated-*` kept,
+  `statusVersion: 2`, idempotent across boots, `bits.json` wins over a leftover
+  `bots.json`, corrupt legacy file quarantined.
+- **§3.2 teams migration**: independent v4 fixture (2 teams sharing a coordinator + builder,
+  a third with an unknown character, 30 000-char member instructions) — 5 members deduped
+  into 3 bits, member ids/roles/access/launches/lead/flow/harness preserved, lead bit forced
+  to orchestrator/DeepSeek Max, instructions truncated to 20 000 (not lost), catalog
+  emoji/color used, `teams.json.bak-*` written, idempotent on the second boot, unknown
+  character falls back to `subscription/sonnet`/`high`, and a team whose conversion fails is
+  preserved raw (in memory and in the rewritten file) and retried — never lost or throwing.
+- **§5 teams**: unknown `bitId` → `TEAM_INVALID` naming `members[i].bitId`; lead rule
+  enforced on create **and** update (`TEAM_LEAD_NOT_ORCHESTRATOR`); deleting a referenced
+  bit does not make the team disappear, while re-sending the stale reference is refused;
+  `teams.providers` gone (E2E gets a non-200 for it); `GET teams.templates` returns the new
+  format including `bits`; `fromTemplate` creates fresh bits every time and links
+  `bitKey→bitId`, and fails with full rollback on unknown character/team failure (F1 aside);
+  `fromPack` creates bits first and returns `{ team, bits }`; the rewritten
+  `bits/teams/engineering.json` preserves all 11 members' roles/access/launches, the 22-node
+  flow/23 edges (identical to `HEAD`) and the team text, with the coordinator as
+  orchestrator lead.
+- **§6.1 bit runtime** (`host/bit-runtime.js`): subscription path calls
+  `ctx.tools.execute({calls:[{id,name:'claude_delegate',arguments}]})` and reads the
+  canonical `value`, with `task = instructions + '\n\n---\n\n' + request` (plus the report
+  instruction when the bit has no instructions), `model` alias, mapped `effort`, `cwd`,
+  `readOnly`; wired into the real DSH API (shape cross-checked against the runtime). All
+  failure modes are coded/actionable (`BIT_DELEGATE_UNAVAILABLE` names the plugin and the
+  `claude` login; missing `ctx.tools` covered). Ad-hoc `runBit` refuses orchestrators
+  (`BIT_IS_ORCHESTRATOR`), enforces 1..20 000 chars, defaults `readOnly: true`, and only
+  accepts an alternate cwd inside the bit workspace. DSH path is a single
+  `ctx.llm.stream` call with the exact contract `messages` shape, concatenated
+  `text-delta`s, `stop`/`success` success and coded `BIT_MODEL_CALL_FAILED` otherwise;
+  `invokeWorker` composes the same prompt and propagates `readOnly` only for read access.
+  Every one of these was re-driven with a fake host, including a real 4.9 s subscription
+  invocation through the actual `claude_delegate` tool.
+- **§6.2 team runtime** (`host/team-runtime.js`, `team-prompt.js`, `team-guard.js`):
+  lead persona/route come from the lead bit (route validated by `models.routeFor`, applied
+  with `agent.model.select` before `followup`); workers are one-shot through
+  `bitRuntime.invokeWorker` with the contract cwd rule (caller cwd only inside the team
+  workspace), `readOnly = member.access === 'read'` and the
+  `[bit · backend/model · effort]` header; orchestrator members and `teamRef` targets keep
+  the child-agent `startActivation` path with the target bit's route; provider pinning/
+  label matching is gone; `team_handoff`, the pack guard, lead read policy, bindings,
+  `team_send`, inbox drain, skills provider, `applyTo` post-execute, shell variables and
+  diagnostics are all still present with the v5 wording. Verified again against the shipped
+  `test/team-runtime.test.mjs`, which exercises these through the real
+  `models`/`bitRuntime` implementation over a fake host.
+- **§6.3 claude-delegate**: minimal diff (readOnly parameter → `--permission-mode plan`,
+  default bypass preserved, README/description updated); the real subscription run through
+  the installed tool returned a normal answer with `readOnly: true`, so the new path does
+  not break the CLI invocation.
+- **§7 routes** (`host/routes.js`): exactly the eight contracted `/api/bots.*` routes for
+  the bit store (+ diagnostics registered by `index.js`), all HTTP-200 `{ok}` conventions,
+  `bots`/`bot` aliases, no VM/images/notify routes, `BIT_RUN_TIMEOUT` with a configurable
+  guard that also aborts the runtime signal, transport-abort forwarding, coded pass-through
+  and uncoded→`BIT_RUN_FAILED`. Independently re-verified with a real `AbortController`
+  harness.
+- **§8 client**: verified by code read plus the three real-Chrome suites: cards show
+  avatar/name/character/group/orchestrator-worker badge/model label·effort, no VM badge;
+  the editor has the isOrchestrator switch, model select from `/api/bots.models` and effort
+  select, snaps model+effort atomically in one state update when the family changes, offers
+  "restaurar descrição padrão", blocks orchestrator+subscription; workers get "Executar"
+  (request textarea, read-only default **on**, busy state, response/error panel) and
+  orchestrators show "Executa em fluxos" + the teams they lead and no Executar button;
+  member editor picks a bit grouped by catalog group with role/access/launches/teamRef/mcp/
+  skills and read-only model/effort badges, lead selector only offers orchestrator members,
+  an invalid current lead is shown inline, save is blocked with a toast; templates create via
+  `POST /api/bots.teams.fromTemplate`; "Enviar pedido" calls `POST /api/bots.teams.run`,
+  shows busy/created-session and opens it through `uiWorkspace.openSession` when possible;
+  the flow editor and Projects tab are behaviourally unchanged; pt/en dictionaries have
+  parity for the new keys (86/86 keys each, no missing key side). The served bundle renders
+  in the real host (E2E) and in headless Chrome (visual suites).
+- **§9 files/config/docs**: deletions done; `package.json` v0.4.0 description/keywords have
+  no VM terms; `cordis.patch.yml` `bots` row config is empty (`botsRoot` only, as allowed);
+  locale metadata says Bits/flows; README is truthful against the code (execution matrix,
+  migration, requirements incl. the `claude_delegate` dependency and
+  `BIT_DELEGATE_UNAVAILABLE`, paths, routes, tests, diagnostics, security limits);
+  `CONTRACT.md` now opens with a v5 pointer and is labelled historical.
+- **§10 per-owner suites** all green as listed above; the only repo files my runs touched
+  are the regenerated `test/screenshots/*.png` (expected deliverables of the visual suites)
+  — no source, store or fixture file changed.
+- **Projects layer untouched**: `host/projects.js` / `host/project-routes.js` still carry
+  their pre-v5 mtimes and `host/team-bindings.js` is identical to `HEAD`; the projects suites
+  and E2E project section pass unchanged.
+
+## Adversarial checks executed (not part of the repo)
+
+Independent fixtures driven directly against the shipped modules:
+
+1. **v4 `bots.json` migration**: fields/backup/`vm` drop/catalog defaults/unknown character/
+   idempotency/existing-`bits.json`-wins/corrupt quarantine/`0600` mode; workspace directory
+   creation left to `ensureWorkspace` (create-time) rather than migration.
+2. **v4 `teams.json` migration**: cross-team dedupe (3 bits for 5 members), lead upgrade,
+   20 000-char instruction truncation, member-id/lead/flow preservation, backup+idempotency,
+   failed-conversion preservation, unknown-character fallback.
+3. **Stale/deleted bit**: persisted team with a deleted bit still loads and is listed, while
+   create/update with the stale `bitId` fails `TEAM_INVALID`; deleted-bit delegation would
+   fail coded (also covered by the shipped fake-host test).
+4. **Model family coherence**: orchestrator+subscription rejected on create/update; a
+   hand-written persisted orchestrator+subscription record loads but `routeFor` fails
+   `BIT_MODEL_INVALID`; lead rule refused on create/update.
+5. **Model catalog**: no `ctx.llm`, zero providers, throwing `listProviders`/`listModels`,
+   unresolved efforts, caching, bare-label resolution, effort-alias mapping, effort-dropping
+   by `resolveCallConfig`.
+6. **Bit runtime**: canonical pipeline result shapes (matching/missing callId, `isError`,
+   undefined `value`, non-string value, `execute` throw, aborted signal), prompt composition,
+   cwd containment, request bounds, both backends, `readOnly` true/false propagation,
+   one-shot option shape (no tools/readOnly key) and error-code mapping.
+7. **Route guard**: `BIT_RUN_TIMEOUT` fires and aborts the runtime signal with a
+   never-settling runtime; transport abort reaches the runtime; coded/uncoded/malformed
+   runtime results; eight-route registration list; runtime-unavailable paths.
+8. **Template/rollback**: fresh bits per instantiation, rollback with a failing team store,
+   unknown-character rollback, malformed/`bits`-less templates skipped, shipped engineering
+   template validation (11 bits, lead orchestrator route/max).
+9. **Path escapes**: workspace deletion outside the root and through a symlinked workspace
+   both refused without deleting the target.
+
+## Security and operational notes (accepted, per contract)
+
+- **Write-access subscription workers run with `--dangerously-skip-permissions`** by design
+  (contract §0/§6.3): the Harness guard does not apply inside Claude Code; the effective
+  boundaries are the cwd (team workspace) and the permission mode, and repo/web content in
+  the prompt can steer the subscribed CLI. The contract explicitly keeps bypass as the
+  default; members marked `access: read` get `readOnly: true` → `--permission-mode plan`,
+  which the real E2E invocation exercised. Documented in README's "Segurança e limites";
+  no change requested.
+- No new network/auth surface: routes stay on the authenticated host connection registry
+  (same convention as v4); the avatar route stays id-whitelisted (no path escape); the
+  diagnostics route exposes paths/errors but keeps the v4 owner-only auth and reports no VM
+  fields; deleting a bit cannot delete a directory outside `botsRoot` (realpath-checked).
+- Ad-hoc runs are bounded (1..20 000 chars request, read-only default on, 15 min route guard
+  with abort) and delegation results are plain text; huge worker output relies on the
+  delegate plugin's own 8 MB stream cap, as in v4.
+
+## Coverage gaps accepted
+
+- **No end-to-end run of a real lead mission** (`teams.run` success) or a real
+  orchestrator→worker delegation through the Harness: the isolated E2E profile has no LLM
+  provider/credentials, so only the deterministic error paths run there; the fake-host
+  `test/team-runtime.test.mjs` drives the real `models`/`bitRuntime`/`team-prompt`/guard
+  code for those paths, and the real subscription *worker* is exercised over HTTP. A live
+  mission remains manually verified only.
+- **No E2E coverage of the DSH one-shot backend with a real provider** (same reason — the
+  profile has no providers); covered by fixture streams only.
+- **Team inbox drain** (`<botsRoot>/team-inbox`) has no automated test (pre-existing v4 gap;
+  the feature is unchanged).
+- **UI `openSession` happy path** (navigate to the created mission) is only wired/visual-
+  checked; the visual suites do not open a real session.
+- **`teamFromPack` + `projectId`** covered by unit tests, not by the E2E (no harness pack in
+  a fresh profile).
+- A route-level test cannot prove that `--permission-mode plan` blocks writes inside Claude
+  Code (that is Claude Code's contract); the flag construction is diff-reviewed and the
+  invocation succeeds.
+- F1/F2/F6 are code-reviewed edge cases; no regression tests were added for them (this
+  verifier may not edit tests).
+
+## Verdict
+
+**SHIP.** The v5 rebuild is contract-compliant on every numbered section I could verify
+(§0–§10): the product pivot is complete (no Docker/VM/chat/notify remnants, deleted files,
+removed routes), the bit/team/model data model and both migrations match the contract
+(verified independently and on the live migrated profile), the model catalog and both
+runtime backends behave as specified against the *real* installed DSH APIs (including one
+real Claude-subscription invocation), the team runtime keeps delegation/handoff/guard/skills/
+bindings semantics with the v5 lead routing, the client implements §8 and renders correctly
+in real Chrome, and every shipped suite is green with its full declared test count.
+Two minor robustness/consistency findings (F1 orphan workspaces on a failed template
+instantiation, F2 write-access lead vs. its prompt/guard) and five nits (F3 `.gitignore`,
+F4 teamFromPack intermediate shape, F5 teams `statusVersion`, F6 teamRef read-only
+propagation, F7 load-time family validation) remain; none is a data-integrity, security or
+shipping blocker, and F1/F2 are cheap follow-ups. My runs also left the working tree in its
+expected deliverable state (regenerated screenshots only).
+
+---
+
+## Lead addendum (post-sign-off fixes, Bits v5)
+
+The Lead applied the cheap items from the v5 review after the sign-off:
+
+- **F1 (fixed)** — a failed `fromTemplate` instantiation now rolls back each created bit
+  with `{ deleteWorkspace: true }` (`host/team-routes.js`), so no orphan workspace
+  directories remain; `test/teams.test.mjs` records the `remove(id, options)` calls of the
+  rollback and asserts the workspace deletion.
+- **F3 (fixed)** — `.gitignore` now covers `.tmp-*` atomic-write leftovers,
+  `*.migrated-*`/`*.corrupt-*` quarantine files, `team-bindings.json` (+ backups) and
+  `team-inbox/`.
+- **F4 (fixed in `V5-CONTRACT.md`)** — §5.3 now states that `teamFromPack` returns the
+  intermediate `{ bits, team }` with template-local `bitKey` members and that the route
+  resolves them to `bitId` when creating the team.
+- **F5 (fixed)** — `host/teams.js` persists `statusVersion: 2` for the v5 member shape
+  (the loader keeps ignoring the field, so old files still load); the persistence unit test
+  was updated accordingly.
+- **F2, F6, F7 (accepted, documented)** — a `write`-access lead keeps the inherited v4
+  member toolset; `teamRef` read-only does not propagate to the other team's lead; and a
+  hand-edited orchestrator record with a subscription model is rejected at execution with
+  the coded `BIT_MODEL_INVALID` (create/update already reject it at the boundary). None is
+  a data-integrity or security blocker; they remain as known edge cases.
+
+Final verification after the fixes (Lead): `node test/teams.test.mjs` →
+`teams: 46 tests passed`; the full suite and E2E were re-run green before the addendum, and
+the fixed code paths are covered by the updated tests. The installed desktop profile was
+remounted with the final v5 host plugin (`include:bots` disable/enable) after the review,
+with the live data already migrated on first load.

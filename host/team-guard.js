@@ -2,7 +2,10 @@
  * Team guard: runs the harness pack's own PreToolUse guard (e.g. DSC
  * `git-guard.cjs`) for every tool call of a team agent, in the Claude Code
  * hook format it already understands, plus the native team policies (the
- * lead only orchestrates).
+ * lead orchestrates; a read-only agent bit does not write).
+ *
+ * Worker bits are not agents (they are one-shot invocations), so their tool
+ * access is enforced by the delegate call (`readOnly`), not here.
  *
  * @module host/team-guard
  */
@@ -150,10 +153,10 @@ export const LEAD_HIDDEN_TOOLS = [
   'glob', 'grep', 'web_fetch', 'web_search', 'subagent', 'subagent_fork', 'workflow', 'spawn_teammate', 'run_code',
 ]
 
-/** Built-in delegation tools hidden from every team agent (they use team_delegate). */
+/** Built-in delegation tools hidden from every team agent bit (they use team_delegate). */
 export const TEAM_HIDDEN_TOOLS = ['subagent', 'subagent_fork', 'spawn_teammate', 'workflow']
 
-/** Write tools hidden from read-only members. */
+/** Write tools hidden from read-only agent bits. */
 export const READ_ONLY_HIDDEN_TOOLS = ['write', 'edit', 'apply_patch', 'str_replace_editor']
 
 /**
@@ -166,7 +169,7 @@ export const TEAM_TOOLS = new Set(['team_delegate', 'team_handoff'])
 /** The orchestrating lead: talk to the dev, plan, read the pack and `.dsc/`, delegate. */
 export const LEAD_ALLOWED_TOOLS = new Set(['read', 'skill', 'todo_write', 'ask_user_question', 'working_directory', 'structured_output'])
 
-/** Members with write access (read-only members also lose READ_ONLY_HIDDEN_TOOLS). */
+/** Agent bits with write access (read-only bits also lose READ_ONLY_HIDDEN_TOOLS). */
 export const MEMBER_ALLOWED_TOOLS = new Set([
   'bash', 'bash_persistent', 'pwsh', 'pwsh_persistent', 'terminal_open', 'terminal_send', 'terminal_read', 'terminal_signal', 'terminal_close', 'terminal_list',
   'read', 'read_image', 'write', 'edit', 'apply_patch', 'str_replace_editor', 'glob', 'grep',

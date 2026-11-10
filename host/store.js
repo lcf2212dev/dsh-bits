@@ -1,14 +1,20 @@
 /**
- * Durable JSON store for Bots plugin records.
+ * Durable JSON store for Bits plugin records (v5).
  *
- * Every bot is persisted as one record inside `<botsRoot>/bots.json`, a document
- * shaped `{ statusVersion: 1, bots: BotRecord[] }`. Mutations are serialized so
+ * Every bit is persisted as one record inside `<botsRoot>/bits.json`, a document
+ * shaped `{ statusVersion: 2, bits: BitRecord[] }`. Mutations are serialized so
  * concurrent callers cannot lose each other's changes, and each write replaces
  * the file atomically (write a sibling temporary file, fsync it, then rename).
  *
+ * A v4 `<botsRoot>/bots.json` is migrated once on `init()`: normal records are
+ * converted to the v5 shape (drop `vm`, fill `isOrchestrator`/`model`/`effort`
+ * from the catalog) and the old file is kept as `bots.json.migrated-<ts>`.
+ * Corrupt documents are renamed aside (`bits.json.corrupt-<ts>`) and the store
+ * starts empty, exactly like v4.
+ *
  * Public read methods return deep copies, so callers can never mutate the
  * in-memory store by reference. Destructive workspace deletion is refused unless
- * the resolved workspace path really lives inside {@link BotStore#botsRoot}.
+ * the resolved workspace path really lives inside {@link BitStore#botsRoot}.
  *
  * @module host/store
  */
@@ -19,24 +25,54 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 /** Version stamped into every persisted document. */
-const STATUS_VERSION = 1;
-/** Bot id: 10 lowercase hexadecimal characters. */
+const STATUS_VERSION = 2;
+/** Bit id: 10 lowercase hexadecimal characters. */
 const ID_PATTERN = /^[0-9a-f]{10}$/;
 /** Accent color: `#rrggbb`. */
 const COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
-/** Docker image reference accepted for `vm.image`. */
-const IMAGE_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._/:@-]{0,199}$/;
 const DEFAULT_EMOJI = '🤖';
-const DEFAULT_IMAGE = 'ubuntu:24.04';
+/** Execution defaults for worker bits (invoked single-shot). */
+export const DEFAULT_WORKER_MODEL = 'subscription/sonnet';
+export const DEFAULT_WORKER_EFFORT = 'high';
+/** Execution defaults for orchestrator bits (they run as DSH agents). */
+export const DEFAULT_ORCHESTRATOR_MODEL = 'deepseek-account/deepseek-flash';
+export const DEFAULT_ORCHESTRATOR_EFFORT = 'max';
 const MAX_NAME_LENGTH = 60;
 const MAX_INSTRUCTIONS_LENGTH = 20000;
 const MAX_EMOJI_CODE_POINTS = 8;
-const CREATE_FIELDS = new Set(['id', 'name', 'character', 'emoji', 'color', 'instructions', 'workspaceDir', 'vm']);
-const PATCH_FIELDS = new Set(['name', 'character', 'emoji', 'color', 'instructions', 'vm']);
+const MAX_WORKSPACE_DIR_LENGTH = 1024;
+const MAX_MODEL_LENGTH = 120;
+const MAX_EFFORT_LENGTH = 20;
+/** Hard cap on the number of stored bits. */
+const MAX_BITS = 200;
+/** Subscription models: workers only (orchestrators need a DSH chat route). */
+const SUBSCRIPTION_MODEL_PATTERN = /^subscription\//;
+const SUBSCRIPTION_ALIASES = new Set(['opus', 'sonnet', 'haiku']);
+const CREATE_FIELDS = new Set([
+  'id',
+  'name',
+  'character',
+  'emoji',
+  'color',
+  'instructions',
+  'isOrchestrator',
+  'model',
+  'effort',
+  'workspaceDir',
+]);
+const PATCH_FIELDS = new Set([
+  'name',
+  'character',
+  'emoji',
+  'color',
+  'instructions',
+  'isOrchestrator',
+  'model',
+  'effort',
+]);
 /** Bit character id (`bit-...`); catalog membership is checked by the routes. */
 const CHARACTER_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
-const VM_FIELDS = new Set(['enabled', 'image']);
-/** Accent palette used when `color` is omitted; deterministic per bot id. */
+/** Accent palette used when `color` is omitted; deterministic per bit id. */
 const COLOR_PALETTE = Object.freeze([
   '#7c3aed',
   '#2563eb',
@@ -91,7 +127,15 @@ function invalidPatch(message) {
 }
 
 /**
- * Pick a deterministic palette color from a bot id.
+ * @param {unknown} error
+ * @returns {string}
+ */
+function messageOf(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Pick a deterministic palette color from a bit id.
  *
  * @param {string} id 10 hex chars
  * @returns {string} `#rrggbb`
@@ -112,14 +156,14 @@ function normalizeTimestamp(value) {
 
 /**
  * @param {unknown} value
- * @returns {string} trimmed bot name
+ * @returns {string} trimmed bit name
  * @throws coded `BOT_INVALID_NAME`
  */
 function normalizeName(value) {
-  if (typeof value !== 'string') throw codedError('BOT_INVALID_NAME', 'Bot name is required');
+  if (typeof value !== 'string') throw codedError('BOT_INVALID_NAME', 'Bit name is required');
   const name = value.trim();
   if (name.length < 1 || name.length > MAX_NAME_LENGTH) {
-    throw codedError('BOT_INVALID_NAME', `Bot name must be 1-${MAX_NAME_LENGTH} characters`);
+    throw codedError('BOT_INVALID_NAME', `Bit name must be 1-${MAX_NAME_LENGTH} characters`);
   }
   return name;
 }
@@ -143,7 +187,7 @@ function normalizeEmoji(value, fallback) {
 /**
  * @param {unknown} value
  * @param {string | null} fallback used when `value` is `undefined`
- * @returns {string | null} character id, or `null` for a bot without a character
+ * @returns {string | null} character id, or `null` for a bit without a character
  * @throws coded `BOT_INVALID_PATCH`
  */
 function normalizeCharacter(value, fallback) {
@@ -185,6 +229,74 @@ function normalizeInstructions(value) {
 
 /**
  * @param {unknown} value
+ * @returns {boolean}
+ * @throws coded `BOT_INVALID_PATCH`
+ */
+function normalizeIsOrchestrator(value) {
+  if (typeof value !== 'boolean') invalidPatch('isOrchestrator must be a boolean');
+  return value;
+}
+
+/**
+ * @param {unknown} value
+ * @returns {string} trimmed model string (may be empty)
+ * @throws coded `BOT_INVALID_PATCH`
+ */
+function normalizeModel(value) {
+  if (typeof value !== 'string') invalidPatch('model must be a string');
+  const model = value.trim();
+  if (model.length > MAX_MODEL_LENGTH) {
+    invalidPatch(`model must be at most ${MAX_MODEL_LENGTH} characters`);
+  }
+  return model;
+}
+
+/**
+ * @param {unknown} value
+ * @returns {string} trimmed effort string (may be empty)
+ * @throws coded `BOT_INVALID_PATCH`
+ */
+function normalizeEffort(value) {
+  if (typeof value !== 'string') invalidPatch('effort must be a string');
+  const effort = value.trim();
+  if (effort.length > MAX_EFFORT_LENGTH) {
+    invalidPatch(`effort must be at most ${MAX_EFFORT_LENGTH} characters`);
+  }
+  return effort;
+}
+
+/**
+ * Whether a model string belongs to the subscription (Claude Code) family:
+ * `subscription/<alias>` or a legacy bare `opus` / `sonnet` / `haiku`.
+ *
+ * @param {string} model normalized model string
+ * @returns {boolean}
+ */
+function isSubscriptionModel(model) {
+  const normalized = typeof model === 'string' ? model.trim().toLowerCase() : '';
+  if (normalized === '') return false;
+  return SUBSCRIPTION_MODEL_PATTERN.test(normalized) || SUBSCRIPTION_ALIASES.has(normalized);
+}
+
+/**
+ * Orchestrator bits run as DSH agents, so they must point at a DSH chat route
+ * (`<provider>/<model>`); a subscription model is worker-only (contract §1).
+ *
+ * @param {boolean} isOrchestrator
+ * @param {string} model normalized model string
+ * @throws coded `BOT_INVALID`
+ */
+function assertOrchestratorModel(isOrchestrator, model) {
+  if (isOrchestrator !== true) return;
+  if (!isSubscriptionModel(model)) return;
+  throw codedError(
+    'BOT_INVALID',
+    `model: an orchestrator bit needs a DSH chat route (<provider>/<model>); "${model}" is a subscription model (workers only)`,
+  );
+}
+
+/**
+ * @param {unknown} value
  * @returns {string} absolute normalized workspace directory
  * @throws coded `BOT_INVALID_PATCH`
  */
@@ -192,60 +304,53 @@ function normalizeWorkspaceDir(value) {
   if (typeof value !== 'string' || value.trim() === '' || !path.isAbsolute(value)) {
     invalidPatch('workspaceDir must be an absolute path');
   }
+  if (value.length > MAX_WORKSPACE_DIR_LENGTH) {
+    invalidPatch(`workspaceDir must be at most ${MAX_WORKSPACE_DIR_LENGTH} characters`);
+  }
   return path.resolve(value);
 }
 
 /**
- * Validate a docker image reference.
+ * Read an optional persisted string field, truncated to `max` characters.
  *
  * @param {unknown} value
- * @returns {string}
- * @throws coded `BOT_INVALID_IMAGE`
+ * @param {number} max
+ * @returns {string | null} trimmed value, or `null` when the field is absent
  */
-function normalizeImage(value) {
-  if (typeof value !== 'string' || !IMAGE_PATTERN.test(value)) {
-    throw codedError('BOT_INVALID_IMAGE', 'vm.image must be a valid docker image reference');
-  }
-  return value;
+function readPersistedString(value, max) {
+  if (typeof value !== 'string') return null;
+  return value.trim().slice(0, max);
 }
 
 /**
- * Validate the fields of an incoming `vm` object.
- *
  * @param {unknown} value
- * @returns {{ enabled?: boolean, image?: string }} validated partial vm fields
- * @throws coded `BOT_INVALID_PATCH` / `BOT_INVALID_IMAGE`
+ * @param {number} maxLength
+ * @returns {string | null} usable absolute path, or `null`
  */
-function validateVm(value) {
-  if (value === undefined || value === null) return {};
-  if (!isPlainObject(value)) invalidPatch('vm must be an object');
-  for (const key of Object.keys(value)) {
-    if (!VM_FIELDS.has(key)) invalidPatch(`Unknown vm field "${key}"`);
-  }
-  const validated = {};
-  if (value.enabled !== undefined) {
-    if (typeof value.enabled !== 'boolean') invalidPatch('vm.enabled must be a boolean');
-    validated.enabled = value.enabled;
-  }
-  if (value.image !== undefined) validated.image = normalizeImage(value.image);
-  return validated;
+function readPersistedWorkspaceDir(value, maxLength) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (trimmed === '' || trimmed.length > maxLength || !path.isAbsolute(trimmed)) return null;
+  return path.resolve(trimmed);
 }
 
 /**
- * Durable, DOM-free store for Bots plugin records.
+ * Durable, DOM-free store for Bits plugin records.
  *
  * @example
- * const store = new BotStore({ botsRoot: path.join(dshHome, 'bots') });
- * await store.init();
- * const bot = await store.create({ name: 'Pesquisador' });
+ * const bits = new BitStore({ botsRoot: path.join(dshHome, 'bots'), catalog });
+ * await bits.init();
+ * const bit = await bits.create({ name: 'Pesquisador', character: 'bit-scout' });
  */
-export class BotStore {
+export class BitStore {
   /** @type {string} */
   #botsRoot;
   /** @type {string} */
   #file;
-  /** @type {string} */
-  #defaultImage;
+  /** @type {ReturnType<typeof import('./catalog.js').loadBitCatalog> | null} */
+  #catalog;
+  /** @type {((message: string) => void) | null} */
+  #logFn;
   /** @type {Array<Record<string, any>>} */
   #records = [];
   /** Serializes mutating operations so concurrent updates cannot interleave. */
@@ -254,27 +359,33 @@ export class BotStore {
   #writeChain = Promise.resolve();
 
   /**
-   * @param {{ botsRoot: string, defaultImage?: string }} options
-   *   `botsRoot` must be an absolute directory path; `defaultImage` is the
-   *   docker image used when a bot does not pick one.
+   * @param {{ botsRoot: string, catalog?: any, log?: (message: string) => void }} options
+   *   `botsRoot` must be an absolute directory path; `catalog` optionally
+   *   provides the default `isOrchestrator`/`model`/`effort` per character.
    */
-  constructor({ botsRoot, defaultImage = DEFAULT_IMAGE } = {}) {
+  constructor({ botsRoot, catalog = null, log = null } = {}) {
     if (typeof botsRoot !== 'string' || botsRoot.trim() === '' || !path.isAbsolute(botsRoot)) {
-      throw new TypeError('BotStore: botsRoot must be an absolute path string');
-    }
-    if (typeof defaultImage !== 'string' || !IMAGE_PATTERN.test(defaultImage)) {
-      throw new TypeError('BotStore: defaultImage must be a valid docker image reference');
+      throw new TypeError('BitStore: botsRoot must be an absolute path string');
     }
     this.#botsRoot = path.resolve(botsRoot);
-    this.#file = path.join(this.#botsRoot, 'bots.json');
-    this.#defaultImage = defaultImage;
+    this.#file = path.join(this.#botsRoot, 'bits.json');
+    this.#catalog = isPlainObject(catalog) ? catalog : null;
+    this.#logFn = typeof log === 'function' ? log : null;
   }
 
   /**
-   * Absolute root directory holding bot workspaces and the store document.
+   * Absolute root directory holding bit workspaces and the store document.
    * @returns {string}
    */
   get botsRoot() {
+    return this.#botsRoot;
+  }
+
+  /**
+   * Alias of {@link BitStore#botsRoot} (`bits` is the v5 product name).
+   * @returns {string}
+   */
+  get bitsRoot() {
     return this.#botsRoot;
   }
 
@@ -287,18 +398,11 @@ export class BotStore {
   }
 
   /**
-   * Default docker image used by newly created bots.
-   * @returns {string}
-   */
-  get defaultImage() {
-    return this.#defaultImage;
-  }
-
-  /**
-   * Create `botsRoot` and load the persisted document.
+   * Create `botsRoot` and load the persisted document, migrating a v4
+   * `bots.json` when no `bits.json` exists yet.
    *
-   * A malformed JSON document (or one without a `bots` array) is renamed to
-   * `bots.json.corrupt-<timestamp>` and the store starts empty; unreadable
+   * A malformed JSON document (or one without a `bits` array) is renamed to
+   * `bits.json.corrupt-<timestamp>` and the store starts empty; unreadable
    * paths/permission errors are rethrown.
    *
    * @returns {Promise<this>} this store, initialized
@@ -311,6 +415,7 @@ export class BotStore {
     } catch (error) {
       if (error?.code === 'ENOENT') {
         this.#records = [];
+        await this.#migrateLegacyFile();
         return this;
       }
       throw error;
@@ -321,12 +426,13 @@ export class BotStore {
     } catch {
       parsed = undefined;
     }
-    if (!isPlainObject(parsed) || !Array.isArray(parsed.bots)) {
-      await this.#quarantineCorruptFile();
+    if (!isPlainObject(parsed) || !Array.isArray(parsed.bits)) {
+      await this.#renameAside(this.#file, 'corrupt');
       this.#records = [];
+      this.#log('bits: bits.json is corrupt; started empty');
       return this;
     }
-    this.#records = this.#normalizeLoadedBots(parsed.bots);
+    this.#records = this.#normalizeLoadedRecords(parsed.bits);
     return this;
   }
 
@@ -347,10 +453,10 @@ export class BotStore {
   }
 
   /**
-   * Find a bot whose workspace directory matches `dir`.
+   * Find a bit whose workspace directory matches `dir`.
    *
    * Compares `path.resolve` of both sides, and additionally compares real paths
-   * (symlink targets) when both resolve. The bot's own folder name may be a
+   * (symlink targets) when both resolve. The bit's own folder name may be a
    * symlink, so `dir` does not need to be byte-identical to the stored path.
    *
    * @param {unknown} dir absolute or relative directory path
@@ -372,14 +478,22 @@ export class BotStore {
   }
 
   /**
-   * Validate, create and persist a bot record.
+   * Validate, create and persist a bit record.
    *
-   * @param {{ id?: string, name: string, character?: string | null, emoji?: string, color?: string,
-   *   instructions?: string, workspaceDir?: string,
-   *   vm?: { enabled?: boolean, image?: string } }} [input]
+   * A known `character` supplies the defaults for `isOrchestrator`, `model` and
+   * `effort` (contract §2/§4); otherwise the worker defaults are used, or the
+   * orchestrator defaults when `isOrchestrator` is true. The workspace directory
+   * is created on create (creation never fails because of the mkdir).
+   *
+   * An orchestrator bit must point at a DSH chat route (`<provider>/<model>`):
+   * a subscription model is worker-only and is refused with `BOT_INVALID`.
+   *
+   * @param {{ id?: string, name: string, character?: string | null, emoji?: string,
+   *   color?: string, instructions?: string, isOrchestrator?: boolean,
+   *   model?: string, effort?: string, workspaceDir?: string }} [input]
    * @returns {Promise<Record<string, any>>} deep copy of the created record
-   * @throws coded `BOT_INVALID_NAME`, `BOT_INVALID_IMAGE`, `BOT_INVALID_PATCH`,
-   *   `BOT_ID_EXISTS`
+   * @throws coded `BOT_INVALID_NAME`, `BOT_INVALID_PATCH`, `BOT_ID_EXISTS`,
+   *   `BOT_LIMIT`, `BOT_INVALID` (orchestrator with a subscription model)
    */
   async create(input = {}) {
     return this.#mutate(() => this.#createRecord(input));
@@ -388,19 +502,24 @@ export class BotStore {
   /**
    * Apply a partial patch and persist the updated record.
    *
+   * The patched record is re-validated as a whole: an orchestrator bit cannot be
+   * left (or promoted) on a subscription model (`BOT_INVALID`), so promoting a
+   * worker requires patching `model` to a DSH route in the same update.
+   *
    * @param {string} id
-   * @param {{ name?: string, character?: string | null, emoji?: string, color?: string,
-   *   instructions?: string, vm?: { enabled?: boolean, image?: string } }} patch
+   * @param {{ name?: string, character?: string | null, emoji?: string,
+   *   color?: string, instructions?: string, isOrchestrator?: boolean,
+   *   model?: string, effort?: string }} patch
    * @returns {Promise<Record<string, any>>} deep copy of the updated record
    * @throws coded `BOT_NOT_FOUND`, `BOT_INVALID_PATCH`, `BOT_INVALID_NAME`,
-   *   `BOT_INVALID_IMAGE`
+   *   `BOT_INVALID` (orchestrator with a subscription model)
    */
   async update(id, patch) {
     return this.#mutate(() => this.#updateRecord(id, patch));
   }
 
   /**
-   * Remove a bot record, optionally deleting its workspace directory.
+   * Remove a bit record, optionally deleting its workspace directory.
    *
    * The workspace path is validated against the store's real root *before* the
    * record is removed, so a refused deletion leaves the store untouched. When
@@ -417,24 +536,46 @@ export class BotStore {
   }
 
   /**
-   * Ensure the bot workspace directory exists.
+   * Ensure the bit workspace directory exists.
    *
-   * @param {Record<string, any> | string} record bot record (or bot id)
+   * @param {Record<string, any> | string} record bit record (or bit id)
    * @returns {Promise<string>} absolute workspace directory path
    * @throws coded `BOT_NOT_FOUND`, `BOT_INVALID_PATCH`
    */
   async ensureWorkspace(record) {
     const resolved = typeof record === 'string' ? this.get(record) : record;
     if (!isPlainObject(resolved)) {
-      throw codedError('BOT_NOT_FOUND', `Bot "${String(record)}" was not found`);
+      throw codedError('BOT_NOT_FOUND', `Bit "${String(record)}" was not found`);
     }
     const workspaceDir = resolved.workspaceDir;
     if (typeof workspaceDir !== 'string' || workspaceDir.trim() === '' || !path.isAbsolute(workspaceDir)) {
-      throw codedError('BOT_INVALID_PATCH', 'Bot record has no absolute workspaceDir');
+      throw codedError('BOT_INVALID_PATCH', 'Bit record has no absolute workspaceDir');
     }
     const absolute = path.resolve(workspaceDir);
     await fs.mkdir(absolute, { recursive: true, mode: 0o700 });
     return absolute;
+  }
+
+  /**
+   * Delete one bit's workspace directory after validating that it lives inside
+   * the store root (never escapes it, directly or through a symlink).
+   *
+   * @param {Record<string, any> | string} record bit record (or bit id)
+   * @returns {Promise<string>} the deleted absolute path
+   * @throws coded `BOT_NOT_FOUND`, `BOT_INVALID_PATCH`, `BOT_WORKSPACE_OUTSIDE_ROOT`
+   */
+  async deleteWorkspace(record) {
+    const resolved = typeof record === 'string' ? this.get(record) : record;
+    if (!isPlainObject(resolved)) {
+      throw codedError('BOT_NOT_FOUND', `Bit "${String(record)}" was not found`);
+    }
+    const workspaceDir = this.#workspaceDirOf(resolved);
+    if (workspaceDir === null) {
+      throw codedError('BOT_INVALID_PATCH', 'Bit record has no absolute workspaceDir');
+    }
+    const target = await this.#assertWorkspaceInsideRoot(workspaceDir);
+    await fs.rm(target, { recursive: true, force: true });
+    return target;
   }
 
   /**
@@ -445,7 +586,7 @@ export class BotStore {
    */
   flush() {
     const task = async () => {
-      const contents = `${JSON.stringify({ statusVersion: STATUS_VERSION, bots: this.#records }, null, 2)}\n`;
+      const contents = `${JSON.stringify({ statusVersion: STATUS_VERSION, bits: this.#records }, null, 2)}\n`;
       await this.#writeFileAtomically(contents);
     };
     const result = this.#writeChain.then(task);
@@ -483,31 +624,40 @@ export class BotStore {
   async #createRecord(input) {
     if (!isPlainObject(input)) invalidPatch('create() expects an object');
     for (const key of Object.keys(input)) {
-      if (!CREATE_FIELDS.has(key)) invalidPatch(`Unknown bot field "${key}"`);
+      if (!CREATE_FIELDS.has(key)) invalidPatch(`Unknown bit field "${key}"`);
+    }
+    if (this.#records.length >= MAX_BITS) {
+      throw codedError('BOT_LIMIT', `At most ${MAX_BITS} bits are supported`);
     }
     const name = normalizeName(input.name);
     const id = this.#allocateId(input.id);
-    const vmFields = validateVm(input.vm);
+    const character = normalizeCharacter(input.character, null);
+    const catalogBit = this.#catalogBit(character);
+    const isOrchestrator =
+      input.isOrchestrator === undefined
+        ? catalogBit !== null && catalogBit.isOrchestrator === true
+        : normalizeIsOrchestrator(input.isOrchestrator);
+    const defaults = this.#defaultsFor(character, isOrchestrator);
     const now = new Date().toISOString();
     /** @type {Record<string, any>} */
     const record = {
       id,
       name,
-      character: normalizeCharacter(input.character, null),
+      character,
       emoji: normalizeEmoji(input.emoji, DEFAULT_EMOJI),
       color: normalizeColor(input.color, paletteColorFor(id)),
       instructions: normalizeInstructions(input.instructions),
+      isOrchestrator,
+      model: input.model === undefined ? defaults.model : normalizeModel(input.model),
+      effort: input.effort === undefined ? defaults.effort : normalizeEffort(input.effort),
       workspaceDir:
         input.workspaceDir === undefined
           ? path.join(this.#botsRoot, id, 'workspace')
           : normalizeWorkspaceDir(input.workspaceDir),
-      vm: {
-        enabled: vmFields.enabled === true,
-        image: vmFields.image ?? this.#defaultImage,
-      },
       createdAt: now,
       updatedAt: now,
     };
+    assertOrchestratorModel(record.isOrchestrator, record.model);
     this.#records.push(record);
     try {
       await this.flush();
@@ -515,6 +665,9 @@ export class BotStore {
       this.#records.pop();
       throw error;
     }
+    // Contract §2: the workspace is created with the record. A failed mkdir is
+    // logged but never fails the creation (the same resilience the v4 route had).
+    await this.#ensureWorkspaceDir(record.workspaceDir);
     return cloneRecord(record);
   }
 
@@ -525,26 +678,23 @@ export class BotStore {
    */
   async #updateRecord(id, patch) {
     const index = this.#indexOf(id);
-    if (index < 0) throw codedError('BOT_NOT_FOUND', `Bot "${String(id)}" was not found`);
+    if (index < 0) throw codedError('BOT_NOT_FOUND', `Bit "${String(id)}" was not found`);
     if (!isPlainObject(patch)) invalidPatch('update() patch must be an object');
     for (const key of Object.keys(patch)) {
-      if (!PATCH_FIELDS.has(key)) invalidPatch(`Cannot update bot field "${key}"`);
+      if (!PATCH_FIELDS.has(key)) invalidPatch(`Cannot update bit field "${key}"`);
     }
     const current = this.#records[index];
-    const vmFields = validateVm(patch.vm);
     /** @type {Record<string, any>} */
-    const next = { ...current, vm: { ...current.vm } };
+    const next = { ...current };
     if (patch.name !== undefined) next.name = normalizeName(patch.name);
     if (patch.character !== undefined) next.character = normalizeCharacter(patch.character, current.character ?? null);
     if (patch.emoji !== undefined) next.emoji = normalizeEmoji(patch.emoji, current.emoji);
     if (patch.color !== undefined) next.color = normalizeColor(patch.color, current.color);
     if (patch.instructions !== undefined) next.instructions = normalizeInstructions(patch.instructions);
-    if (patch.vm !== undefined && patch.vm !== null) {
-      next.vm = {
-        enabled: vmFields.enabled ?? current.vm.enabled,
-        image: vmFields.image ?? current.vm.image,
-      };
-    }
+    if (patch.isOrchestrator !== undefined) next.isOrchestrator = normalizeIsOrchestrator(patch.isOrchestrator);
+    if (patch.model !== undefined) next.model = normalizeModel(patch.model);
+    if (patch.effort !== undefined) next.effort = normalizeEffort(patch.effort);
+    assertOrchestratorModel(next.isOrchestrator, next.model);
     next.updatedAt = new Date().toISOString();
     this.#records[index] = next;
     try {
@@ -563,13 +713,13 @@ export class BotStore {
    */
   async #removeRecord(id, deleteWorkspace) {
     const index = this.#indexOf(id);
-    if (index < 0) throw codedError('BOT_NOT_FOUND', `Bot "${String(id)}" was not found`);
+    if (index < 0) throw codedError('BOT_NOT_FOUND', `Bit "${String(id)}" was not found`);
     const record = this.#records[index];
-    const workspaceDir = typeof record.workspaceDir === 'string' ? path.resolve(record.workspaceDir) : null;
+    const workspaceDir = this.#workspaceDirOf(record);
     let deleteTarget = null;
     if (deleteWorkspace) {
       if (workspaceDir === null) {
-        throw codedError('BOT_WORKSPACE_OUTSIDE_ROOT', 'Refusing to delete workspace: bot has no usable workspaceDir');
+        throw codedError('BOT_WORKSPACE_OUTSIDE_ROOT', 'Refusing to delete workspace: bit has no usable workspaceDir');
       }
       deleteTarget = await this.#assertWorkspaceInsideRoot(workspaceDir);
     }
@@ -585,12 +735,82 @@ export class BotStore {
   }
 
   // ---------------------------------------------------------------------------
+  // Catalog-aware defaults
+  // ---------------------------------------------------------------------------
+
+  /**
+   * @param {string | null} character
+   * @returns {Record<string, any> | null}
+   */
+  #catalogBit(character) {
+    if (typeof character !== 'string' || this.#catalog === null) return null;
+    try {
+      if (typeof this.#catalog.get === 'function') {
+        const bit = this.#catalog.get(character);
+        return isPlainObject(bit) ? bit : null;
+      }
+      if (typeof this.#catalog.has === 'function' && this.#catalog.has(character)) {
+        const bit = this.#catalog.get?.(character);
+        return isPlainObject(bit) ? bit : null;
+      }
+    } catch {
+      // A broken catalog must never break the store.
+    }
+    return null;
+  }
+
+  /**
+   * Resolve the `{ model, effort }` defaults for a new/reset record.
+   *
+   * A known character supplies its catalog defaults when its catalog row belongs
+   * to the same family (`isOrchestrator`) as the record; otherwise the family
+   * defaults apply, so an orchestrator never silently inherits a subscription
+   * worker model.
+   *
+   * @param {string | null} character
+   * @param {boolean} isOrchestrator
+   * @returns {{ model: string, effort: string }}
+   */
+  #defaultsFor(character, isOrchestrator) {
+    const orchestrator = isOrchestrator === true;
+    const catalogBit = this.#catalogBit(character);
+    const sameFamily = catalogBit !== null && (catalogBit.isOrchestrator === true) === orchestrator;
+    const model =
+      sameFamily && typeof catalogBit.model === 'string' && catalogBit.model.trim() !== ''
+        ? catalogBit.model.trim()
+        : orchestrator
+          ? DEFAULT_ORCHESTRATOR_MODEL
+          : DEFAULT_WORKER_MODEL;
+    const effort =
+      sameFamily && typeof catalogBit.effort === 'string' && catalogBit.effort.trim() !== ''
+        ? catalogBit.effort.trim()
+        : orchestrator
+          ? DEFAULT_ORCHESTRATOR_EFFORT
+          : DEFAULT_WORKER_EFFORT;
+    return { model, effort };
+  }
+
+  // ---------------------------------------------------------------------------
   // Persistence helpers
   // ---------------------------------------------------------------------------
 
   /** @returns {Promise<void>} */
   async #ensureRootDir() {
     await fs.mkdir(this.#botsRoot, { recursive: true, mode: 0o700 });
+  }
+
+  /**
+   * Best-effort workspace creation used by `create()`.
+   *
+   * @param {string} workspaceDir
+   * @returns {Promise<void>}
+   */
+  async #ensureWorkspaceDir(workspaceDir) {
+    try {
+      await fs.mkdir(workspaceDir, { recursive: true, mode: 0o700 });
+    } catch (error) {
+      this.#log(`bits: could not create workspace ${workspaceDir}: ${messageOf(error)}`);
+    }
   }
 
   /**
@@ -632,34 +852,82 @@ export class BotStore {
   }
 
   /**
-   * Move a corrupt store document aside so the store can start empty.
-   * @returns {Promise<void>}
+   * Move `file` aside with a `.<kind>-<ts>` suffix.
+   *
+   * @param {string} file
+   * @param {'corrupt' | 'migrated'} kind
+   * @returns {Promise<string | null>} backup path, or `null` when the file is gone
    */
-  async #quarantineCorruptFile() {
-    const backup = `${this.#file}.corrupt-${Date.now()}`;
+  async #renameAside(file, kind) {
+    const backup = `${file}.${kind}-${Date.now()}`;
     try {
-      await fs.rename(this.#file, backup);
+      await fs.rename(file, backup);
+      return backup;
     } catch (error) {
-      if (error?.code === 'ENOENT') return;
+      if (error?.code === 'ENOENT') return null;
       throw error;
     }
   }
 
   // ---------------------------------------------------------------------------
-  // Loading helpers
+  // Loading / migration helpers
   // ---------------------------------------------------------------------------
 
   /**
-   * Normalize a parsed `bots` array, dropping unusable entries.
+   * Migrate a v4 `bots.json` document into `bits.json` (contract §3.1).
    *
-   * @param {unknown[]} bots
+   * The new document is written *before* the legacy file is renamed, so a
+   * failed rename can never lose records; the rename is still attempted and a
+   * failure is only logged.
+   *
+   * @returns {Promise<boolean>} whether a legacy document was processed
+   */
+  async #migrateLegacyFile() {
+    const legacyFile = path.join(this.#botsRoot, 'bots.json');
+    let raw;
+    try {
+      raw = await fs.readFile(legacyFile, 'utf8');
+    } catch (error) {
+      if (error?.code === 'ENOENT') return false;
+      throw error;
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      parsed = undefined;
+    }
+    if (!isPlainObject(parsed) || !Array.isArray(parsed.bots)) {
+      await this.#renameAside(legacyFile, 'corrupt');
+      this.#records = [];
+      this.#log('bits: legacy bots.json is corrupt; started empty');
+      return false;
+    }
+    this.#records = this.#normalizeLoadedRecords(parsed.bots);
+    await this.flush();
+    try {
+      const backup = await this.#renameAside(legacyFile, 'migrated');
+      this.#log(
+        `bits: migrated ${this.#records.length} bot(s) from bots.json to bits.json` +
+          (backup === null ? '' : ` (backup ${path.basename(backup)})`),
+      );
+    } catch (error) {
+      this.#log(`bits: could not rename legacy bots.json: ${messageOf(error)}`);
+    }
+    return true;
+  }
+
+  /**
+   * Normalize a parsed array of persisted records, dropping unusable entries.
+   *
+   * @param {unknown[]} bits
    * @returns {Array<Record<string, any>>}
    */
-  #normalizeLoadedBots(bots) {
+  #normalizeLoadedRecords(bits) {
     const records = [];
     const usedIds = new Set();
-    for (const bot of bots) {
-      const record = this.#normalizeLoadedRecord(bot, usedIds);
+    for (const raw of bits) {
+      const record = this.#normalizeLoadedRecord(raw, usedIds);
       if (record === null) continue;
       usedIds.add(record.id);
       records.push(record);
@@ -668,7 +936,11 @@ export class BotStore {
   }
 
   /**
-   * Coerce one persisted entry into a valid record.
+   * Coerce one persisted entry into a valid v5 record.
+   *
+   * Missing v5 execution fields are filled from the catalog character when
+   * known, otherwise from the family defaults (contract §3.1). A `vm` field from
+   * v4 data is dropped.
    *
    * @param {unknown} raw
    * @param {Set<string>} usedIds ids already taken by earlier entries
@@ -684,11 +956,9 @@ export class BotStore {
         id = randomBytes(5).toString('hex');
       } while (usedIds.has(id));
     }
-    let workspaceDir = typeof raw.workspaceDir === 'string' ? raw.workspaceDir.trim() : '';
-    workspaceDir =
-      workspaceDir !== '' && path.isAbsolute(workspaceDir)
-        ? path.resolve(workspaceDir)
-        : path.join(this.#botsRoot, id, 'workspace');
+    const workspaceDir =
+      readPersistedWorkspaceDir(raw.workspaceDir, MAX_WORKSPACE_DIR_LENGTH) ??
+      path.join(this.#botsRoot, id, 'workspace');
     const emoji =
       typeof raw.emoji === 'string' &&
       Array.from(raw.emoji).length >= 1 &&
@@ -703,10 +973,16 @@ export class BotStore {
         : paletteColorFor(id);
     const instructions =
       typeof raw.instructions === 'string' ? raw.instructions.slice(0, MAX_INSTRUCTIONS_LENGTH) : '';
-    const rawVm = isPlainObject(raw.vm) ? raw.vm : {};
-    const image =
-      typeof rawVm.image === 'string' && IMAGE_PATTERN.test(rawVm.image) ? rawVm.image : this.#defaultImage;
-    const createdAt = normalizeTimestamp(raw.createdAt) ?? normalizeTimestamp(raw.updatedAt) ?? new Date().toISOString();
+    const catalogBit = this.#catalogBit(character);
+    const isOrchestrator =
+      typeof raw.isOrchestrator === 'boolean'
+        ? raw.isOrchestrator
+        : catalogBit !== null && catalogBit.isOrchestrator === true;
+    const defaults = this.#defaultsFor(character, isOrchestrator);
+    const model = readPersistedString(raw.model, MAX_MODEL_LENGTH);
+    const effort = readPersistedString(raw.effort, MAX_EFFORT_LENGTH);
+    const createdAt =
+      normalizeTimestamp(raw.createdAt) ?? normalizeTimestamp(raw.updatedAt) ?? new Date().toISOString();
     const updatedAt = normalizeTimestamp(raw.updatedAt) ?? createdAt;
     return {
       id,
@@ -715,8 +991,10 @@ export class BotStore {
       emoji,
       color,
       instructions,
+      isOrchestrator,
+      model: model ?? defaults.model,
+      effort: effort ?? defaults.effort,
       workspaceDir,
-      vm: { enabled: rawVm.enabled === true, image },
       createdAt,
       updatedAt,
     };
@@ -736,6 +1014,19 @@ export class BotStore {
   }
 
   /**
+   * Absolute workspace directory of a record, or `null` when unusable.
+   *
+   * @param {Record<string, any>} record
+   * @returns {string | null}
+   */
+  #workspaceDirOf(record) {
+    if (!isPlainObject(record) || typeof record.workspaceDir !== 'string') return null;
+    const trimmed = record.workspaceDir.trim();
+    if (trimmed === '' || !path.isAbsolute(trimmed)) return null;
+    return path.resolve(trimmed);
+  }
+
+  /**
    * @param {unknown} requestedId
    * @returns {string} unique 10 hex char id
    * @throws coded `BOT_INVALID_PATCH`, `BOT_ID_EXISTS`
@@ -746,7 +1037,7 @@ export class BotStore {
         invalidPatch('id must be 10 lowercase hexadecimal characters');
       }
       if (this.#records.some((record) => record.id === requestedId)) {
-        throw codedError('BOT_ID_EXISTS', `A bot with id "${requestedId}" already exists`);
+        throw codedError('BOT_ID_EXISTS', `A bit with id "${requestedId}" already exists`);
       }
       return requestedId;
     }
@@ -785,7 +1076,7 @@ export class BotStore {
     if (!inside) {
       throw codedError(
         'BOT_WORKSPACE_OUTSIDE_ROOT',
-        `Refusing to delete workspace outside bots root: ${workspaceDir}`,
+        `Refusing to delete workspace outside bits root: ${workspaceDir}`,
       );
     }
     return realTarget;
@@ -802,4 +1093,21 @@ export class BotStore {
       return null;
     }
   }
+
+  /**
+   * Log through the optional `log` callback without ever failing the store.
+   *
+   * @param {string} message
+   */
+  #log(message) {
+    if (this.#logFn === null) return;
+    try {
+      this.#logFn(message);
+    } catch {
+      // Logging must never break the store.
+    }
+  }
 }
+
+/** @deprecated v4 name kept for older imports; use {@link BitStore}. */
+export { BitStore as BotStore };

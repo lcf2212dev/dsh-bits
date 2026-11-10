@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Bits",
-    "description": "Create named AI teammates with their own persona, workspace and optional Docker machine."
+    "description": "Bits run inside team flows: each bit receives a request and returns a response, with its own model and effort."
   }
 }

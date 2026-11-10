@@ -6,11 +6,16 @@
  *   `team_delegate` (binding stored before the child exists), a root session
  *   handed off with `team_handoff`, or a root session whose working directory
  *   is inside the workspace of a `bindWorkspace` team (the lead).
- * - Each team agent gets, on its own scope: a prompt section (persona, roster,
- *   flow, harness rules, glossary, applyTo index), tool restrictions (the lead
- *   only orchestrates; read-only members cannot write), `team_delegate` with
- *   the members it may launch, `team_handoff` for root leads, and the MCP
- *   servers configured for the member.
+ * - Every team member references a bit (`member.bitId`); the bit record is read
+ *   from the injected bit store and supplies the persona (`instructions`),
+ *   `isOrchestrator`, model and effort. There is no model/provider pinning on
+ *   the member itself anymore.
+ * - The lead is an orchestrator bit on a DSH route. Orchestrator bits run as
+ *   DSH agents (root/child) and get a prompt section (persona, roster, flow,
+ *   harness rules, glossary, applyTo index), tool restrictions, `team_delegate`
+ *   with the members they may launch, `team_handoff` for root leads, and the
+ *   MCP servers configured for the member. Worker bits are never agents: they
+ *   are single-shot invocations through `bitRuntime.invokeWorker`.
  * - Global hooks, filtered by team agents: a skill provider exposing the
  *   harness pack skills, `tools/pre-execute` running the pack guard
  *   (`git-guard.cjs` in Claude Code format) plus the lead read policy,
@@ -36,10 +41,13 @@ import { leadPromptText, memberPromptText } from './team-prompt.js'
 const TEAM_SECTION_ORDER = 700
 const SKILL_PROVIDER = 'bits-team-harness'
 const MAX_DEPTH = 4
-const EFFORT_ALIASES = { xhigh: ['xhigh', 'max', 'high'], high: ['high', 'max'], medium: ['medium', 'high', 'low'], low: ['low', 'minimal', 'medium'], max: ['max', 'xhigh', 'high'] }
 
 function messageOf(error) {
   return error instanceof Error ? error.message : String(error)
+}
+
+function codedError(code, message) {
+  return Object.assign(new Error(message), { code })
 }
 
 function stripFrontmatter(text) {
@@ -71,10 +79,10 @@ function findDshPackage(name) {
  * Install the team runtime.
  *
  * @param {import('@deepseek-ai/cordis').Context} ctx
- * @param {{ teams: any, teamsReady: Promise<void>, botsRoot: string, log?: (message: string) => void }} deps
+ * @param {{ teams: any, teamsReady: Promise<void>, bits: any, models: any, bitRuntime: any, botsRoot: string, log?: (message: string) => void }} deps
  */
 export function installTeamRuntime(ctx, deps) {
-  const { teams, botsRoot } = deps
+  const { teams, botsRoot, bits, models, bitRuntime } = deps
   const log = typeof deps.log === 'function' ? deps.log : () => {}
   const packsRoot = path.join(botsRoot, 'harness')
   const bindings = new TeamBindingStore({ botsRoot })
@@ -92,6 +100,48 @@ export function installTeamRuntime(ctx, deps) {
     errors.push(`${new Date().toISOString()} ${message}`)
     if (errors.length > 40) errors.shift()
     log(message)
+  }
+
+  /* ------------------------------- bits --------------------------------- */
+
+  /** Bit record of one team member (null when the member/bit is stale). */
+  function lookupBit(member) {
+    if (!member || typeof member.bitId !== 'string' || member.bitId === '') return null
+    try {
+      const bit = bits && typeof bits.get === 'function' ? bits.get(member.bitId) : null
+      return bit !== null && typeof bit === 'object' ? bit : null
+    } catch {
+      return null
+    }
+  }
+
+  /** Bit record behind a resolved binding (lead or member). */
+  function bitOfBinding(binding) {
+    return binding ? lookupBit(binding.member) : null
+  }
+
+  function isOrchestratorBit(bit) {
+    return !!bit && bit.isOrchestrator === true
+  }
+
+  function bitNameOf(bit, member) {
+    const name = bit && typeof bit.name === 'string' ? bit.name.trim() : ''
+    return name !== '' ? name : (member && typeof member.id === 'string' ? member.id : 'bit')
+  }
+
+  /** Display name of a member's bit (used in tools, prompts and errors). */
+  function memberNameOf(member) {
+    return bitNameOf(lookupBit(member), member)
+  }
+
+  /** Bit records of a team's members, keyed by bit id (for the prompt text). */
+  function bitsByIdFor(team) {
+    const map = {}
+    for (const member of team && Array.isArray(team.members) ? team.members : []) {
+      const bit = lookupBit(member)
+      if (bit && typeof bit.id === 'string') map[bit.id] = bit
+    }
+    return map
   }
 
   /* ---------------------------- teams cache ----------------------------- */
@@ -218,25 +268,24 @@ export function installTeamRuntime(ctx, deps) {
     return binding ? `${binding.team.id}:${binding.role}:${binding.member ? binding.member.id : '-'}` : ''
   }
 
-  /** Orchestrator = root or child lead whose member is read-only (only delegates). */
-  function isOrchestrator(binding) {
-    return !!binding && binding.role === 'lead' && (!binding.member || binding.member.access === 'read')
+  /** A binding "orchestrates" when its bit is an orchestrator (the team lead is always one). */
+  function orchestrates(binding) {
+    if (!binding) return false
+    if (binding.role === 'lead') return true
+    return isOrchestratorBit(bitOfBinding(binding))
+  }
+
+  /**
+   * Role seen by tool policies and the guard. Kept from v4: a read-only lead
+   * only orchestrates (write tools are hidden/denied); a write-access binding
+   * keeps the member tools. Orchestrator membership is now decided by the bit.
+   */
+  function roleOf(binding) {
+    const readOnly = !!binding && !!binding.member && binding.member.access === 'read'
+    return { orchestrator: orchestrates(binding) && readOnly, readOnly, child: !!binding && !!binding.child }
   }
 
   /* ------------------------------- prompt -------------------------------- */
-
-  /** Display name of every provider registered in the profile (id → name). */
-  function providerNames() {
-    const names = {}
-    try {
-      for (const item of ctx.llm.listProviders()) {
-        if (item && typeof item.id === 'string' && item.id !== '') names[item.id] = typeof item.name === 'string' && item.name !== '' ? item.name : item.id
-      }
-    } catch {
-      // No llm service yet: the roster shows the raw provider id from the team.
-    }
-    return names
-  }
 
   function promptFor(agent) {
     const binding = resolve(agent)
@@ -245,82 +294,20 @@ export function installTeamRuntime(ctx, deps) {
     const input = {
       team: binding.team,
       member: binding.member,
+      bit: bitOfBinding(binding),
+      bitsById: bitsByIdFor(binding.team),
       teamsById: teamsById(),
       pack: packData ? packData.pack : null,
       rules: packData ? packData.rules : '',
       conduct: packData ? packData.conduct : '',
-      providers: providerNames(),
     }
     if (binding.role === 'lead') {
       const text = leadPromptText(input)
       return binding.child
-        ? `${text}\n\n## Você foi chamado por outro time\n\nEsta sessão é um membro de outro time que delegou a você a etapa do seu time. Siga o seu fluxo, delegue aos seus membros e ponha o relatório completo na sua mensagem final: ela volta a quem chamou. Você não fala com o dev: devolva perguntas e PAUSAs no relatório.`
+        ? `${text}\n\n## Você foi chamado por outro time\n\nEsta sessão é o líder de outro time que delegou a você a etapa do seu time. Siga o seu fluxo, delegue aos seus bits e ponha o relatório completo na sua mensagem final: ela volta a quem chamou. Você não fala com o dev: devolva perguntas e PAUSAs no relatório.`
         : text
     }
     return memberPromptText(input)
-  }
-
-  /* --------------------------- models (routes) ---------------------------- */
-
-  async function routeFor(member, parent, signal) {
-    const llm = ctx.llm
-    if (!llm || !member || !member.model) return undefined
-    const parentOptions = (parent && parent.options) || {}
-    const wanted = String(member.model).toLowerCase().replace(/\(copilot\)/, '').trim()
-    const tokens = wanted.replace(/(\d)\.(\d)/g, '$1-$2').split(/[\s_-]+/).filter(Boolean)
-    const pinned = typeof member.provider === 'string' ? member.provider.trim() : ''
-    let registered = []
-    try {
-      registered = llm.listProviders().map((item) => item.id)
-    } catch {
-      registered = []
-    }
-    if (pinned && registered.length > 0 && !registered.includes(pinned)) {
-      throw new Error(`O provedor "${pinned}" do membro ${member.id} não existe neste perfil (disponíveis: ${registered.join(', ')}).`)
-    }
-    // A pinned provider is the account the dev chose: it is the only candidate,
-    // so the member never silently falls back to another account. Without one,
-    // prefer the parent's provider, then the profile's registration order.
-    let providers
-    if (pinned) providers = [pinned]
-    else if (parentOptions.provider) providers = [parentOptions.provider, ...registered.filter((id) => id !== parentOptions.provider)]
-    else providers = registered
-    let matched = false
-    for (const provider of providers) {
-      let models = []
-      try {
-        models = await llm.listModels(provider)
-      } catch {
-        continue
-      }
-      const match = models.find((model) => String(model.name).toLowerCase() === wanted)
-        || models.find((model) => tokens.every((token) => String(model.id).toLowerCase().includes(token) || String(model.name).toLowerCase().includes(token)))
-      if (!match) continue
-      matched = true
-      const route = { provider, model: match.id }
-      if (member.effort) {
-        try {
-          const info = await llm.resolveModelInfo(provider, match.id, signal)
-          const efforts = (info && info.reasoning && Array.isArray(info.reasoning.efforts) ? info.reasoning.efforts : []).map((item) => (typeof item === 'string' ? item : item && item.id)).filter(Boolean)
-          const choice = (EFFORT_ALIASES[member.effort] || [member.effort]).find((id) => efforts.includes(id))
-          if (choice) route.reasoningEffort = choice
-        } catch {
-          // Unknown efforts: keep the model's default.
-        }
-      }
-      try {
-        await llm.resolveCallConfig({ ...route }, signal)
-        return route
-      } catch (error) {
-        noteError(`route ${provider}/${match.id} rejected for ${member.id}: ${messageOf(error)}`)
-      }
-    }
-    if (pinned) {
-      throw new Error(matched
-        ? `O provedor "${pinned}" recusou o modelo "${member.model}" do membro ${member.id}.`
-        : `O modelo "${member.model}" do membro ${member.id} não existe no provedor "${pinned}".`)
-    }
-    return undefined
   }
 
   /* ------------------------------ delegation ------------------------------ */
@@ -350,35 +337,52 @@ export function installTeamRuntime(ctx, deps) {
     return ids.map((id) => memberOf(team, id)).filter(Boolean)
   }
 
-  async function delegate(agent, args, exec) {
-    const binding = resolve(agent)
-    if (!binding) throw new Error('team_delegate só existe em sessões de um time.')
-    const allowed = launchableFor(binding)
-    const target = allowed.find((member) => member.id === args.member)
-    if (!target) {
-      throw new Error(`"${args.member}" não pode ser lançado por ${binding.member ? binding.member.name : 'este agente'}. Permitidos: ${allowed.map((member) => member.id).join(', ') || 'nenhum'}.`)
-    }
-    const task = typeof args.task === 'string' ? args.task.trim() : ''
-    if (!task) throw new Error('team_delegate: "task" é obrigatório e precisa ser autocontido.')
-    const provider = spawnProvider()
-    if (!provider) throw new Error('Nenhum provedor de subagentes com rota própria está disponível neste perfil.')
+  /** Caller cwd when it is inside the team workspace; otherwise the team workspace. */
+  function delegationCwd(agent, team) {
+    const callerCwd = sessionCwd(agent)
+    if (typeof callerCwd === 'string' && callerCwd !== '' && typeof team.workspaceDir === 'string' && isInside(team.workspaceDir, callerCwd)) return callerCwd
+    if (typeof team.workspaceDir === 'string' && team.workspaceDir !== '') return team.workspaceDir
+    return typeof callerCwd === 'string' && callerCwd !== '' ? callerCwd : undefined
+  }
 
+  /** `<backend>/<model> · <effort>` text of a worker invocation result. */
+  function resultRouteText(meta) {
+    const backend = meta && meta.backend === 'claude-code' ? 'claude-code' : 'dsh'
+    const model = meta && typeof meta.model === 'string' && meta.model !== '' ? meta.model : 'modelo'
+    const short = backend === 'claude-code' ? model.replace(/^subscription\//, '') : model
+    return meta && typeof meta.effort === 'string' && meta.effort !== '' ? `${backend}/${short} · ${meta.effort}` : `${backend}/${short}`
+  }
+
+  /**
+   * Delegate to an orchestrator bit: the v4 child-agent path, with the route
+   * coming from the target bit (`teamRef` targets run the other team's lead).
+   */
+  async function delegateToAgent(agent, binding, target, targetBit, task, exec) {
+    const provider = spawnProvider()
+    if (!provider) throw codedError('TEAM_DELEGATE_UNAVAILABLE', 'Nenhum provedor de subagentes com rota própria está disponível neste perfil.')
     let childBinding
-    let routeMember = target
-    let label = target.name
+    let routeBit = targetBit
+    let label = bitNameOf(targetBit, target)
+    let routeTeam = null
     if (target.teamRef) {
       const other = teamMap().get(target.teamRef)
-      if (!other) throw new Error(`O time referenciado por "${target.id}" não existe mais.`)
+      if (!other) throw codedError('TEAM_INVALID', `O time referenciado por "${target.id}" não existe mais.`)
+      const otherLead = memberOf(other, other.lead)
+      routeBit = lookupBit(otherLead)
+      if (!routeBit) throw codedError('TEAM_INVALID', `O time "${other.name}" não tem um bit de liderança válido.`)
       childBinding = { teamId: other.id, role: 'lead', parentSession: binding.sessionId }
-      routeMember = memberOf(other, other.lead) || target
-      label = `${other.name}`
+      label = other.name
+      routeTeam = other
     } else {
       childBinding = { teamId: binding.team.id, memberId: target.id, role: 'member', parentSession: binding.sessionId }
     }
-    const route = await routeFor(routeMember, agent, exec.signal)
+    if (!isOrchestratorBit(routeBit)) {
+      throw codedError('TEAM_LEAD_NOT_ORCHESTRATOR', `O bit "${bitNameOf(routeBit, target)}"${routeTeam ? ` (líder do time «${routeTeam.name}»)` : ''} precisa ser um orquestrador para rodar como agente.`)
+    }
+    const route = await models.routeFor(routeBit)
     const childId = randomUUID()
     await bindings.set(childId, childBinding)
-    const caller = binding.member ? binding.member.name : 'o líder'
+    const caller = binding.member ? memberNameOf(binding.member) : 'o líder'
     const prompt = `Tarefa delegada por ${caller} (time ${binding.team.name}):\n\n${task}`
     let run
     try {
@@ -392,12 +396,12 @@ export function installTeamRuntime(ctx, deps) {
           parent: agent,
           prompt: [{ type: 'text', text: prompt }],
           maxDepth: MAX_DEPTH,
-          ...(route ? { agentOptions: route } : {}),
+          agentOptions: route,
         },
       })
     } catch (error) {
       await bindings.delete(childId).catch(() => {})
-      throw new Error(`Não foi possível iniciar ${label}: ${messageOf(error)}`)
+      throw codedError('TEAM_DELEGATE_FAILED', `Não foi possível iniciar ${label}: ${messageOf(error)}`)
     }
     const stop = () => {
       try { run.dispose() } catch { /* already settled */ }
@@ -407,15 +411,57 @@ export function installTeamRuntime(ctx, deps) {
       const result = await run.result
       const blocks = Array.isArray(result.output) ? result.output : []
       const text = blocks.filter((block) => block && block.type === 'text').map((block) => block.text).join('\n').trim()
-      const routeText = route ? `${route.provider}/${route.model}${route.reasoningEffort ? ` · ${route.reasoningEffort}` : ''}` : 'rota do chamador'
+      const routeText = `${route.provider}/${route.model}${route.reasoningEffort ? ` · ${route.reasoningEffort}` : ''}`
       return [
         `[${label} · ${result.stopReason} · ${routeText} · sessão ${run.childId}]`,
-        text || '(o membro terminou sem mensagem final)',
+        text || '(o bit terminou sem mensagem final)',
         result.diagnostic ? `\nDiagnóstico: ${result.diagnostic}` : '',
       ].join('\n')
     } finally {
       exec.signal.removeEventListener('abort', stop)
     }
+  }
+
+  /**
+   * Delegate to a worker bit: one-shot invocation through the bit runtime
+   * (`claude_delegate` for subscription models, a single DSH model call for
+   * chat routes). The result header is `[<bit> · <model> · <effort>]`.
+   */
+  async function delegateToWorker(agent, binding, target, targetBit, task, exec) {
+    if (!bitRuntime || typeof bitRuntime.invokeWorker !== 'function') {
+      throw codedError('BIT_DELEGATE_UNAVAILABLE', 'O runtime dos bits não está disponível neste Harness: não é possível executar bits workers.')
+    }
+    const cwd = delegationCwd(agent, binding.team)
+    const readOnly = target.access === 'read'
+    let result
+    try {
+      result = await bitRuntime.invokeWorker({ bit: targetBit, task, cwd, readOnly, signal: exec.signal })
+    } catch (error) {
+      if (exec.signal && exec.signal.aborted) throw error
+      throw codedError(error && typeof error.code === 'string' ? error.code : 'BIT_RUN_FAILED', `O bit "${bitNameOf(targetBit, target)}" falhou: ${messageOf(error)}`)
+    }
+    const text = result && typeof result.text === 'string' && result.text.trim() !== '' ? result.text.trim() : '(o bit terminou sem resposta)'
+    const meta = (result && result.meta) || {}
+    return [`[${bitNameOf(targetBit, target)} · ${resultRouteText(meta)}]`, text].join('\n')
+  }
+
+  async function delegate(agent, args, exec) {
+    const binding = resolve(agent)
+    if (!binding) throw codedError('TEAM_DELEGATE_INVALID', 'team_delegate só existe em sessões de um time.')
+    const allowed = launchableFor(binding)
+    const target = allowed.find((member) => member.id === args.member)
+    if (!target) {
+      throw codedError('TEAM_DELEGATE_INVALID', `"${args.member}" não pode ser lançado por ${binding.member ? memberNameOf(binding.member) : 'este agente'}. Permitidos: ${allowed.map((member) => member.id).join(', ') || 'nenhum'}.`)
+    }
+    const task = typeof args.task === 'string' ? args.task.trim() : ''
+    if (!task) throw codedError('TEAM_DELEGATE_INVALID', 'team_delegate: "task" é obrigatório e precisa ser autocontido.')
+    // teamRef targets always run the other team's lead as a child agent.
+    if (target.teamRef) return delegateToAgent(agent, binding, target, null, task, exec)
+    const targetBit = lookupBit(target)
+    if (!targetBit) throw codedError('TEAM_INVALID', `O bit do membro "${target.id}" (bitId "${target.bitId || '?'}") não existe mais.`)
+    // Orchestrator bits run as child agents; worker bits are single-shot invocations.
+    if (isOrchestratorBit(targetBit)) return delegateToAgent(agent, binding, target, targetBit, task, exec)
+    return delegateToWorker(agent, binding, target, targetBit, task, exec)
   }
 
   function delegateTool(binding) {
@@ -426,22 +472,25 @@ export function installTeamRuntime(ctx, deps) {
         const other = teamMap().get(member.teamRef)
         return `- ${member.id}: time «${other ? other.name : member.teamRef}» (o líder dele executa e devolve o relatório)`
       }
-      return `- ${member.id}: ${member.name} — ${member.role || ''}${member.access === 'read' ? ' (somente leitura)' : ''}`
+      const bit = lookupBit(member)
+      const kind = isOrchestratorBit(bit) ? 'orquestrador, roda como agente filho' : 'worker, invocação única'
+      return `- ${member.id}: ${memberNameOf(member)} — ${member.role || ''}${member.access === 'read' ? ' (somente leitura)' : ''} · ${kind}${bit ? ` · ${bit.model || 'modelo padrão'}${bit.effort ? ` · ${bit.effort}` : ''}` : ''}`
     })
     return {
       name: 'team_delegate',
       description: [
-        'Delegate one self-contained step of the team flow to a team member and wait for its final report (returned as this tool result).',
-        'The member runs as a child agent with its own persona, model, tool access and harness guard; it knows only what you put in `task`: goal and done criteria, the working tree (<WT>), what is already decided, files, skills to read, prohibitions and the report format.',
+        'Delegate one self-contained step of the team flow to a bit and wait for its result (returned as this tool result).',
+        'Worker bits (isOrchestrator: false) are single-shot invocations: they do not see this conversation and return only a text report; the task must be complete (goal and done criteria, the working tree (<WT>), what is already decided, files, skills to read, prohibitions and the report format).',
+        'Orchestrator bits (isOrchestrator: true) run as child agents with their own roster, flow, tool access and harness guard.',
         'Independent delegations can be issued in the same response; they run in parallel.',
-        'Members you may launch:',
+        'Bits you may launch:',
         ...lines,
       ].join('\n'),
       parameters: {
         type: 'object',
         properties: {
           member: { type: 'string', enum: allowed.map((member) => member.id), description: 'Member id from the roster.' },
-          task: { type: 'string', description: 'Complete, self-contained task for the member (pt-BR), including the expected report format.' },
+          task: { type: 'string', description: 'Complete, self-contained task for the bit (pt-BR), including the expected report format.' },
         },
         required: ['member', 'task'],
         additionalProperties: false,
@@ -468,7 +517,8 @@ export function installTeamRuntime(ctx, deps) {
     for (const node of (team.flow && team.flow.nodes) || []) if (node.type === 'team' && node.teamRef) ids.add(node.teamRef)
     for (const other of map.values()) if (other.id !== team.id && other.workspaceDir && other.workspaceDir === team.workspaceDir) ids.add(other.id)
     ids.delete(team.id)
-    return [...ids].map((id) => map.get(id)).filter((other) => other && other.lead)
+    // A handoff target must be led by an orchestrator bit (both sides are).
+    return [...ids].map((id) => map.get(id)).filter((other) => other && other.lead && isOrchestratorBit(lookupBit(memberOf(other, other.lead))))
   }
 
   function handoffTool(binding) {
@@ -509,7 +559,7 @@ export function installTeamRuntime(ctx, deps) {
         invalidateSkills()
         const lead = memberOf(target, target.lead)
         return [
-          `Sessão passada ao time «${target.name}». A partir de agora você é ${lead ? `**${lead.name}** (\`${lead.id}\`)` : 'o líder'} desse time: siga o fluxo e as skills dele.`,
+          `Sessão passada ao time «${target.name}». A partir de agora você é ${lead ? `**${memberNameOf(lead)}** (\`${lead.id}\`)` : 'o líder'} desse time: siga o fluxo e as skills dele.`,
           `Pedido: ${String(args.request || '').trim()}`,
         ].join('\n')
       },
@@ -517,10 +567,6 @@ export function installTeamRuntime(ctx, deps) {
   }
 
   /* ------------------------------- install -------------------------------- */
-
-  function roleOf(binding) {
-    return { orchestrator: isOrchestrator(binding), readOnly: !!binding.member && binding.member.access === 'read', child: !!binding.child }
-  }
 
   /** Names a restriction may mask for this agent (inherited global tools). */
   function restrictableNames(agent) {
@@ -633,7 +679,7 @@ export function installTeamRuntime(ctx, deps) {
     if (disposed || !agent || installed.has(agent)) return
     const binding = resolve(agent)
     if (!binding) return
-    const entry = { key: bindingKey(binding), disposers: [], sent: new Set(), mcp: [], role: binding.role, teamId: binding.team.id, memberId: binding.member ? binding.member.id : null }
+    const entry = { key: bindingKey(binding), disposers: [], sent: new Set(), mcp: [], role: binding.role, teamId: binding.team.id, memberId: binding.member ? binding.member.id : null, bitId: binding.member && binding.member.bitId ? binding.member.bitId : null }
     installed.set(agent, entry)
     try {
       entry.disposers.push(agent.ctx.systemPrompt.section({
@@ -720,15 +766,23 @@ export function installTeamRuntime(ctx, deps) {
    * @returns {Promise<{ sessionId: string, teamId: string, teamName: string, cwd: string }>}
    */
   async function startMission({ team: ref, prompt, title }) {
+    await ready
     const team = findTeam(ref)
     if (!team) throw Object.assign(new Error(`Time "${ref}" não encontrado.`), { code: 'TEAM_NOT_FOUND' })
     if (!team.lead) throw Object.assign(new Error(`O time ${team.name} não tem líder.`), { code: 'TEAM_NO_LEAD' })
+    const leadMember = memberOf(team, team.lead)
+    if (!leadMember) throw Object.assign(new Error(`O líder do time ${team.name} ("${team.lead}") não existe.`), { code: 'TEAM_NO_LEAD' })
+    const leadBit = lookupBit(leadMember)
+    if (!leadBit) throw codedError('TEAM_INVALID', `O bit do líder do time ${team.name} (bitId "${leadMember.bitId || '?'}") não existe mais.`)
+    if (!isOrchestratorBit(leadBit)) throw codedError('TEAM_LEAD_NOT_ORCHESTRATOR', `O líder do time ${team.name} (${bitNameOf(leadBit, leadMember)}) precisa ser um bit orquestrador.`)
     if (!team.workspaceDir || !existsSync(team.workspaceDir)) throw Object.assign(new Error(`O time ${team.name} não tem um repositório ou pasta válido.`), { code: 'TEAM_NO_WORKSPACE' })
     const text = String(prompt || '').trim()
     if (!text) throw Object.assign(new Error('O pedido está vazio.'), { code: 'BAD_REQUEST' })
     const controller = ctx.get('sessionController')
     if (!controller) throw Object.assign(new Error('Este Harness não cria sessões por plugin (sem sessionController).'), { code: 'SESSIONS_UNAVAILABLE' })
-    await ready
+    // The lead agent runs on the lead bit's DSH route (DeepSeek-V4.1-Flash Max
+    // by default); fail before creating the session when the route is invalid.
+    const leadRoute = await models.routeFor(leadBit)
     const sessionId = randomUUID()
     // Bind first: agent/created must already see the lead binding.
     await bindings.set(sessionId, { teamId: team.id, role: 'lead', parentSession: null })
@@ -744,6 +798,11 @@ export function installTeamRuntime(ctx, deps) {
       throw error
     }
     await install(agent)
+    try {
+      if (agent.model && typeof agent.model.select === 'function') agent.model.select(leadRoute)
+    } catch (error) {
+      noteError(`mission ${sessionId} lead route was not selected: ${messageOf(error)}`)
+    }
     try {
       const registry = ctx.get('workspaceRegistry')
       let workspace = registry ? await registry.resolveByPath(team.workspaceDir) : null
@@ -995,24 +1054,26 @@ export function installTeamRuntime(ctx, deps) {
       if (!agent) return next()
       const binding = resolve(agent)
       if (!binding) return next()
-      if (!teamToolAllowed(exec.name, roleOf(binding))) {
+      const role = roleOf(binding)
+      if (!teamToolAllowed(exec.name, role)) {
+        const label = binding.member ? memberNameOf(binding.member) : 'o líder'
         return {
           kind: 'deny',
-          reason: isOrchestrator(binding)
-            ? `Regra do time: ${binding.member ? binding.member.name : 'o líder'} só orquestra. Delegue a etapa a um membro com team_delegate.`
-            : roleOf(binding).readOnly && ['write', 'edit', 'apply_patch', 'str_replace_editor'].includes(exec.name)
-              ? `Regra do repositório: ${binding.member.id} é um preset somente leitura e não edita arquivos. Devolva a edição a quem chamou.`
-              : `Regra do time: a ferramenta ${exec.name} não faz parte do preset ${binding.member ? binding.member.id : ''}. Devolva a etapa a quem chamou se ela exigir outra ferramenta.`,
+          reason: role.orchestrator
+            ? `Regra do time: ${label} só orquestra. Delegue a etapa a um bit com team_delegate.`
+            : role.readOnly && ['write', 'edit', 'apply_patch', 'str_replace_editor'].includes(exec.name)
+              ? `Regra do repositório: ${label} é um bit somente leitura e não edita arquivos. Devolva a edição a quem chamou.`
+              : `Regra do time: a ferramenta ${exec.name} não faz parte do bit ${binding.member ? binding.member.id : ''}. Devolva a etapa a quem chamou se ela exigir outra ferramenta.`,
         }
       }
       if (UNGUARDED_TOOLS.has(exec.name)) return next()
       const packData = loadPack(binding.team.harness)
-      if (isOrchestrator(binding)) {
+      if (role.orchestrator) {
         if (exec.name === 'read') {
           const file = exec.arguments && exec.arguments.file_path
           const absolute = typeof file === 'string' ? path.resolve(sessionCwd(agent) || '/', file) : ''
           if (!leadMayRead(absolute, { packDir: packData ? packData.pack.packDir : null, dataDir: botsRoot })) {
-            return { kind: 'deny', reason: 'Regra do time: o líder só lê o pacote do harness e arquivos .dsc/ (contexto, validação). Leitura de código, card, logs ou web vai a um membro (team_delegate).' }
+            return { kind: 'deny', reason: 'Regra do time: o líder só lê o pacote do harness e arquivos .dsc/ (contexto, validação). Leitura de código, card, logs ou web vai a um bit (team_delegate).' }
           }
         }
       }
@@ -1026,7 +1087,7 @@ export function installTeamRuntime(ctx, deps) {
           guardPath: path.join(packData.pack.packDir, packData.pack.hooks.guard),
           packDir: packData.pack.packDir,
           event,
-          readOnly: !!binding.member && binding.member.access === 'read',
+          readOnly: role.readOnly,
           signal: exec.signal,
         })
         if (result.error && result.error !== 'aborted') noteError(`guard (${exec.name}) for ${binding.member ? binding.member.id : 'lead'}: ${result.error}`)
@@ -1117,7 +1178,7 @@ export function installTeamRuntime(ctx, deps) {
     diagnostics() {
       const agents = []
       for (const [agent, entry] of installed) {
-        agents.push({ sessionId: agent.id, teamId: entry.teamId, memberId: entry.memberId, role: entry.role, mcp: entry.mcp, cwd: sessionCwd(agent) || null })
+        agents.push({ sessionId: agent.id, teamId: entry.teamId, memberId: entry.memberId, bitId: entry.bitId, role: entry.role, mcp: entry.mcp, cwd: sessionCwd(agent) || null })
       }
       return { agents, errors: [...errors], mcpClient: mcpModule ? 'loaded' : mcpModuleError, packsRoot }
     },

@@ -1,5 +1,5 @@
 /**
- * Authenticated HTTP routes for the Bots plugin.
+ * Authenticated HTTP routes for the Bits plugin (v5).
  *
  * Every route is an exact host-side Fetch route registered through
  * `ctx.connection.fetch.register(...)`; the DSH Connection host already enforces
@@ -10,22 +10,21 @@
  *   success -> `{ ok: true, ...payload }`
  *   failure -> `{ ok: false, error: { code, message } }`
  *
- * Coded errors thrown by the store/VM (`error.code`) pass their code through;
- * anything unexpected is logged through `deps.log` and reported as `INTERNAL`.
+ * Coded errors thrown by the bit store, the model catalog or the bit runtime
+ * (`error.code`) pass their code through; anything unexpected is logged through
+ * `deps.log` and reported as `INTERNAL`.
+ *
+ * There is no VM anymore: the VM/image/docker/notify-test routes were removed in
+ * v5, and the ad-hoc execution happens through the bit runtime
+ * (`host/bit-runtime.js`, injected as `deps.runtime`).
  *
  * @module host/routes
  */
 
-/** Docker image used when neither the store nor the VM exposes a default. */
-const FALLBACK_DEFAULT_IMAGE = 'ubuntu:24.04';
-/** Upper bound for one VM status probe while composing a bot view. */
-const STATUS_TIMEOUT_MS = 4000;
-/** Upper bound for the docker availability probe. */
-const DOCKER_TIMEOUT_MS = 4000;
-/** Upper bound for `docker images`-based listing. */
-const IMAGES_TIMEOUT_MS = 8000;
-/** VM lifecycle actions accepted by `/api/bots.vm`. */
-const VM_ACTIONS = Object.freeze(['start', 'stop', 'restart', 'remove', 'status']);
+/** Upper bound for one ad-hoc `POST /api/bots.run` invocation (contract §7). */
+const DEFAULT_RUN_TIMEOUT_MS = 15 * 60 * 1000;
+/** Maximum length of an ad-hoc run request (contract §6.1). */
+const MAX_RUN_REQUEST_LENGTH = 20000;
 /** Error codes that may cross the route boundary verbatim. */
 const CODED_ERROR_PATTERN = /^[A-Z][A-Z0-9_]{1,63}$/;
 
@@ -61,7 +60,18 @@ function messageOf(error) {
 }
 
 /**
- * Deep-copy a bot record for view composition.
+ * @param {unknown} error
+ * @returns {string | null} the coded error code, or `null` for uncoded errors
+ */
+function codedCodeOf(error) {
+  if (isPlainObject(error) && typeof error.code === 'string' && CODED_ERROR_PATTERN.test(error.code)) {
+    return error.code;
+  }
+  return null;
+}
+
+/**
+ * Deep-copy a record for view composition.
  *
  * @template T
  * @param {T} value
@@ -117,40 +127,6 @@ function log(deps, message) {
 }
 
 /**
- * Bound a promise with a timeout carrying `code: 'VM_PROBE_TIMEOUT'`.
- *
- * @template T
- * @param {Promise<T>} promise
- * @param {number} timeoutMs
- * @param {string} message
- * @returns {Promise<T>}
- */
-function withTimeout(promise, timeoutMs, message) {
-  /** @type {ReturnType<typeof setTimeout> | undefined} */
-  let timer;
-  const timeout = new Promise((_resolve, reject) => {
-    // Deliberately not unref'd: the timer is always cleared below, and keeping it
-    // referenced means a test (or a CLI context) waiting on the probe stays alive
-    // until the bounded probe settles.
-    timer = setTimeout(() => reject(codedError('VM_PROBE_TIMEOUT', message)), timeoutMs);
-  });
-  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
-}
-
-/**
- * Default docker image advertised to the UI.
- *
- * @param {{ store?: any, vm?: any, defaultImage?: string }} deps
- * @returns {string}
- */
-function defaultImageOf(deps) {
-  for (const candidate of [deps.defaultImage, deps.store?.defaultImage, deps.vm?.defaultImage]) {
-    if (typeof candidate === 'string' && candidate !== '') return candidate;
-  }
-  return FALLBACK_DEFAULT_IMAGE;
-}
-
-/**
  * Parse a JSON object request body.
  *
  * @param {Request} request
@@ -187,167 +163,9 @@ function requireId(body) {
 }
 
 /**
- * Compose the workspace part of a bot view.
- *
- * @param {{ ensureWorkspaceId?: (record: Record<string, any>) => Promise<string | null> }} deps
- * @param {Record<string, any>} record
- * @returns {Promise<{ workspaceId: string | null, workspaceError: string | null }>}
- */
-async function workspaceState(deps, record) {
-  if (typeof deps.ensureWorkspaceId !== 'function') {
-    return { workspaceId: null, workspaceError: 'workspace registry unavailable' };
-  }
-  try {
-    const workspaceId = await deps.ensureWorkspaceId(record);
-    return {
-      workspaceId: typeof workspaceId === 'string' && workspaceId !== '' ? workspaceId : null,
-      workspaceError: null,
-    };
-  } catch (error) {
-    return { workspaceId: null, workspaceError: messageOf(error) };
-  }
-}
-
-/**
- * Normalize a VM status object returned by the VM adapter into the contracted
- * `vmStatus` shape (missing fields get safe defaults).
- *
- * @param {{ store?: any, vm?: any }} deps
- * @param {Record<string, any>} record
- * @param {unknown} status
- * @returns {Record<string, any>}
- */
-function normalizeVmStatus(deps, record, status) {
-  const vm = isPlainObject(record.vm) ? record.vm : {};
-  const source = isPlainObject(status) ? status : {};
-  return {
-    id: record.id,
-    containerName:
-      typeof source.containerName === 'string' && source.containerName !== ''
-        ? source.containerName
-        : `dsh-bot-${record.id}`,
-    enabled: typeof source.enabled === 'boolean' ? source.enabled : vm.enabled === true,
-    state: typeof source.state === 'string' && source.state !== '' ? source.state : 'error',
-    running: source.running === true,
-    image:
-      typeof source.image === 'string' && source.image !== ''
-        ? source.image
-        : typeof vm.image === 'string'
-          ? vm.image
-          : defaultImageOf(deps),
-    startedAt: typeof source.startedAt === 'string' ? source.startedAt : null,
-    exitCode: typeof source.exitCode === 'number' ? source.exitCode : null,
-    detail: typeof source.detail === 'string' ? source.detail : null,
-    error: typeof source.error === 'string' ? source.error : null,
-  };
-}
-
-/**
- * Build a degraded VM status for a failed/timed-out probe.
- *
- * @param {{ store?: any, vm?: any }} deps
- * @param {Record<string, any>} record
- * @param {unknown} error
- * @returns {Record<string, any>}
- */
-function degradedVmStatus(deps, record, error) {
-  const vm = isPlainObject(record.vm) ? record.vm : {};
-  const code = isPlainObject(error) && typeof error.code === 'string' ? error.code : null;
-  return {
-    id: record.id,
-    containerName: `dsh-bot-${record.id}`,
-    enabled: vm.enabled === true,
-    state: code === 'VM_DOCKER_UNAVAILABLE' || code === 'VM_PROBE_TIMEOUT' ? 'unavailable' : 'error',
-    running: false,
-    image: typeof vm.image === 'string' ? vm.image : defaultImageOf(deps),
-    startedAt: null,
-    exitCode: null,
-    detail: null,
-    error: messageOf(error),
-  };
-}
-
-/**
- * Probe one bot's VM status without ever rejecting.
- *
- * @param {{ vm: any, store?: any }} deps
- * @param {Record<string, any>} record
- * @returns {Promise<Record<string, any>>}
- */
-async function safeVmStatus(deps, record) {
-  try {
-    const status = await withTimeout(
-      Promise.resolve(deps.vm.status(record)),
-      STATUS_TIMEOUT_MS,
-      'VM status probe timed out',
-    );
-    return normalizeVmStatus(deps, record, status);
-  } catch (error) {
-    return degradedVmStatus(deps, record, error);
-  }
-}
-
-/**
- * Compose a full `BotView` (record + workspace registry info + VM status).
- *
- * @param {{ store?: any, vm: any, ensureWorkspaceId?: Function }} deps
- * @param {Record<string, any>} record
- * @returns {Promise<Record<string, any>>}
- */
-async function composeView(deps, record) {
-  const [workspace, vmStatus] = await Promise.all([workspaceState(deps, record), safeVmStatus(deps, record)]);
-  return {
-    ...cloneRecord(record),
-    workspaceId: workspace.workspaceId,
-    workspaceError: workspace.workspaceError,
-    vmStatus,
-  };
-}
-
-/**
- * Probe docker availability without ever rejecting.
- *
- * @param {{ vm: any }} deps
- * @returns {Promise<{ available: boolean, version: string | null, error: string | null }>}
- */
-async function probeDocker(deps) {
-  try {
-    const result = await withTimeout(
-      Promise.resolve(deps.vm.available()),
-      DOCKER_TIMEOUT_MS,
-      'Docker availability probe timed out',
-    );
-    const source = isPlainObject(result) ? result : {};
-    return {
-      available: source.available === true,
-      version: typeof source.version === 'string' ? source.version : null,
-      error: typeof source.error === 'string' ? source.error : null,
-    };
-  } catch (error) {
-    return { available: false, version: null, error: messageOf(error) };
-  }
-}
-
-/**
- * @param {Record<string, any>} body
- * @returns {Record<string, unknown>}
- */
-function pickCreateInput(body) {
-  const input = {
-    name: body.name,
-    emoji: body.emoji,
-    color: body.color,
-    instructions: body.instructions,
-    vm: body.vm,
-  };
-  if (body.character !== undefined) input.character = body.character;
-  return input;
-}
-
-/**
  * Reject a character id the shipped catalog does not know. `null`/empty
- * clears the character (legacy emoji avatar) and is always accepted; without
- * a catalog dependency only the store's syntax check applies.
+ * clears the character (emoji avatar) and is always accepted; without a
+ * catalog dependency only the store's syntax check applies.
  *
  * @param {{ catalog?: any }} deps
  * @param {unknown} character
@@ -363,7 +181,7 @@ function assertKnownCharacter(deps, character) {
 }
 
 /**
- * Public projection of one catalog bit.
+ * Public projection of one catalog bit (schema v2 adds the execution defaults).
  *
  * @param {Record<string, any>} bit
  * @returns {Record<string, any>}
@@ -377,8 +195,92 @@ function catalogBitView(bit) {
     color: bit.color,
     summary: { ...bit.summary },
     instructions: bit.instructions,
+    isOrchestrator: bit.isOrchestrator === true,
+    model: typeof bit.model === 'string' ? bit.model : 'subscription/sonnet',
+    effort: typeof bit.effort === 'string' ? bit.effort : 'high',
     avatar: `/api/bots.avatar?id=${encodeURIComponent(bit.id)}`,
   };
+}
+
+/**
+ * Pick only the documented create fields so a caller can never force `id`,
+ * `workspaceDir` or a v4 `vm` through the route.
+ *
+ * @param {Record<string, any>} body
+ * @returns {Record<string, unknown>}
+ */
+function pickCreateInput(body) {
+  const input = {
+    name: body.name,
+    emoji: body.emoji,
+    color: body.color,
+    instructions: body.instructions,
+    isOrchestrator: body.isOrchestrator,
+    model: body.model,
+    effort: body.effort,
+  };
+  if (body.character !== undefined) input.character = body.character;
+  return input;
+}
+
+/**
+ * Resolve the bit runtime, mapping a missing dependency to a coded error.
+ *
+ * @param {{ runtime?: any }} deps
+ * @returns {{ listModels: Function, runBit: Function }}
+ * @throws coded `BIT_RUNTIME_UNAVAILABLE`
+ */
+function requireRuntime(deps) {
+  if (!isPlainObject(deps.runtime) || typeof deps.runtime.runBit !== 'function') {
+    throw codedError('BIT_RUNTIME_UNAVAILABLE', 'Bit runtime is unavailable');
+  }
+  return deps.runtime;
+}
+
+/**
+ * Normalize the `{ response, meta }` pair returned by the bit runtime.
+ *
+ * @param {unknown} result
+ * @returns {{ response: string, meta: Record<string, any> }}
+ * @throws coded `BIT_RUN_FAILED`
+ */
+function normalizeRunResult(result) {
+  if (typeof result === 'string') return { response: result, meta: {} };
+  if (!isPlainObject(result) || typeof result.response !== 'string') {
+    throw codedError('BIT_RUN_FAILED', 'Bit runtime returned an invalid response');
+  }
+  return { response: result.response, meta: isPlainObject(result.meta) ? cloneRecord(result.meta) : {} };
+}
+
+/**
+ * Read the optional boolean `readOnly` field of the run body (default `true`
+ * for ad-hoc runs, contract §6.1).
+ *
+ * @param {unknown} value
+ * @returns {boolean}
+ * @throws coded `BAD_REQUEST`
+ */
+function readReadOnly(value) {
+  if (value === undefined) return true;
+  if (typeof value !== 'boolean') throw codedError('BAD_REQUEST', '"readOnly" must be a boolean');
+  return value;
+}
+
+/**
+ * Validate the ad-hoc run request text.
+ *
+ * @param {unknown} value
+ * @returns {string}
+ * @throws coded `BAD_REQUEST`
+ */
+function readRunRequest(value) {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw codedError('BAD_REQUEST', '"request" is required and must be a non-empty string');
+  }
+  if (value.length > MAX_RUN_REQUEST_LENGTH) {
+    throw codedError('BAD_REQUEST', `"request" must be at most ${MAX_RUN_REQUEST_LENGTH} characters`);
+  }
+  return value;
 }
 
 // -----------------------------------------------------------------------------
@@ -392,10 +294,8 @@ function catalogBitView(bit) {
  * @returns {Promise<Response>}
  */
 async function handleList(deps) {
-  const records = deps.store.list();
-  const bots = await Promise.all(records.map((record) => composeView(deps, record)));
-  const docker = await probeDocker(deps);
-  return success({ bots, docker, defaultImage: defaultImageOf(deps) });
+  const bits = deps.bits.list();
+  return success({ bits, bots: cloneRecord(bits) });
 }
 
 /**
@@ -408,23 +308,8 @@ async function handleList(deps) {
 async function handleCreate(deps, request) {
   const body = await readJsonBody(request);
   assertKnownCharacter(deps, body.character);
-  const record = await deps.store.create(pickCreateInput(body));
-  if (typeof deps.onBotChanged === 'function') {
-    try {
-      deps.onBotChanged(record);
-    } catch (error) {
-      log(deps, `bots: onBotChanged failed for bot ${String(record?.id)}: ${messageOf(error)}`);
-    }
-  }
-  if (typeof deps.store.ensureWorkspace === 'function') {
-    try {
-      await deps.store.ensureWorkspace(record);
-    } catch (error) {
-      // The record exists; a failed mkdir is retried later by chat/VM setup.
-      log(deps, `bots: could not create workspace for bot ${String(record?.id)}: ${messageOf(error)}`);
-    }
-  }
-  return success({ bot: await composeView(deps, record) });
+  const bit = await deps.bits.create(pickCreateInput(body));
+  return success({ bit, bot: cloneRecord(bit) });
 }
 
 /**
@@ -441,22 +326,12 @@ async function handleUpdate(deps, request) {
     throw codedError('BAD_REQUEST', '"patch" is required and must be an object');
   }
   assertKnownCharacter(deps, body.patch.character);
-  const record = await deps.store.update(id, body.patch);
-  if (typeof deps.onBotChanged === 'function') {
-    try {
-      deps.onBotChanged(record);
-    } catch (error) {
-      log(deps, `bots: onBotChanged failed for bot ${id}: ${messageOf(error)}`);
-    }
-  }
-  return success({ bot: await composeView(deps, record) });
+  const bit = await deps.bits.update(id, body.patch);
+  return success({ bit, bot: cloneRecord(bit) });
 }
 
 /**
  * POST /api/bots.delete
- *
- * Removes the record (and optionally its workspace) and then best-effort removes
- * the VM container. The record stays deleted even when container removal fails.
  *
  * @param {Record<string, any>} deps
  * @param {Request} request
@@ -472,90 +347,13 @@ async function handleDelete(deps, request) {
     }
     deleteWorkspace = body.deleteWorkspace;
   }
-  const removed = await deps.store.remove(id, { deleteWorkspace });
-  if (typeof deps.vm.forget === 'function') {
-    try {
-      // Tombstone before touching Docker: an in-flight vm_bash must not be
-      // able to recreate the container once the record is gone.
-      deps.vm.forget(removed);
-    } catch (error) {
-      log(deps, `bots: VM forget failed for bot ${id}: ${messageOf(error)}`);
-    }
-  }
-  if (typeof deps.vm.remove === 'function') {
-    try {
-      await deps.vm.remove(removed);
-    } catch (error) {
-      log(deps, `bots: VM container removal failed for bot ${id}: ${messageOf(error)}`);
-    }
-  }
+  const removed = await deps.bits.remove(id, { deleteWorkspace });
   return success({
     deleted: true,
+    id: removed.id,
     workspaceRemoved: deleteWorkspace,
-    workspaceDir: typeof removed?.workspaceDir === 'string' ? removed.workspaceDir : null,
+    workspaceDir: typeof removed.workspaceDir === 'string' ? removed.workspaceDir : null,
   });
-}
-
-/**
- * POST /api/bots.vm
- *
- * @param {Record<string, any>} deps
- * @param {Request} request
- * @returns {Promise<Response>}
- */
-async function handleVm(deps, request) {
-  const body = await readJsonBody(request);
-  const id = requireId(body);
-  const action = body.action;
-  if (typeof action !== 'string' || !VM_ACTIONS.includes(action)) {
-    throw codedError('BAD_REQUEST', `"action" must be one of: ${VM_ACTIONS.join(', ')}`);
-  }
-  const record = deps.store.get(id);
-  if (!isPlainObject(record)) {
-    throw codedError('BOT_NOT_FOUND', `Bot "${id}" was not found`);
-  }
-  if (action !== 'status') {
-    if (typeof deps.vm[action] !== 'function') {
-      throw new Error(`VM adapter does not implement ${action}()`);
-    }
-    await deps.vm[action](record);
-  }
-  return success({ bot: await composeView(deps, record) });
-}
-
-/**
- * GET /api/bots.images
- *
- * Docker image discovery is an enhancement: when the daemon is unavailable the
- * route degrades to an empty image list (the create dialog keeps its free-text
- * image field) and logs the real failure.
- *
- * @param {Record<string, any>} deps
- * @returns {Promise<Response>}
- */
-async function handleImages(deps) {
-  let images = [];
-  try {
-    const result = await withTimeout(
-      Promise.resolve(deps.vm.listImages()),
-      IMAGES_TIMEOUT_MS,
-      'Listing Docker images timed out',
-    );
-    if (Array.isArray(result)) images = result;
-  } catch (error) {
-    log(deps, `bots: could not list Docker images: ${messageOf(error)}`);
-  }
-  return success({ images, defaultImage: defaultImageOf(deps) });
-}
-
-/**
- * GET /api/bots.docker
- *
- * @param {Record<string, any>} deps
- * @returns {Promise<Response>}
- */
-async function handleDocker(deps) {
-  return success(await probeDocker(deps));
 }
 
 /**
@@ -567,10 +365,10 @@ async function handleDocker(deps) {
 async function handleCatalog(deps) {
   const catalog = deps.catalog;
   if (catalog === null || catalog === undefined) {
-    return success({ version: 1, groups: [], bits: [], error: 'catalog unavailable' });
+    return success({ version: 2, groups: [], bits: [], error: 'catalog unavailable' });
   }
   return success({
-    version: catalog.version ?? 1,
+    version: catalog.version ?? 2,
     groups: Array.isArray(catalog.groups) ? catalog.groups.map((group) => ({ id: group.id, label: { ...group.label } })) : [],
     bits: Array.isArray(catalog.bits) ? catalog.bits.map(catalogBitView) : [],
     error: typeof catalog.error === 'string' ? catalog.error : null,
@@ -602,7 +400,7 @@ async function handleAvatar(deps, request) {
   try {
     bytes = await catalog.readAvatar(id);
   } catch (error) {
-    log(deps, `bots: avatar ${id} unavailable: ${messageOf(error)}`);
+    log(deps, `bits: avatar ${id} unavailable: ${messageOf(error)}`);
     return new Response('Not found', { status: 404, headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' } });
   }
   return new Response(bytes, {
@@ -613,6 +411,125 @@ async function handleAvatar(deps, request) {
       'x-content-type-options': 'nosniff',
     },
   });
+}
+
+/**
+ * GET /api/bots.models
+ *
+ * @param {Record<string, any>} deps
+ * @param {Request} request
+ * @returns {Promise<Response>}
+ */
+async function handleModels(deps, request) {
+  const runtime = requireRuntime(deps);
+  if (typeof runtime.listModels !== 'function') {
+    throw codedError('BIT_RUNTIME_UNAVAILABLE', 'Bit runtime does not expose a model catalog');
+  }
+  const result = await runtime.listModels({ signal: request?.signal });
+  const models = Array.isArray(result) ? result : isPlainObject(result) && Array.isArray(result.models) ? result.models : null;
+  if (models === null) throw new Error('Bit runtime returned an invalid model list');
+  return success({ models: cloneRecord(models) });
+}
+
+/**
+ * Bound `promise` with a route-level timeout that aborts `controller` with a
+ * coded `BIT_RUN_TIMEOUT`.
+ *
+ * @template T
+ * @param {Promise<T>} promise
+ * @param {number} timeoutMs
+ * @param {AbortController} controller
+ * @returns {Promise<T>}
+ */
+function withRunTimeout(promise, timeoutMs, controller) {
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let timer;
+  const timeout = new Promise((_resolve, reject) => {
+    timer = setTimeout(() => {
+      const error = codedError('BIT_RUN_TIMEOUT', `Bit run exceeded ${timeoutMs} ms`);
+      try {
+        controller.abort(error);
+      } catch {
+        // Aborting is best effort; the coded rejection below is what matters.
+      }
+      reject(error);
+    }, timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * POST /api/bots.run — ad-hoc worker invocation (request → response).
+ *
+ * Orchestrator bits are refused: they run inside flows (Times tab), not ad-hoc.
+ *
+ * @param {Record<string, any>} deps
+ * @param {Request} request
+ * @returns {Promise<Response>}
+ */
+async function handleRun(deps, request) {
+  const body = await readJsonBody(request);
+  const id = requireId(body);
+  const runRequest = readRunRequest(body.request);
+  const readOnly = readReadOnly(body.readOnly);
+  const bit = deps.bits.get(id);
+  if (!isPlainObject(bit)) throw codedError('BOT_NOT_FOUND', `Bit "${id}" was not found`);
+  if (bit.isOrchestrator === true) {
+    throw codedError('BIT_IS_ORCHESTRATOR', 'Orquestradores executam em fluxos');
+  }
+  const runtime = requireRuntime(deps);
+  const timeoutMs =
+    typeof deps.runTimeoutMs === 'number' && Number.isFinite(deps.runTimeoutMs) && deps.runTimeoutMs > 0
+      ? deps.runTimeoutMs
+      : DEFAULT_RUN_TIMEOUT_MS;
+  // The workspace is the run cwd; make sure it exists before invoking.
+  try {
+    await deps.bits.ensureWorkspace(bit);
+  } catch (error) {
+    log(deps, `bits: could not ensure workspace for bit ${id}: ${messageOf(error)}`);
+  }
+  const controller = new AbortController();
+  const transportSignal = request?.signal;
+  const forwardAbort = () => {
+    try {
+      controller.abort(transportSignal?.reason);
+    } catch {
+      // Ignore double aborts.
+    }
+  };
+  if (transportSignal !== undefined && transportSignal !== null) {
+    if (transportSignal.aborted) forwardAbort();
+    else transportSignal.addEventListener('abort', forwardAbort, { once: true });
+  }
+  try {
+    const result = await withRunTimeout(
+      Promise.resolve().then(() =>
+        runtime.runBit({
+          bit: cloneRecord(bit),
+          request: runRequest,
+          readOnly,
+          cwd: bit.workspaceDir,
+          signal: controller.signal,
+        }),
+      ),
+      timeoutMs,
+      controller,
+    );
+    const { response, meta } = normalizeRunResult(result);
+    return success({ response, meta });
+  } catch (error) {
+    const code = codedCodeOf(error);
+    if (code !== null) throw error;
+    throw codedError('BIT_RUN_FAILED', messageOf(error));
+  } finally {
+    if (transportSignal !== undefined && transportSignal !== null) {
+      try {
+        transportSignal.removeEventListener('abort', forwardAbort);
+      } catch {
+        // Best effort.
+      }
+    }
+  }
 }
 
 // -----------------------------------------------------------------------------
@@ -639,12 +556,9 @@ function defineRoute(deps, path, methods, handler) {
         if (deps.ready !== undefined && deps.ready !== null) await deps.ready;
         return await handler(request);
       } catch (error) {
-        const code =
-          isPlainObject(error) && typeof error.code === 'string' && CODED_ERROR_PATTERN.test(error.code)
-            ? error.code
-            : 'INTERNAL';
+        const code = codedCodeOf(error) ?? 'INTERNAL';
         if (code === 'INTERNAL') {
-          log(deps, `bots: route ${path} failed: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`);
+          log(deps, `bits: route ${path} failed: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`);
           return failure('INTERNAL', 'Internal server error');
         }
         return failure(code, messageOf(error));
@@ -654,21 +568,21 @@ function defineRoute(deps, path, methods, handler) {
 }
 
 /**
- * Register all Bots HTTP routes on the host connection.
+ * Register all Bits HTTP routes on the host connection.
  *
  * @param {{ connection: { fetch: { register: (route: any) => () => void } } }} ctx
  *   host plugin context; only `ctx.connection.fetch.register` is used
  * @param {{
- *   store: any,
- *   vm: any,
- *   ready: Promise<void>,
- *   ensureWorkspaceId: (record: Record<string, any>) => Promise<string | null>,
- *   onBotChanged?: (record: Record<string, any>) => void,
+ *   bits: any,
  *   catalog?: ReturnType<typeof import('./catalog.js').loadBitCatalog>,
+ *   ready: Promise<void>,
+ *   runtime?: any,
+ *   runTimeoutMs?: number,
  *   log?: (message: string) => void,
  * }} deps
- *   `ready` resolves after the store is initialized; `ensureWorkspaceId` maps a
- *   bot record to the DSH workspace registry id used to open chats.
+ *   `bits` is the v5 bit store; `ready` resolves after it is initialized;
+ *   `runtime` is the bit runtime created in `index.js`
+ *   (`createBitRuntime`), used by the models and run routes.
  * @returns {() => void} disposer that unregisters every route
  */
 export function registerBotRoutes(ctx, deps) {
@@ -676,19 +590,18 @@ export function registerBotRoutes(ctx, deps) {
   if (registry === null || typeof registry?.register !== 'function') {
     throw new TypeError('registerBotRoutes: ctx.connection.fetch.register is required');
   }
-  if (!isPlainObject(deps) || !isPlainObject(deps.store) || !isPlainObject(deps.vm)) {
-    throw new TypeError('registerBotRoutes: deps.store and deps.vm are required');
+  if (!isPlainObject(deps) || !isPlainObject(deps.bits)) {
+    throw new TypeError('registerBotRoutes: deps.bits is required');
   }
   const definitions = [
     defineRoute(deps, '/api/bots.list', ['GET'], () => handleList(deps)),
     defineRoute(deps, '/api/bots.create', ['POST'], (request) => handleCreate(deps, request)),
     defineRoute(deps, '/api/bots.update', ['POST'], (request) => handleUpdate(deps, request)),
     defineRoute(deps, '/api/bots.delete', ['POST'], (request) => handleDelete(deps, request)),
-    defineRoute(deps, '/api/bots.vm', ['POST'], (request) => handleVm(deps, request)),
-    defineRoute(deps, '/api/bots.images', ['GET'], () => handleImages(deps)),
-    defineRoute(deps, '/api/bots.docker', ['GET'], () => handleDocker(deps)),
     defineRoute(deps, '/api/bots.catalog', ['GET'], () => handleCatalog(deps)),
     defineRoute(deps, '/api/bots.avatar', ['GET'], (request) => handleAvatar(deps, request)),
+    defineRoute(deps, '/api/bots.models', ['GET'], (request) => handleModels(deps, request)),
+    defineRoute(deps, '/api/bots.run', ['POST'], (request) => handleRun(deps, request)),
   ];
   const disposers = definitions.map((definition) => registry.register(definition));
   return () => {
@@ -696,7 +609,7 @@ export function registerBotRoutes(ctx, deps) {
       try {
         if (typeof disposers[index] === 'function') disposers[index]();
       } catch (error) {
-        log(deps, `bots: route disposer failed: ${messageOf(error)}`);
+        log(deps, `bits: route disposer failed: ${messageOf(error)}`);
       }
     }
   };
