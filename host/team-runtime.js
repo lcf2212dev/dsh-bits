@@ -33,6 +33,7 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import { readPack } from './harness.js'
+import { isOrchestratorSession } from './orchestrator.js'
 import { TeamBindingStore } from './team-bindings.js'
 import { UNGUARDED_TOOLS, guardEvent, leadMayRead, runGuard, teamToolAllowed } from './team-guard.js'
 import { leadPromptText, memberPromptText } from './team-prompt.js'
@@ -241,6 +242,9 @@ export function installTeamRuntime(ctx, deps) {
    */
   function resolve(agent) {
     if (!agent || !agent.session) return null
+    // The Bit mode preset is its own mode: such a chat never becomes a
+    // team lead, even when its cwd is inside a bindWorkspace team directory.
+    if (isOrchestratorSession(agent)) return null
     const sessionId = agent.session.id || agent.id
     const header = agent.session.header || {}
     const child = header.origin === 'subagent'

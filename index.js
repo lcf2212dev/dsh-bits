@@ -34,6 +34,8 @@ import { registerTeamRoutes, loadTeamTemplates } from './host/team-routes.js'
 import { ProjectStore } from './host/projects.js'
 import { registerProjectRoutes } from './host/project-routes.js'
 import { installTeamRuntime } from './host/team-runtime.js'
+import { installOrchestrator } from './host/orchestrator.js'
+import { createOrchestratorSelection } from './host/orchestrator-selection.js'
 import { registerHarnessRoutes } from './host/harness-routes.js'
 import { createModelCatalog } from './host/models.js'
 import { createBitRuntime } from './host/bit-runtime.js'
@@ -117,6 +119,13 @@ export function apply(ctx, config = {}) {
   const bits = new BitStore({ botsRoot, catalog, log })
   const ready = bits.init()
 
+  // Bit mode orchestrating-bit selection: one durable global preference
+  // (`orchestrator.json`) read per turn by the prompt section. Loaded in
+  // parallel; the routes await `selection.ready` before answering.
+  const selection = createOrchestratorSelection({ botsRoot, bits, catalog, log })
+  const selectionReady = selection.init()
+  selectionReady.catch((error) => log(`orchestrator selection init failed: ${error instanceof Error ? error.message : String(error)}`))
+
   // Teams reference bits, so the team store loads (and migrates) after the bit
   // store is readable. A broken teams.json must never block the bits page.
   const teams = new TeamStore({ botsRoot, bits, catalog, log })
@@ -168,6 +177,17 @@ export function apply(ctx, config = {}) {
   // team delegation.
   const models = createModelCatalog(ctx)
   const bitRuntime = createBitRuntime(ctx, { bits, catalog, models, log })
+
+  // Bit mode chat mode: a Session created with the bundle's Agent preset gets
+  // the orchestrator prompt section and the `bit_delegate` tool; the prompt
+  // adopts the currently selected orchestrating bit. The preset itself is
+  // declared by `cordis.patch.yml`.
+  let orchestrator = null
+  try {
+    orchestrator = installOrchestrator(ctx, { bits, catalog, models, bitRuntime, selection, log })
+  } catch (error) {
+    log(`orchestrator installation failed: ${error instanceof Error ? error.message : String(error)}`)
+  }
 
   // Runnable teams: lead/member bits, delegation, harness skills, guard and MCP.
   let teamRuntime = null
@@ -228,6 +248,7 @@ export function apply(ctx, config = {}) {
       catalog,
       ready,
       runtime: bitRuntime,
+      selection,
       log,
     }) ?? (() => {})
   } catch (error) {
@@ -266,6 +287,15 @@ export function apply(ctx, config = {}) {
         const agents = teamRuntime && typeof teamRuntime.diagnostics === 'function'
           ? teamRuntime.diagnostics()
           : { agents: [], errors: [] }
+        const orchestratorDiagnostics = orchestrator && typeof orchestrator.diagnostics === 'function'
+          ? orchestrator.diagnostics()
+          : { presetId: 'bits-orchestrator', installed: [], errors: [], notes: [] }
+        let selectionBitId = null
+        try {
+          selectionBitId = selection.currentBitId()
+        } catch (error) {
+          log(`orchestrator selection diagnostics failed: ${error instanceof Error ? error.message : String(error)}`)
+        }
         return Response.json({
           ok: true,
           bitsPath: bits.file,
@@ -274,6 +304,7 @@ export function apply(ctx, config = {}) {
           bits: bitRecords,
           agents: agents.agents,
           errors: agents.errors,
+          orchestrator: { ...orchestratorDiagnostics, selection: { bitId: selectionBitId } },
         })
       },
     }) ?? (() => {})
@@ -291,6 +322,16 @@ export function apply(ctx, config = {}) {
       if (teamRuntime) teamRuntime.dispose()
     } catch (error) {
       log(`team runtime disposal failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    try {
+      if (orchestrator) orchestrator.dispose()
+    } catch (error) {
+      log(`orchestrator disposal failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    try {
+      if (selection && typeof selection.dispose === 'function') selection.dispose()
+    } catch (error) {
+      log(`orchestrator selection disposal failed: ${error instanceof Error ? error.message : String(error)}`)
     }
     try {
       disposeTeamRoutes()

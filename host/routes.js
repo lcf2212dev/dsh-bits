@@ -1,5 +1,5 @@
 /**
- * Authenticated HTTP routes for the Bits plugin (v5).
+ * Authenticated HTTP routes for the Bits plugin (v5.2).
  *
  * Every route is an exact host-side Fetch route registered through
  * `ctx.connection.fetch.register(...)`; the DSH Connection host already enforces
@@ -10,13 +10,18 @@
  *   success -> `{ ok: true, ...payload }`
  *   failure -> `{ ok: false, error: { code, message } }`
  *
- * Coded errors thrown by the bit store, the model catalog or the bit runtime
- * (`error.code`) pass their code through; anything unexpected is logged through
- * `deps.log` and reported as `INTERNAL`.
+ * Coded errors thrown by the bit store, the model catalog, the bit runtime or
+ * the Bit mode selection (`error.code`) pass their code through; anything
+ * unexpected is logged through `deps.log` and reported as `INTERNAL`.
  *
  * There is no VM anymore: the VM/image/docker/notify-test routes were removed in
  * v5, and the ad-hoc execution happens through the bit runtime
  * (`host/bit-runtime.js`, injected as `deps.runtime`).
+ *
+ * Bit mode selection routes (`/api/bots.orchestrator`) are registered only when
+ * `deps.selection` is present, so older fixtures keep working. The DSH fetch
+ * registry keys routes by exact path, so the two HTTP operations (GET read, POST
+ * select) share one registered route definition and dispatch on the method.
  *
  * @module host/routes
  */
@@ -533,6 +538,120 @@ async function handleRun(deps, request) {
 }
 
 // -----------------------------------------------------------------------------
+// Bit mode orchestrating-bit selection
+// -----------------------------------------------------------------------------
+
+/**
+ * Await the selection store readiness, mapping an init failure to a coded error.
+ *
+ * @param {Record<string, any>} deps
+ * @returns {Promise<void>}
+ * @throws coded `ORCHESTRATOR_UNAVAILABLE`
+ */
+async function awaitSelectionReady(deps) {
+  const selection = deps.selection;
+  if (!isPlainObject(selection)) {
+    throw codedError('ORCHESTRATOR_UNAVAILABLE', 'Orchestrator selection is unavailable');
+  }
+  const ready = selection.ready;
+  if (ready === undefined || ready === null) return;
+  try {
+    await ready;
+  } catch (error) {
+    throw codedError('ORCHESTRATOR_UNAVAILABLE', `Orchestrator selection is unavailable: ${messageOf(error)}`);
+  }
+}
+
+/**
+ * Candidate-shaped view of one selected bit record, or `null`.
+ *
+ * @param {Record<string, any>} selection
+ * @param {unknown} record
+ * @returns {Record<string, any> | null}
+ */
+function selectedViewOf(selection, record) {
+  if (!isPlainObject(record) || typeof selection.viewFor !== 'function') return null;
+  const view = selection.viewFor(record);
+  return isPlainObject(view) ? view : null;
+}
+
+/**
+ * Candidate list of the selection store (always an array).
+ *
+ * @param {Record<string, any>} selection
+ * @returns {Array<Record<string, any>>}
+ */
+function selectionCandidatesOf(selection) {
+  if (typeof selection.candidates !== 'function') return [];
+  const candidates = selection.candidates();
+  return Array.isArray(candidates) ? candidates.filter((candidate) => isPlainObject(candidate)) : [];
+}
+
+/**
+ * Read the optional `target` field of the selection request body.
+ *
+ * @param {Record<string, any>} body
+ * @returns {string | null} trimmed target, or `null` to clear the selection
+ * @throws coded `BAD_REQUEST`
+ */
+function readSelectionTarget(body) {
+  if (body.target === undefined || body.target === null) return null;
+  if (typeof body.target !== 'string' || body.target.trim() === '') {
+    throw codedError('BAD_REQUEST', '"target" must be a non-empty string or null');
+  }
+  return body.target.trim();
+}
+
+/**
+ * GET /api/bots.orchestrator — current Bit mode selection + picker candidates.
+ *
+ * @param {Record<string, any>} deps
+ * @returns {Promise<Response>}
+ */
+async function handleOrchestratorGet(deps) {
+  await awaitSelectionReady(deps);
+  const selection = deps.selection;
+  const bitId = typeof selection.currentBitId === 'function' ? selection.currentBitId() : null;
+  let record = null;
+  if (typeof selection.currentBit === 'function') {
+    const current = selection.currentBit();
+    if (isPlainObject(current)) record = current;
+  }
+  return success({
+    bitId: typeof bitId === 'string' && bitId !== '' ? bitId : null,
+    bit: selectedViewOf(selection, record),
+    candidates: selectionCandidatesOf(selection),
+  });
+}
+
+/**
+ * POST /api/bots.orchestrator — select one orchestrating bit (`target: null`
+ * clears the selection). Coded errors (`BIT_UNKNOWN`, `BIT_NOT_ORCHESTRATOR`,
+ * store codes) pass through the envelope.
+ *
+ * @param {Record<string, any>} deps
+ * @param {Request} request
+ * @returns {Promise<Response>}
+ */
+async function handleOrchestratorSelect(deps, request) {
+  const body = await readJsonBody(request);
+  const target = readSelectionTarget(body);
+  await awaitSelectionReady(deps);
+  const selection = deps.selection;
+  if (typeof selection.select !== 'function') {
+    throw codedError('ORCHESTRATOR_UNAVAILABLE', 'Orchestrator selection is unavailable');
+  }
+  const result = await selection.select(target);
+  const record = isPlainObject(result) && isPlainObject(result.bit) ? result.bit : null;
+  const view = isPlainObject(result) && isPlainObject(result.view) ? result.view : selectedViewOf(selection, record);
+  return success({
+    bitId: record !== null && typeof record.id === 'string' ? record.id : null,
+    bit: view,
+    candidates: selectionCandidatesOf(selection),
+  });
+}
+
+// -----------------------------------------------------------------------------
 // Registration
 // -----------------------------------------------------------------------------
 
@@ -578,11 +697,21 @@ function defineRoute(deps, path, methods, handler) {
  *   ready: Promise<void>,
  *   runtime?: any,
  *   runTimeoutMs?: number,
+ *   selection?: {
+ *     ready?: Promise<void>,
+ *     currentBitId?: () => string | null,
+ *     currentBit?: () => Record<string, any> | null,
+ *     candidates?: () => Array<Record<string, any>>,
+ *     viewFor?: (bitRecord: Record<string, any>) => Record<string, any>,
+ *     select?: (target: string | null) => Promise<{ bit: Record<string, any> | null, view: Record<string, any> | null }>,
+ *   },
  *   log?: (message: string) => void,
  * }} deps
  *   `bits` is the v5 bit store; `ready` resolves after it is initialized;
  *   `runtime` is the bit runtime created in `index.js`
- *   (`createBitRuntime`), used by the models and run routes.
+ *   (`createBitRuntime`), used by the models and run routes; `selection` is the
+ *   durable Bit mode orchestrating-bit selection, which additionally enables the
+ *   `/api/bots.orchestrator` route.
  * @returns {() => void} disposer that unregisters every route
  */
 export function registerBotRoutes(ctx, deps) {
@@ -603,6 +732,16 @@ export function registerBotRoutes(ctx, deps) {
     defineRoute(deps, '/api/bots.models', ['GET'], (request) => handleModels(deps, request)),
     defineRoute(deps, '/api/bots.run', ['POST'], (request) => handleRun(deps, request)),
   ];
+  // Bit mode selection: GET reads the current preference, POST changes it. The
+  // DSH fetch registry keys routes by exact path, so both operations share one
+  // definition and dispatch on the request method.
+  if (isPlainObject(deps.selection)) {
+    definitions.push(
+      defineRoute(deps, '/api/bots.orchestrator', ['GET', 'POST'], (request) =>
+        request.method === 'POST' ? handleOrchestratorSelect(deps, request) : handleOrchestratorGet(deps),
+      ),
+    );
+  }
   const disposers = definitions.map((definition) => registry.register(definition));
   return () => {
     for (let index = disposers.length - 1; index >= 0; index -= 1) {

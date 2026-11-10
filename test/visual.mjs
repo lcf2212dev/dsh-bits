@@ -7,6 +7,11 @@
  * headless Chrome over the DevTools Protocol to capture screenshots of:
  *   1. the bit list, 2. the bit picker, 3. the filtered picker, 4. the form
  *   prefilled from a bit, 5. the edit dialog, 6. the Run dialog, 7. delete.
+ * Before that it covers the new-session hero: it switches the preset to
+ * "Bit mode", checks the orchestrating-bit chip sits right after the mode chip,
+ * captures the candidate menu (avatar + name + description), and picks the
+ * catalog Coordinator (asserting the Host provisioned the bit and persisted it).
+ * Hero screenshots use the `bit-*` prefix so the Bit page numbering stays put.
  * It creates one bit through the UI, checks the v5 record fields through the API,
  * runs a worker ad-hoc (checking `readOnly` reached the route) and asserts the
  * orchestrator card does not offer the ad-hoc Run action.
@@ -214,17 +219,42 @@ async function clickButtonByText(cdp, scope, regex) {
   await sleep(200)
 }
 
+/**
+ * Dismiss the profile's startup modals: the versioned preview notice
+ * ("Continue") and the API-key onboarding ("Get started", closed with X).
+ * While one is open the app behind it is inert, so even programmatic clicks on
+ * the hero are ignored; this must run before interacting with the first screen.
+ */
+async function dismissStartupModals(cdp) {
+  const modalOpen = `[...document.querySelectorAll('[role="dialog"], [aria-modal="true"]')].some((el) => !el.closest('.dsh-bots-root'))`
+  for (let round = 0; round < 6; round += 1) {
+    if (!(await evaluate(cdp, `Boolean(${modalOpen})`))) return true
+    await evaluate(cdp, `(() => {
+      const outside = (el) => !el.closest('.dsh-bots-root')
+      const dialogs = [...document.querySelectorAll('[role="dialog"], [aria-modal="true"]')].filter(outside)
+      for (const dialog of dialogs) {
+        const primary = [...dialog.querySelectorAll('button')].find((el) => /^(Continue|Got it|Dismiss)$/i.test((el.textContent || '').trim()))
+        if (primary) { primary.click(); return }
+        const close = [...dialog.querySelectorAll('button[aria-label]')].find((el) => /close/i.test(el.getAttribute('aria-label')))
+        if (close) { close.click(); return }
+      }
+    })()`)
+    await sleep(600)
+  }
+  return !(await evaluate(cdp, `Boolean(${modalOpen})`))
+}
+
 async function main() {
   assert.ok(existsSync(CHROME), `Chrome not found at ${CHROME}`)
   await fs.mkdir(OUT_DIR, { recursive: true })
-  console.log('1/4 profile + host')
+  console.log('1/5 profile + host')
   await installProfile()
   const tokenUrl = await bootHost(await freePort())
   const exchange = await fetch(tokenUrl, { redirect: 'manual' })
   cookie = exchange.headers.getSetCookie()[0].split(';', 1)[0]
   origin = new URL(tokenUrl).origin
 
-  console.log('2/4 seed bits')
+  console.log('2/5 seed bits')
   const { bits: catalogBits } = await api('/api/bots.catalog')
   assert.equal(catalogBits.length, 52, 'catalog served by the real host')
   const bit = (id) => catalogBits.find((entry) => entry.id === id)
@@ -286,7 +316,7 @@ async function main() {
   })
   assert.equal(leadTeam.lead, 'po')
 
-  console.log('3/4 chrome')
+  console.log('3/5 chrome')
   const cdpPort = await freePort()
   chromeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-bits-visual-chrome-'))
   chrome = spawn(CHROME, [
@@ -302,23 +332,141 @@ async function main() {
   await cdp.send('Network.setCookie', { name: cookie.split('=')[0], value: cookie.slice(cookie.indexOf('=') + 1), url: origin })
   await cdp.send('Page.navigate', { url: `${origin}/` })
 
-  console.log('4/4 screenshots + interactions')
+  // --- Hero: Bit mode chip + orchestrating-bit picker --------------------
+  // A fresh profile opens on the new-session hero. The Bit mode preset owns a
+  // second chip right after the mode chip; its menu lists the orchestrating
+  // candidates (the seeded App PO bit + catalog characters) with avatar, name
+  // and description, and picking one persists the choice on the Host.
+  console.log('4/5 hero: Bit mode chip')
+  const presetButton = `document.querySelector('[data-slot="conversation.hero.agentPreset"] button')`
+  await waitFor(cdp, presetButton, 'hero preset chip', 60000)
+  console.log('   startup modals dismissed:', await dismissStartupModals(cdp))
+
+  const presetLabel = await evaluate(cdp, `(${presetButton}).textContent`)
+  console.log('   current preset:', presetLabel.trim())
+  let presetMenuOpen = false
+  for (let attempt = 0; attempt < 3 && !presetMenuOpen; attempt += 1) {
+    await evaluate(cdp, `${presetButton}.click()`)
+    try {
+      await waitFor(cdp, `document.querySelector('[role="menu"] [role="menuitem"]')`, 'preset picker menu', 5000)
+      presetMenuOpen = true
+    } catch (error) {
+      await sleep(400)
+    }
+  }
+  assert.ok(presetMenuOpen, 'the hero preset picker menu opens')
+  const pickedBitMode = await evaluate(cdp, `(() => {
+    const items = [...document.querySelectorAll('[role="menu"] [role="menuitem"], [role="menu"] [role="menuitemradio"]')]
+    const item = items.find((el) => /Bit mode/i.test(el.textContent || ''))
+    if (!item) return false
+    item.click()
+    return true
+  })()`)
+  assert.ok(pickedBitMode, 'the preset picker offers Bit mode')
+  const chipSelector = '[data-slot="conversation.hero.options"] .dsh-bots-mode-chip'
+  await waitFor(cdp, `document.querySelector(${JSON.stringify(chipSelector)})`, 'Bit mode chip', 30000)
+  await waitFor(cdp, `document.querySelector('.dsh-bots-mode-root') && document.querySelector('.dsh-bots-mode-root').getAttribute('data-bots-mode-phase') === 'ready'`, 'Bit mode chip loaded', 30000)
+  const chipEmptyLabel = await evaluate(cdp, `document.querySelector(${JSON.stringify(chipSelector)}).textContent`)
+  assert.ok(/Choose bit/i.test(chipEmptyLabel), `empty chip label: ${chipEmptyLabel}`)
+  const chipEmptyAvatar = await evaluate(cdp, `(() => {
+    const img = document.querySelector(${JSON.stringify(chipSelector)}).querySelector('img')
+    return img ? { src: img.getAttribute('src'), width: img.naturalWidth } : null
+  })()`)
+  assert.ok(chipEmptyAvatar && /bit-mascot/.test(chipEmptyAvatar.src) && chipEmptyAvatar.width > 0, `empty chip shows the mascot avatar: ${JSON.stringify(chipEmptyAvatar)}`)
+
+  // Placement: the chip sits immediately after the mode chip in the same row.
+  const geometry = await evaluate(cdp, `(() => {
+    const preset = ${presetButton}.getBoundingClientRect()
+    const chip = document.querySelector(${JSON.stringify(chipSelector)}).getBoundingClientRect()
+    const row = document.querySelector('[data-slot="conversation.hero.agentPreset"]').parentElement.getBoundingClientRect()
+    return {
+      preset: { left: preset.left, right: preset.right, top: preset.top, bottom: preset.bottom, centerY: (preset.top + preset.bottom) / 2 },
+      chip: { left: chip.left, right: chip.right, top: chip.top, bottom: chip.bottom, centerY: (chip.top + chip.bottom) / 2 },
+      row: { left: row.left, right: row.right, top: row.top, bottom: row.bottom },
+    }
+  })()`)
+  console.log('   hero geometry', JSON.stringify(geometry))
+  assert.ok(geometry.chip.left >= geometry.preset.right, `bit chip sits after the mode chip: ${JSON.stringify(geometry)}`)
+  assert.ok(geometry.chip.left - geometry.preset.right <= 40, `bit chip keeps a small gap after the mode chip: ${JSON.stringify(geometry)}`)
+  assert.ok(Math.abs(geometry.chip.centerY - geometry.preset.centerY) <= 8, `bit chip aligns with the mode chip: ${JSON.stringify(geometry)}`)
+  assert.ok(geometry.chip.top >= geometry.row.top - 1 && geometry.chip.bottom <= geometry.row.bottom + 1, `bit chip stays inside the hero row: ${JSON.stringify(geometry)}`)
+  await screenshot(cdp, 'bit-1-mode')
+
+  // Menu: generic row first, then App PO + the three catalog orchestrators.
+  await evaluate(cdp, `document.querySelector(${JSON.stringify(chipSelector)}).click()`)
+  await waitFor(cdp, `document.querySelector('.dsh-bots-mode-menu')`, 'bit picker menu')
+  await waitFor(cdp, `document.querySelectorAll('.dsh-bots-mode-item').length === 5`, 'bit picker rows', 30000)
+  await waitFor(cdp, `[...document.querySelectorAll('.dsh-bots-mode-item img')].length >= 4 && [...document.querySelectorAll('.dsh-bots-mode-item img')].every((img) => img.complete && img.naturalWidth > 0)`, 'bit picker avatars', 30000)
+  const menuRows = await evaluate(cdp, `[...document.querySelectorAll('.dsh-bots-mode-item')].map((row) => ({
+    name: row.querySelector('.dsh-bots-mode-item-name') ? row.querySelector('.dsh-bots-mode-item-name').textContent.trim() : '',
+    summary: row.querySelector('.dsh-bots-mode-item-summary') ? row.querySelector('.dsh-bots-mode-item-summary').textContent.trim() : '',
+    target: row.getAttribute('data-target'),
+    generic: row.getAttribute('data-generic') === 'true',
+    checked: row.getAttribute('aria-checked'),
+    avatar: row.querySelector('img') ? { src: row.querySelector('img').getAttribute('src'), width: row.querySelector('img').naturalWidth } : null,
+  }))`)
+  console.log('   bit candidates', JSON.stringify(menuRows.map((row) => row.name)))
+  assert.equal(menuRows.length, 5, `five orchestrating options: ${JSON.stringify(menuRows.map((row) => row.name))}`)
+  assert.equal(menuRows[0].generic, true, 'the generic option is the first row')
+  assert.equal(menuRows[0].name, 'No specific bit')
+  assert.ok(menuRows[0].summary.length > 0, 'the generic option carries its hint')
+  assert.equal(menuRows[0].checked, 'true', 'generic option checked while no bit is selected')
+  assert.ok(menuRows[0].avatar && /bit-mascot/.test(menuRows[0].avatar.src) && menuRows[0].avatar.width > 0, `generic option shows the mascot avatar: ${JSON.stringify(menuRows[0].avatar)}`)
+  const candidateNames = menuRows.filter((row) => !row.generic).map((row) => row.name)
+  for (const expected of ['App PO', 'Manager', 'Coordinator', 'Sub-coordinator']) {
+    assert.ok(candidateNames.includes(expected), `candidate ${expected} listed: ${candidateNames.join(', ')}`)
+  }
+  for (const row of menuRows.filter((entry) => !entry.generic)) {
+    assert.ok(row.avatar && row.avatar.width > 0, `avatar loaded for ${row.name}: ${JSON.stringify(row.avatar)}`)
+    assert.ok(row.summary.length > 0, `description for ${row.name}`)
+    assert.ok(row.target && row.target.length > 0, `selection target for ${row.name}`)
+  }
+  await screenshot(cdp, 'bit-2-menu')
+
+  // Pick a catalog-only candidate: the Host provisions the bit and persists it.
+  await evaluate(cdp, `[...document.querySelectorAll('.dsh-bots-mode-item')].find((row) => row.getAttribute('data-target') === 'bit-coordinator').click()`)
+  await waitFor(cdp, `!document.querySelector('.dsh-bots-mode-menu')`, 'bit picker menu closed after pick', 30000)
+  await waitFor(cdp, `document.querySelector(${JSON.stringify(chipSelector)}) && /Coordinator/.test(document.querySelector(${JSON.stringify(chipSelector)}).textContent)`, 'chip shows the picked bit', 30000)
+  await waitFor(cdp, `document.querySelector('.dsh-bots-mode-root') && document.querySelector('.dsh-bots-mode-root').getAttribute('data-bots-mode-phase') === 'ready'`, 'chip settled after pick', 30000)
+  const chipPicked = await evaluate(cdp, `(() => {
+    const chip = document.querySelector(${JSON.stringify(chipSelector)})
+    const img = chip.querySelector('img')
+    return { label: chip.textContent, expanded: chip.getAttribute('aria-expanded'), avatar: img ? { src: img.getAttribute('src'), width: img.naturalWidth } : null }
+  })()`)
+  assert.ok(/Coordinator/.test(chipPicked.label), `chip label follows the pick: ${JSON.stringify(chipPicked)}`)
+  assert.equal(chipPicked.expanded, 'false', 'menu closed after the pick')
+  assert.ok(chipPicked.avatar && chipPicked.avatar.width > 0, `chip avatar loaded: ${JSON.stringify(chipPicked.avatar)}`)
+
+  const orchestratorView = await api('/api/bots.orchestrator')
+  assert.ok(orchestratorView.bitId, `selection persisted: ${JSON.stringify(orchestratorView)}`)
+  assert.equal(orchestratorView.bit.name, 'Coordinator')
+  assert.equal(orchestratorView.bit.isExisting, true)
+  const provisioned = (await api('/api/bots.list')).bits.find((entryBit) => entryBit.id === orchestratorView.bitId)
+  assert.ok(provisioned, `catalog pick provisions the bit: ${JSON.stringify(orchestratorView.bitId)}`)
+  assert.equal(provisioned.name, 'Coordinator')
+  assert.equal(provisioned.character, 'bit-coordinator')
+  assert.equal(provisioned.isOrchestrator, true, 'the provisioned bit can orchestrate')
+  assert.equal(provisioned.model, bit('bit-coordinator').model, 'catalog model')
+  assert.equal(provisioned.effort, bit('bit-coordinator').effort, 'catalog effort')
+  const persisted = await api('/api/bots.orchestrator')
+  assert.equal(persisted.bitId, orchestratorView.bitId, 'selection survives a second GET')
+  const persistedNames = persisted.candidates.map((row) => row.name)
+  for (const expected of ['App PO', 'Manager', 'Coordinator', 'Sub-coordinator']) {
+    assert.ok(persistedNames.includes(expected), `candidate ${expected} still listed: ${persistedNames.join(', ')}`)
+  }
+  const coordinatorCandidate = persisted.candidates.find((row) => row.name === 'Coordinator')
+  assert.equal(coordinatorCandidate.isExisting, true, 'the provisioned bit joins the candidates')
+  await screenshot(cdp, 'bit-3-selected')
+
+  console.log('5/5 screenshots + interactions')
   const entry = `[...document.querySelectorAll('nav button, nav a, [role="button"], button')].find((el) => /^\\s*Bits\\s*$/.test(el.textContent || el.getAttribute('aria-label') || ''))`
   await waitFor(cdp, entry, 'Bits sidebar entry', 60000)
   await evaluate(cdp, `${entry}.click()`)
-  // A fresh profile shows the host's one-time preview notice; dismiss it.
+  // Startup modals were dismissed on the hero; this is a no-op safety net.
   await waitFor(cdp, `document.querySelector('.dsh-bots-tabs')`, 'page tabs')
   await sleep(800)
-  for (let round = 0; round < 4; round += 1) {
-    await evaluate(cdp, `(() => {
-      const outside = (el) => !el.closest('.dsh-bots-root')
-      const next = [...document.querySelectorAll('button')].filter(outside).find((el) => /^Continue$/.test(el.textContent.trim()))
-        ?? [...document.querySelectorAll('[role="dialog"] button[aria-label], [aria-modal="true"] button[aria-label]')].filter(outside).find((el) => /close/i.test(el.getAttribute('aria-label')))
-      if (next) next.click()
-    })()`)
-    await sleep(400)
-  }
-  await waitFor(cdp, `document.querySelectorAll('.dsh-bots-card').length === 4`, 'bit cards')
+  await dismissStartupModals(cdp)
+  await waitFor(cdp, `document.querySelectorAll('.dsh-bots-card').length === 5`, 'bit cards')
   await sleep(1500)
   const avatarDebug = await evaluate(cdp, `({
     cards: document.querySelectorAll('.dsh-bots-card').length,
@@ -422,7 +570,7 @@ async function main() {
   console.log('   created through UI:', created.name, created.character, created.model, created.effort)
 
   // Edit the legacy bit: no character yet, the custom name/description are kept.
-  await waitFor(cdp, `document.querySelectorAll('.dsh-bots-card').length === 5`, 'five cards')
+  await waitFor(cdp, `document.querySelectorAll('.dsh-bots-card').length === 6`, 'six cards')
   await evaluate(cdp, `document.querySelector('.dsh-bots-card[data-bit-id="${legacy.id}"] .dsh-bots-button-outline').click()`)
   await waitFor(cdp, `document.querySelector('.dsh-bots-bit-hero')`, 'edit dialog')
   await screenshot(cdp, '5-edit-legacy')
@@ -491,7 +639,7 @@ async function main() {
   await waitFor(cdp, `document.querySelector('.dsh-bots-tabs') && /Teams/.test(document.querySelector('.dsh-bots-tabs').textContent)`, 'teams tab from the orchestrator card')
   assert.ok(await evaluate(cdp, `document.querySelectorAll('.dsh-bots-tab[aria-selected="true"]').length === 1`), 'one tab selected')
   await evaluate(cdp, `[...document.querySelectorAll('.dsh-bots-tab')].find((el) => /Bits/.test(el.textContent)).click()`)
-  await waitFor(cdp, `document.querySelectorAll('.dsh-bots-card').length === 5`, 'back on the bits list')
+  await waitFor(cdp, `document.querySelectorAll('.dsh-bots-card').length === 6`, 'back on the bits list')
 
   // Delete confirmation.
   await evaluate(cdp, `document.querySelector('.dsh-bots-card[data-bit-id="${scout.id}"] .dsh-bots-button-danger').click()`)

@@ -16,6 +16,7 @@ import path from 'node:path'
 
 import { createBitRuntime } from '../host/bit-runtime.js'
 import { createModelCatalog } from '../host/models.js'
+import { ORCHESTRATOR_PRESET } from '../host/orchestrator.js'
 import { installTeamRuntime } from '../host/team-runtime.js'
 import { flowText, rosterText } from '../host/team-prompt.js'
 import { guardEvent, leadMayRead, toClaudeTool } from '../host/team-guard.js'
@@ -611,6 +612,33 @@ await test('startMission creates a lead session in the team workspace, selects t
   await assert.rejects(runtime.startMission({ team: 'nope', prompt: 'x' }), /not found/)
   await assert.rejects(runtime.startMission({ team: 'Broken', prompt: 'x' }), (error) => codedOf(error) === 'TEAM_LEAD_NOT_ORCHESTRATOR' && /must be an orchestrator bit/.test(error.message))
   await assert.rejects(runtime.startMission({ team: 'Implementation', prompt: '   ' }), (error) => codedOf(error) === 'BAD_REQUEST')
+})
+
+await test('a Bits Orchestrator preset session is never resolved or bound as a team lead', async () => {
+  // The cwd is inside the bindWorkspace team workspace: without the preset
+  // guard this session would become the lead of team Implementation.
+  const preset = host.makeAgent('preset-session', { cwd: env.workspace })
+  preset.session.header.agentPreset = ORCHESTRATOR_PRESET
+  await host.emit('agent/created', { agent: preset, source: 'startup' })
+  assert.equal(runtime.resolveSession('preset-session'), null)
+  assert.equal(host.sections.get('preset-session'), undefined, 'no team prompt section')
+  assert.equal(host.state.tools.get('preset-session'), undefined, 'no team tools')
+  assert.equal(host.state.restricts.get('preset-session'), undefined, 'no team tool restrictions')
+  assert.equal(runtime.diagnostics().agents.some((agent) => agent.sessionId === 'preset-session'), false)
+  assert.equal(runtime.bindings.get('preset-session'), undefined)
+
+  // Positive control: the same cwd without the preset IS resolved as the lead.
+  const control = host.makeAgent('control-session', { cwd: env.workspace })
+  await host.emit('agent/created', { agent: control, source: 'startup' })
+  const binding = runtime.resolveSession('control-session')
+  assert.ok(binding, 'a normal session in the same workspace resolves as a team lead')
+  assert.equal(binding.role, 'lead')
+  assert.equal(binding.team.id, env.main.id)
+  assert.equal(binding.member.id, env.main.lead)
+  assert.equal(binding.child, false)
+  assert.match(host.sections.get('control-session').text(), /# Team of bits: Implementation/)
+  assert.ok(host.state.tools.get('control-session').get('team_delegate'))
+  assert.ok(runtime.diagnostics().agents.some((agent) => agent.sessionId === 'control-session'))
 })
 
 await test('the runtime disposes cleanly', async () => {

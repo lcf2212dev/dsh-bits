@@ -144,6 +144,16 @@ window.__ModuleLoader__.load({
       refreshing: 'Refreshing…',
       working: 'Working…',
       close: 'Close',
+      modeBitChipEmpty: 'Choose bit',
+      modeBitHint: 'Choose the bit that orchestrates this chat',
+      modeBitGenericName: 'No specific bit',
+      modeBitGenericHint: "The chat orchestrates on its own, without a bit's persona.",
+      modeBitLoading: 'Loading bits…',
+      modeBitError: 'Could not load the orchestrator bits.',
+      modeBitEmpty: 'No orchestrator bits yet. Create one on the Bits page.',
+      modeBitMenuLabel: 'Orchestrating bit',
+      modeBitSelectionFailed: 'Could not select the bit.',
+      modeBitSaving: 'Saving…',
     }
 
     /* ------------------------------------------------------------------ */
@@ -352,6 +362,7 @@ window.__ModuleLoader__.load({
     const PlayIcon = pathsIcon(['M5.5 3.4l7 4.6-7 4.6z'])
     const CloseIcon = pathsIcon(['M4 4l8 8', 'M12 4l-8 8'])
     const CheckIcon = pathsIcon(['M3 8.5l3 3 7-7'])
+    const ChevronDownIcon = pathsIcon(['M4 6l4 4 4-4'])
     const WarningIcon = pathsIcon([
       'M8 2.4l6 11.2H2z',
       'M8 6.6v3.2',
@@ -655,6 +666,50 @@ window.__ModuleLoader__.load({
       return bit
     }
 
+    /**
+     * Defensive candidate view of one orchestrating bit (`/api/bots.orchestrator`).
+     * @param raw - candidate row from the Host (bit record view or catalog view).
+     * @returns {object|null} the normalized candidate, or null when it is malformed.
+     */
+    function normalizeModeBitCandidate(raw) {
+      if (!isObject(raw)) return null
+      const target = asString(raw.target) || asString(raw.id)
+      if (!target) return null
+      return {
+        id: asString(raw.id) || target,
+        target: target,
+        name: asString(raw.name) || target,
+        character: asString(raw.character) || null,
+        emoji: asString(raw.emoji) || '🤖',
+        color: /^#[0-9a-fA-F]{6}$/.test(asString(raw.color)) ? asString(raw.color) : COLOR_PALETTE[0],
+        avatar: asString(raw.avatar),
+        summary: asString(raw.summary),
+        model: asString(raw.model),
+        effort: asString(raw.effort),
+        isExisting: raw.isExisting === true,
+      }
+    }
+
+    /** Normalize `/api/bots.orchestrator`; malformed rows are dropped. */
+    function normalizeOrchestratorPayload(payload) {
+      const source = isObject(payload) && Array.isArray(payload.candidates) ? payload.candidates : []
+      const candidates = []
+      const seen = {}
+      source.forEach(function (raw) {
+        const candidate = normalizeModeBitCandidate(raw)
+        if (candidate && !seen[candidate.id]) {
+          seen[candidate.id] = true
+          candidates.push(candidate)
+        }
+      })
+      const bit = isObject(payload) ? normalizeModeBitCandidate(payload.bit) : null
+      return {
+        bitId: isObject(payload) ? (asString(payload.bitId) || (bit ? bit.target : '')) : '',
+        bit: bit,
+        candidates: candidates,
+      }
+    }
+
     const api = {
       async list() {
         return normalizeBitsPayload(await fetchJson('/api/bots.list'))
@@ -664,6 +719,16 @@ window.__ModuleLoader__.load({
       },
       async models() {
         return normalizeModelsPayload(await fetchJson('/api/bots.models'))
+      },
+      /** Current orchestrating-bit selection and its candidates (Bit mode only). */
+      async orchestrator() {
+        return normalizeOrchestratorPayload(await fetchJson('/api/bots.orchestrator'))
+      },
+      /** Persist the orchestrating-bit choice; `target: null` clears it. */
+      async selectOrchestrator(target) {
+        return normalizeOrchestratorPayload(await fetchJson('/api/bots.orchestrator', {
+          target: target === null ? null : asString(target),
+        }))
       },
       async create(fields) {
         return normalizeBitPayload(await fetchJson('/api/bots.create', fields))
@@ -6891,6 +6956,281 @@ window.__ModuleLoader__.load({
     }
 
     /* ------------------------------------------------------------------ */
+    /* Bit mode seat — pick the bit that orchestrates the chat            */
+    /* ------------------------------------------------------------------ */
+
+    /**
+     * Styles of the seat. The chip renders in the conversation hero, outside
+     * `.dsh-bots-root`, so it re-declares the theme tokens it needs (the page
+     * token block does not reach that subtree). The `:has()` rule removes the
+     * hero options container's `margin-left:auto` while the chip is mounted so
+     * the chip sits immediately after the Host's mode chip; it disappears with
+     * the component, restoring the Host layout.
+     */
+    const MODE_BIT_STYLES = `
+div:has(> [data-slot="conversation.hero.options"]) { margin-left: 0; }
+.dsh-bots-mode-root { --dsh-mode-text: var(--dsw-alias-label-primary, rgba(20, 22, 30, .92)); --dsh-mode-text-2: var(--dsw-alias-label-secondary, rgba(20, 22, 30, .64)); --dsh-mode-text-3: var(--dsw-alias-label-caption, rgba(20, 22, 30, .4)); --dsh-mode-bg: var(--dsw-menu-surface-fill, var(--dsw-alias-bg-overlay, #2a2b31)); --dsh-mode-border: var(--dsw-alias-border-l2, rgba(127, 127, 127, .18)); --dsh-mode-hover: var(--dsw-alias-interactive-bg-hover, rgba(127, 127, 127, .1)); --dsh-mode-active: var(--dsw-alias-interactive-bg-active, rgba(127, 127, 127, .16)); --dsh-mode-shadow: var(--dsw-elevation-prominent, 0 12px 32px rgba(0, 0, 0, .24)); --dsh-mode-radius: var(--dsw-radius-sm, 6px); --dsh-mode-radius-lg: var(--dsw-radius-lg, 10px); --dsh-mode-bad: var(--dsw-alias-state-error-primary, #dc2626); --dsh-mode-ring: var(--dsw-alias-state-business-primary, #3b82f6); position: relative; display: inline-flex; align-items: center; min-width: 0; color: var(--dsh-mode-text); font-size: 13px; line-height: 20px; }
+.dsh-bots-mode-chip { box-sizing: border-box; display: inline-flex; align-items: center; gap: 6px; height: 28px; max-width: min(100%, 240px); padding: 0 8px; border: 0; border-radius: var(--dsh-mode-radius); background: transparent; color: inherit; font: inherit; font-size: 13px; line-height: 20px; font-weight: 500; white-space: nowrap; cursor: pointer; }
+.dsh-bots-mode-chip:hover:not(:disabled), .dsh-bots-mode-chip[aria-expanded="true"] { background: var(--dsh-mode-hover); }
+.dsh-bots-mode-chip:active:not(:disabled) { background: var(--dsh-mode-active); }
+.dsh-bots-mode-chip:disabled { cursor: default; opacity: .6; }
+.dsh-bots-mode-chip:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--dsh-mode-ring); }
+.dsh-bots-mode-chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dsh-bots-mode-chevron { flex: none; color: var(--dsh-mode-text-3); }
+.dsh-bots-mode-menu { position: absolute; left: 0; top: calc(100% + 6px); z-index: 1300; box-sizing: border-box; display: flex; flex-direction: column; gap: 1px; width: 340px; max-width: min(340px, calc(100vw - 32px)); padding: 4px; overflow-y: auto; border: 1px solid var(--dsh-mode-border); border-radius: var(--dsh-mode-radius-lg); background: var(--dsh-mode-bg); color: var(--dsh-mode-text); box-shadow: var(--dsh-mode-shadow); backdrop-filter: var(--dsw-menu-backdrop-filter, none); }
+.dsh-bots-mode-menu-above { top: auto; bottom: calc(100% + 6px); }
+.dsh-bots-mode-menu-label { padding: 4px 8px 2px; color: var(--dsh-mode-text-3); font-size: 11px; line-height: 16px; font-weight: 500; letter-spacing: .02em; text-transform: uppercase; }
+.dsh-bots-mode-item { box-sizing: border-box; display: flex; align-items: flex-start; gap: 10px; width: 100%; padding: 5px 8px; border: 0; border-radius: var(--dsh-mode-radius); background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.dsh-bots-mode-item:hover:not(:disabled), .dsh-bots-mode-item:focus-visible { background: var(--dsh-mode-hover); outline: none; }
+.dsh-bots-mode-item[aria-checked="true"] { background: var(--dsh-mode-active); }
+.dsh-bots-mode-item:disabled { cursor: default; opacity: .6; }
+.dsh-bots-mode-item-body { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.dsh-bots-mode-item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; line-height: 20px; font-weight: 600; }
+.dsh-bots-mode-item-summary { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; color: var(--dsh-mode-text-2); font-size: 12px; line-height: 16px; }
+.dsh-bots-mode-item-check { flex: none; align-self: center; color: var(--dsh-mode-text); }
+.dsh-bots-mode-state { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 8px; color: var(--dsh-mode-text-2); font-size: 12px; line-height: 18px; }
+.dsh-bots-mode-state-error { color: var(--dsh-mode-bad); }
+.dsh-bots-mode-retry { flex: none; padding: 0; border: 0; border-radius: var(--dsh-mode-radius); background: transparent; color: var(--dsh-mode-text); font: inherit; font-size: 12px; line-height: 18px; cursor: pointer; text-decoration: underline; }
+`
+
+    /**
+     * Avatar of the generic ("no specific bit") option: the catalog mascot "Bit",
+     * so it renders like every other candidate (soft tinted tile + illustration,
+     * emoji fallback when the image is unavailable).
+     */
+    const MODE_BIT_GENERIC_AVATAR = {
+      id: MASCOT_ID,
+      name: 'Bit',
+      avatar: '/api/bots.avatar?id=' + encodeURIComponent(MASCOT_ID),
+      emoji: '👾',
+      color: '#4170b6',
+      summary: { en: '' },
+    }
+
+    /** Used only when a seat somehow renders without the `sessions` hook. */
+    function useMissingSessions(selector) {
+      return selector(undefined)
+    }
+
+    /**
+     * Seat in the new-session hero that picks which bit orchestrates a Bit mode
+     * chat. It renders only while the current blank session's preset is
+     * `bits-orchestrator`, and not at all when the Host lacks the selection
+     * route (older Host) or `ctx.sessions` (never registered in that case).
+     */
+    function ModeBitSeat(props) {
+      const t = typeof props.t === 'function' ? props.t : fallbackT
+      const sessionId = props.sessionId
+      const useSessions = typeof props.useSessions === 'function' ? props.useSessions : useMissingSessions
+      const summary = useSessions(function (snapshot) {
+        if (sessionId === undefined || !snapshot || !snapshot.byId) return undefined
+        return snapshot.byId[sessionId]
+      })
+      const preset = summary && summary.projectionValues ? summary.projectionValues.agentPreset : undefined
+      const active = preset === 'bits-orchestrator'
+
+      const rootRef = React.useRef(null)
+      const chipRef = React.useRef(null)
+      const menuRef = React.useRef(null)
+      const requestSeq = React.useRef(0)
+      const restoreFocusRef = React.useRef(false)
+      const [state, setState] = React.useState({ phase: 'idle', bit: null, candidates: [], error: '' })
+      const [open, setOpen] = React.useState(false)
+      const [pending, setPending] = React.useState('')
+      const [error, setError] = React.useState('')
+      const [menuLayout, setMenuLayout] = React.useState({ placement: 'below', maxHeight: 360 })
+
+      /** GET the selection + candidates; a 404 marks the seat unavailable. */
+      const load = React.useCallback(function () {
+        const seq = requestSeq.current + 1
+        requestSeq.current = seq
+        setState(function (current) {
+          return { phase: 'loading', bit: current.bit, candidates: current.candidates, error: '' }
+        })
+        api.orchestrator().then(function (payload) {
+          if (requestSeq.current !== seq) return
+          setState({ phase: 'ready', bit: payload.bit, candidates: payload.candidates, error: '' })
+        }).catch(function (failure) {
+          if (requestSeq.current !== seq) return
+          const code = failure && typeof failure.code === 'string' ? failure.code : ''
+          if (code === 'HTTP_404') {
+            setState({ phase: 'unavailable', bit: null, candidates: [], error: '' })
+            return
+          }
+          setState({ phase: 'error', bit: null, candidates: [], error: describeError(failure) })
+        })
+      }, [])
+
+      React.useEffect(function () {
+        if (active) load()
+      }, [active, load])
+
+      const closeMenu = React.useCallback(function (restoreFocus) {
+        restoreFocusRef.current = restoreFocus === true
+        setOpen(false)
+        setError('')
+      }, [])
+
+      /** Return focus to the chip once the menu is gone (a disabled chip cannot take it). */
+      React.useEffect(function () {
+        if (open || !restoreFocusRef.current) return
+        restoreFocusRef.current = false
+        const chip = chipRef.current
+        if (chip && typeof chip.focus === 'function') chip.focus()
+      }, [open])
+
+      /** Escape and outside clicks close the menu and return focus to the chip. */
+      React.useEffect(function () {
+        if (!open) return undefined
+        function handlePointer(event) {
+          const root = rootRef.current
+          if (root && event.target instanceof Node && root.contains(event.target)) return
+          closeMenu(true)
+        }
+        function handleKey(event) {
+          if (event.key === 'Escape') {
+            event.stopPropagation()
+            closeMenu(true)
+          }
+        }
+        document.addEventListener('mousedown', handlePointer, true)
+        document.addEventListener('keydown', handleKey, true)
+        return function () {
+          document.removeEventListener('mousedown', handlePointer, true)
+          document.removeEventListener('keydown', handleKey, true)
+        }
+      }, [open, closeMenu])
+
+      /**
+       * The hero row sits low in the viewport: open below-left when it fits and
+       * flip above when there is more room there, so no candidate is clipped.
+       */
+      React.useEffect(function () {
+        if (!open) return
+        const root = rootRef.current
+        const menu = menuRef.current
+        if (!root || !menu) return
+        const rect = root.getBoundingClientRect()
+        const viewport = typeof window !== 'undefined' && window.innerHeight ? window.innerHeight : 900
+        const spaceBelow = viewport - rect.bottom - 12
+        const spaceAbove = rect.top - 12
+        const wanted = menu.offsetHeight || 0
+        const placement = wanted > spaceBelow && spaceAbove > spaceBelow ? 'above' : 'below'
+        const space = placement === 'above' ? spaceAbove : spaceBelow
+        const maxHeight = Math.max(180, Math.min(360, space))
+        setMenuLayout(function (current) {
+          if (current.placement === placement && current.maxHeight === maxHeight) return current
+          return { placement: placement, maxHeight: maxHeight }
+        })
+      }, [open, state.phase, state.candidates.length, error])
+
+      /** POST the pick (or clear); errors keep the menu open with the message. */
+      function selectTarget(target) {
+        if (pending) return
+        setPending(target === null ? '__generic' : target)
+        setError('')
+        api.selectOrchestrator(target).then(function (payload) {
+          setState({ phase: 'ready', bit: payload.bit, candidates: payload.candidates, error: '' })
+          setPending('')
+          closeMenu(true)
+        }).catch(function (failure) {
+          setPending('')
+          const message = describeError(failure)
+          setError(message === 'Unexpected error' ? t('modeBitSelectionFailed') : message)
+        })
+      }
+
+      if (!active || state.phase === 'unavailable') return null
+
+      const selected = state.bit
+      const label = selected && selected.name ? selected.name : t('modeBitChipEmpty')
+
+      /** One candidate row: 32px avatar, name, two-line summary, check when selected. */
+      function renderCandidate(candidate) {
+        const checked = !!selected && (selected.id === candidate.id || selected.target === candidate.target)
+        return h('button', {
+          key: candidate.id,
+          type: 'button',
+          role: 'menuitemradio',
+          className: 'dsh-bots-mode-item',
+          'aria-checked': checked ? 'true' : 'false',
+          disabled: !!pending,
+          'data-target': candidate.target,
+          title: candidate.summary || candidate.name,
+          onClick: function () { selectTarget(candidate.target) },
+        },
+          h(BitAvatar, { bit: candidate, size: 32, eager: true }),
+          h('span', { className: 'dsh-bots-mode-item-body' },
+            h('span', { className: 'dsh-bots-mode-item-name' }, candidate.name),
+            candidate.summary ? h('span', { className: 'dsh-bots-mode-item-summary' }, candidate.summary) : null),
+          checked ? h('span', { className: 'dsh-bots-mode-item-check' }, h(CheckIcon, { size: 14 })) : null
+        )
+      }
+
+      const menuChildren = [h('div', { key: 'label', className: 'dsh-bots-mode-menu-label' }, t('modeBitMenuLabel'))]
+      if (error) menuChildren.push(h('p', { key: 'select-error', className: 'dsh-bots-mode-state dsh-bots-mode-state-error', role: 'alert' }, error))
+      if (state.phase === 'loading') {
+        menuChildren.push(h('div', { key: 'loading', className: 'dsh-bots-mode-state', role: 'status' }, t('modeBitLoading')))
+      } else if (state.phase === 'error') {
+        menuChildren.push(h('div', { key: 'load-error', className: 'dsh-bots-mode-state dsh-bots-mode-state-error', role: 'alert' },
+          h('span', null, t('modeBitError') + (state.error ? ' ' + state.error : '')),
+          h('button', { type: 'button', className: 'dsh-bots-mode-retry', onClick: function () { load() } }, t('retry'))))
+      } else if (state.phase === 'ready') {
+        menuChildren.push(h('button', {
+          key: 'generic',
+          type: 'button',
+          role: 'menuitemradio',
+          className: 'dsh-bots-mode-item',
+          'aria-checked': selected ? 'false' : 'true',
+          disabled: !!pending,
+          'data-generic': 'true',
+          title: t('modeBitGenericHint'),
+          onClick: function () { selectTarget(null) },
+        },
+          h(BitAvatar, { bit: MODE_BIT_GENERIC_AVATAR, size: 32, eager: true }),
+          h('span', { className: 'dsh-bots-mode-item-body' },
+            h('span', { className: 'dsh-bots-mode-item-name' }, t('modeBitGenericName')),
+            h('span', { className: 'dsh-bots-mode-item-summary' }, t('modeBitGenericHint'))),
+          selected ? null : h('span', { className: 'dsh-bots-mode-item-check' }, h(CheckIcon, { size: 14 }))
+        ))
+        if (state.candidates.length === 0) {
+          menuChildren.push(h('div', { key: 'empty', className: 'dsh-bots-mode-state' }, t('modeBitEmpty')))
+        } else {
+          state.candidates.forEach(function (candidate) { menuChildren.push(renderCandidate(candidate)) })
+        }
+      }
+
+      return h('span', { className: 'dsh-bots-mode-root', ref: rootRef, 'data-bots-mode-phase': state.phase },
+        h('style', { key: 'dsh-bots-mode-styles' }, MODE_BIT_STYLES),
+        h('button', {
+          ref: chipRef,
+          type: 'button',
+          className: 'dsh-bots-mode-chip',
+          'aria-haspopup': 'menu',
+          'aria-expanded': open ? 'true' : 'false',
+          'aria-label': t('modeBitHint'),
+          title: t('modeBitHint'),
+          disabled: !!pending,
+          onClick: function () { if (open) closeMenu(true); else setOpen(true) },
+        },
+          selected
+            ? h(BitAvatar, { bit: selected, size: 18, eager: true })
+            : h(BitAvatar, { bit: MODE_BIT_GENERIC_AVATAR, size: 18, eager: true }),
+          h('span', { className: 'dsh-bots-mode-chip-label' }, pending ? t('modeBitSaving') : label),
+          h('span', { className: 'dsh-bots-mode-chevron', 'aria-hidden': 'true' }, h(ChevronDownIcon, { size: 12 }))
+        ),
+        open ? h('div', {
+          ref: menuRef,
+          className: 'dsh-bots-mode-menu' + (menuLayout.placement === 'above' ? ' dsh-bots-mode-menu-above' : ''),
+          role: 'menu',
+          'aria-label': t('modeBitMenuLabel'),
+          'aria-busy': pending ? 'true' : undefined,
+          style: { maxHeight: menuLayout.maxHeight },
+        }, menuChildren) : null
+      )
+    }
+
+    /* ------------------------------------------------------------------ */
     /* Plugin module                                                      */
     /* ------------------------------------------------------------------ */
 
@@ -6926,7 +7266,7 @@ window.__ModuleLoader__.load({
     }
 
     /** Services the registrations need; `uiWorkspace` opens a started mission. */
-    const inject = ['slots', 'locale', 'layout', 'uiWorkspace']
+    const inject = ['slots', 'locale', 'layout', 'uiWorkspace', 'sessions']
 
     /**
      * Register the sidebar entry and the main page.
@@ -6969,6 +7309,37 @@ window.__ModuleLoader__.load({
           label: function () { return t('panel') },
         }, BotsGlyph)
       })
+
+      // Bit mode seat: the orchestrating-bit picker beside the mode chip. It is
+      // registered only when the session store is available (the chip reads the
+      // preset from `ctx.sessions.list`); otherwise the Bits page keeps working.
+      let sessionsList = null
+      try {
+        sessionsList = ctx.sessions && ctx.sessions.list ? ctx.sessions.list : null
+      } catch (error) {
+        sessionsList = null
+      }
+      if (sessionsList) {
+        try {
+          ctx.slots.inject('conversation.hero.options', function () {
+            return ctx.slots.register({
+              name: 'conversation.hero.options',
+              id: 'bots-mode-bit',
+              order: 10,
+              locale: NS,
+              inject: function (sessionId) {
+                return {
+                  hooks: { sessions: sessionsList },
+                  t: t,
+                  sessionId: sessionId,
+                }
+              },
+            }, ModeBitSeat)
+          })
+        } catch (error) {
+          // An older Host without the hero options slot: keep the page working.
+        }
+      }
     }
 
     return { inject: inject, apply: apply }

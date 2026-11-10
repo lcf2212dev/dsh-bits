@@ -949,3 +949,413 @@ Final verification after the fixes (Lead): `node test/teams.test.mjs` →
 the fixed code paths are covered by the updated tests. The installed desktop profile was
 remounted with the final v5 host plugin (`include:bots` disable/enable) after the review,
 with the live data already migrated on first load.
+
+
+# Independent review — Bits Orchestrator chat preset (2026-11-10)
+
+Fresh-eyes, read-only review of the Bits Orchestrator chat-preset increment (working tree at
+HEAD `5b17dea`, feature still uncommitted), written by the verifier teammate who wrote none of
+it. Audited against `/tmp/bits-orchestrator/PLAN.md` (the Lead's contract), the recon report and
+spike evidence in `/tmp/bits-orchestrator/`, and the final source itself; no teammate report was
+taken on trust. The only file this verifier wrote is this section. No commit/push, no
+source/test/doc/profile edit, no touch of the real `~/.dsh` or the running app: every proof
+below boots its **own** throwaway `DSH_HOME` under `/tmp` and removes it, and the helper scripts
+live in `/tmp/orch-verify/` (not in the repo).
+
+Scope exercised: new `host/orchestrator.js` (556 lines); diffs of `host/team-runtime.js` (+4),
+`index.js` (+20), `cordis.patch.yml` (+137), `test/team-runtime.test.mjs` (+15),
+`test/e2e-web.mjs` (+151/-13), `README.md` (+67), `V5-CONTRACT.md` (+227); new
+`test/orchestrator.test.mjs` (395 lines); the installed DSH app `0.2.2-rc.1` APIs the runtime
+relies on.
+
+**Verdict: SHIP — 0 BLOCKER, 0 MAJOR, 1 MINOR, 4 NIT.** None blocks shipping; the MINOR is a
+maintenance risk in the preset child-list copy, not a defect in the shipped behaviour.
+
+## Rerun results (exact, re-run by this review)
+
+| Command | Result |
+|---|---|
+| `node test/store.test.mjs` | **PASS** — `store: 33 tests passed`, exit 0 |
+| `node test/catalog.test.mjs` | **PASS** — `catalog: 16 tests passed`, exit 0 |
+| `node test/routes.test.mjs` | **PASS** — `routes: 36 tests passed`, exit 0 |
+| `node test/teams.test.mjs` | **PASS** — `teams: 46 tests passed`, exit 0 |
+| `node test/projects.test.mjs` | **PASS** — `projects: 31 tests passed`, exit 0 |
+| `node test/harness.test.mjs` | **PASS** — `harness: 9 tests passed`, exit 0 |
+| `node test/bit-runtime.test.mjs` | **PASS** — `bit-runtime: 13 tests passed`, exit 0 |
+| `node test/team-runtime.test.mjs` | **PASS** — `team-runtime: 17 tests passed`, exit 0 (16 + the new preset-session test) |
+| `node test/orchestrator.test.mjs` | **PASS** — `orchestrator: 9 tests passed`, exit 0 |
+| `node test/e2e-web.mjs` | **PASS** — `E2E PASS`, exit 0, **10/10 sections**, throwaway profile removed by its cleanup; section 10 printed `roster: standard, ptc, minimal, cordis, bits-orchestrator`, `session … created with agentPreset=bits-orchestrator`, `installed=[session-…:bit_delegate]` |
+| `node --check` on `index.js`, `host/orchestrator.js`, `host/team-runtime.js`, `test/orchestrator.test.mjs`, `test/team-runtime.test.mjs`, `test/e2e-web.mjs` | **PASS** — all 6 parse |
+| JSON parse of `bits/catalog.json` + `package.json` | **PASS** — 52 bits, 7 groups, 4 orchestrators |
+| `/tmp/orch-verify/validate-yaml.mjs` (app's own `loadOverlayPatches` + `composeEntries`, installed `standard.patch.yml`) | **PASS** — bundle patch parses; `bots` row id/name/config unchanged; preset `id/name/order/isDefault` correct; `config.plugins` **deep-equal** to the installed `preset-standard` child list (22 top-level entries, 3 `!!js` expressions: `process.platform === 'win32'`, `process.platform !== 'win32'`, `!ctx.get('profileContext')`); composition over `[base, web-app, bundle]` yields 194 entries including both rows |
+| `/tmp/orch-verify/fresh-profile.mjs` (verifier's own fresh profile, not the repo e2e) | **PASS** — see item 2 below |
+| `/tmp/orch-verify/fresh-team-separation.mjs` (real host, throwaway profile) | **PASS** — a normal chat in a `bindWorkspace` team directory becomes the team lead (positive control) while a `bits-orchestrator` chat in the same directory only gets `bit_delegate` (item 3) |
+| `/tmp/orch-verify/adversarial.mjs` (verifier's fake-host probes, real `BitStore`/catalog/`installTeamRuntime`) | **PASS** — 21/21 probes |
+| `/tmp/orch-verify/duplicate-preset.mjs` (second same-id preset row in the profile patch) | **PASS** — host still boots; exactly one healthy `bits-orchestrator` (the bundle row); the duplicate row is rejected with `Duplicate agent preset: bits-orchestrator` in the boot log |
+| `git diff --check` / `git status --porcelain` | **PASS** — no whitespace errors; only the 7 expected modified + 2 expected new paths (no scope creep, no stray artifacts) |
+
+All counts match the contract exactly (33/16/36/46/31/9/13/17/9, e2e 10/10); e2e was run twice end-to-end
+during the review, green each time, and its cleanup removed its temporary profile.
+
+## Independent verification (by checklist item)
+
+### 1. Rerun of every suite, syntax and the preset declaration
+
+- Every command in the table ran in this session; no test was skipped or filtered. `team-runtime`
+  is 17 because of the additive preset test; `orchestrator` is the new suite. Both new files pass
+  `node --check`.
+- `cordis.patch.yml` was parsed with the **DSH app's own loader schema** (not a plain YAML
+  library), so the `!!js` nodes were parsed exactly as boot parses them, and the bundle patch was
+  applied with the app's own `composeEntries` over `[dsh-base, dsh-web-app, dsh-bots]` — both
+  rows mount. The preset child list is semantically identical to the installed
+  `@deepseek-ai/dsh-web-app/presets/standard.patch.yml` (22 entries; the 4 `disabled` values
+  compare equal, including the 3 parsed `{ "__jsExpr": … }` nodes), and the `bots` row's
+  id/name/config are unchanged from `HEAD`.
+- The app's installed `standard.patch.yml` child count is **exactly** the 22 rows the preset
+  declares; the README/V5 claim "48 worker entries" matches `bits/catalog.json` (52 − 4
+  orchestrators).
+
+### 2. Fresh-profile proof from the verifier's own script (`/tmp/orch-verify/fresh-profile.mjs`)
+
+Built a new throwaway `DSH_HOME`, a profile with `@deepseek-ai/dsh-base` +
+`@deepseek-ai/dsh-web-app` + the working-tree bundle (`file:` dep), `pnpm install` with the
+installation's own runtime node/pnpm, booted the real web host (`dsh --profile … --no-open
+--port <free>`), authenticated with the launch token, and asserted over the authenticated HTTP
+bridge:
+
+- `agentPresets/list` (`args {}`): roster `standard, ptc, minimal, cordis, bits-orchestrator`,
+  orders exactly `[1,2,3,4,5]` and sorted; `bits-orchestrator` has name **Bits Orchestrator**,
+  order **5**, `isDefault: false`, no `broken` field, and the description is **byte-exact** to
+  the intended text; `standard` is still `isDefault: true`; **no** preset in the roster is
+  broken.
+- Control: `session/create` **without** `agentPreset` still records `standard` (the profile
+  default was not changed).
+- `session/create` with `agentPreset: 'bits-orchestrator'` returns
+  `{ sessionId: 'session-…', agentPreset: 'bits-orchestrator' }`; `session/list` (`args
+  {"_request":{}}`) projects `projections.values.agentPreset === 'bits-orchestrator'` for that
+  session; `session/prompt` (`mode: 'queue'`) returns `accepted: true`.
+- `GET /api/bots.diagnostics`: `orchestrator.presetId === 'bits-orchestrator'`,
+  `installed === [{ sessionId, tools: ['bit_delegate'] }]` for **that** session, `errors: []`,
+  `notes: []`; the standard control session is **not** instrumented. The reported `sessionId`
+  equals the `session/create` id (diagnostics identity: DSH enforces
+  `agent.id === agent.session.id` in `@deepseek-ai/dsh-agent/lib/index.js:643`, and the live host
+  observation confirms it).
+- Independently re-read the profile-**installed** `cordis.patch.yml` and compared its preset
+  `config.plugins` to the installed `standard.patch.yml`: deep-equal, 22 entries, 3 `!!js`.
+- Isolation: the session persisted only under the throwaway `$DSH_HOME`; no `verify-orch`
+  profile under real `~/.dsh/profiles`; no session of this run under real `~/.dsh/sessions`; the
+  real `~/.dsh` top-level metadata snapshot was unchanged. All temp homes/sessions removed.
+
+### 3. Adversarial probes (`/tmp/orch-verify/adversarial.mjs`, 21/21 PASS; plus the real-host team proof)
+
+Using the exported `presetIdOfSession`/`isOrchestratorSession`/`installOrchestrator`/
+`installTeamRuntime`, the real `BitStore` and the real catalog (fake host whose `agent/created`
+dispatch is **serial and awaited, rejecting on listener rejection**, like `agents.announce`):
+
+- **Detection:** trimmed header preset only; non-string/blank/other presets → null; exact
+  `bits-orchestrator` id only (not `Bits-Orchestrator`, not `bits-orchestrator-2`).
+- **Installation:** already-live agents are swept at install; standard/no-preset agents get no
+  section/tool; duplicate `agent/created` events do not double-register; `agent/disposed`
+  removes the section and the tool; `dispose()` clears all installed agents, is idempotent, and
+  a post-dispose `agent/created` is inert.
+- **Prompt:** role text, "the chat's model and effort are the user's — this mode never changes
+  them", `bit_delegate({ bit, task, read_only })`, one-shot semantics, `read_only` default
+  `true`, parallel calls, auto-provision/reuse, the roster shows **exactly the 48 worker
+  characters** with each one's catalog `model · effort`, the 4 orchestrator characters are
+  excluded from the roster, and group headings are unique; the section has name
+  `bits:orchestrator`, order `700`, `interpolate: false`, and stable text.
+- **Delegation:** existing bit by id and by trimmed/case-insensitive name → the runtime receives
+  that bit, the session cwd, the exec signal identity, `readOnly: true` by default and `false`
+  when forwarded; `exec.agent` (tool run in another agent scope) wins for the cwd over the
+  captured agent; cwd falls back to `session.header.cwd` when
+  `workingDirectory.get` throws. Result header is
+  `[<bit> · <backend>/<model> · <effort>]` in all shapes (claude-code short alias, dsh
+  provider/model, no-effort omitted, empty text placeholder) and mirrors
+  `resultRouteText` in `host/team-runtime.js`. `presentCall` titles resolve cheaply and fall
+  back to `Bit delegate`.
+- **Catalog auto-provisioning:** delegating to `Scout`/`bit-scout`/`sCoUt` creates exactly one
+  bit whose `name/emoji/color/instructions` are the catalog's and whose `model`/`effort` are the
+  catalog preset values (passed explicitly); later delegations by name and id reuse it; **6
+  concurrent mixed name/id calls create exactly one bit** and all invocations use that bit; a
+  deleted/edited model/effort stays as the user edited it (no overwrite); an existing bit by
+  name wins over the catalog (no duplicate created).
+- **Refusals:** all 4 orchestrator catalog characters (by name and id) and any bit with
+  `isOrchestrator: true` (by id, name and whitespace/case variants) are refused with coded
+  `BIT_IS_ORCHESTRATOR` and **create nothing**; unknown target → coded `BIT_UNKNOWN` with
+  suggestions; empty `bit`/`task` → `BIT_DELEGATE_INVALID` and never reaches the runtime; missing
+  `bitRuntime` (and missing bits store when provisioning) → `BIT_DELEGATE_UNAVAILABLE`.
+- **Cancellation:** the exec signal is forwarded to `invokeWorker`; an aborted invocation's
+  original error propagates unchanged (not swallowed, not recoded); a non-aborted coded failure
+  keeps its code, an uncoded one is wrapped as `BIT_RUN_FAILED`.
+- **Diagnostics/dispose:** exact shape `{presetId, installed:[{sessionId, tools}], errors,
+  notes}`, timestamped errors/notes, ambiguous-name note is capped (≤20) while the
+  first-in-store-order bit is used, `installed` lists only instrumented orchestrator sessions.
+- **Hook safety:** with an agent whose `systemPrompt.section` **and** `tools.register` both
+  throw, and an agent whose header `agentPreset` getter throws, the awaited serial
+  `agent/created` dispatch **resolved** (never rejected); failures landed in
+  `diagnostics().errors`; a partial install (tool only) is still reported; a throwing
+  `ctx.agents.list()` sweep is reported and does not break later installs.
+- **No model/effort override:** a Proxy on the chat's `session`/`header` and a spy on
+  `agent.model.select` recorded **zero** writes/selection calls during install and a real
+  delegation; a source scan of `host/orchestrator.js`/`index.js` finds no
+  `model.select`/`setModel`/`modelSelection`/`reasoningEffort`/session-or-header model/effort/
+  preset write; the ONLY `agent.model.select` in the plugin is the pre-existing
+  `startMission` team-lead route path (`host/team-runtime.js:806`), which a preset session can
+  never reach because `resolve()` returns `null` before any binding lookup; the preset id is
+  read/compared only, never written.
+- **Team separation (real host, `/tmp/orch-verify/fresh-team-separation.mjs`):** created a real
+  bit + `bindWorkspace` team in a throwaway profile, then created a **normal** session with cwd
+  inside the team repo → `/api/bots.diagnostics.agents` installs it as `role: 'lead'`
+  (positive control); created a **preset** session with the same cwd → it appears under
+  `orchestrator.installed` with `bit_delegate` and is **absent** from the team agents (no team
+  prompt, no `team_delegate`, no binding); a chat outside the dir is not a team agent either.
+  The fake-host probe additionally asserts `runtime.bindings.get(presetSession) === undefined`
+  and no restrictions/`team_delegate`/team section on the preset agent, while the normal
+  session in the same directory gets all three.
+- **Duplicate preset declaration:** a profile patch declaring a second
+  `@deepseek-ai/dsh-agent-preset` row with `config.id: bits-orchestrator` does **not** break the
+  host: the web host boots, the roster has exactly one healthy `bits-orchestrator` (the bundle
+  row), and DSH rejects the duplicate row (`Duplicate agent preset: bits-orchestrator` in the
+  boot log). No plugin-side guard is needed because the bundle ships exactly one row.
+
+### 4. Docs accuracy and English-only
+
+- `README.md` "Chats in orchestrator mode" (`README.md:133`) matches the implementation on every
+  checkable point: selectable and not the default; standard-child-list chat plus the
+  orchestrator prompt and `bit_delegate`; the chat's own model/effort are never pinned; one-shot
+  workers in the chat's cwd; `read_only` default `true` / `false` for edits and commands;
+  parallel calls; first-use creation from the catalog preset and later reuse with the user's
+  edits; the four orchestrator characters and any orchestrator bit refused; never a team lead;
+  created bits stay normal bits. The "Settings → presets" / new-session picker wording matches
+  the installed UI packages (`dsh-client-ui-agent-preset` renders "Agent presets" in Settings
+  and the per-session preset picker).
+- `V5-CONTRACT.md` §12 (`V5-CONTRACT.md:551`) matches the code: preset id/row id/order/standard
+  child-list copy rationale and version pin; header-only detection and the sweep; prompt section
+  name/order/`interpolate: false`; tool parameter table/defaults; resolution order
+  id → name → catalog → `BIT_UNKNOWN`; catalog reuse/creation with explicit preset model/effort
+  and the in-flight dedupe; `BIT_IS_ORCHESTRATOR`; cwd chain; result header mirroring team
+  delegation; `BIT_DELEGATE_INVALID`/`BIT_DELEGATE_UNAVAILABLE`; `agent/disposed`/`dispose` and
+  the diagnostics payload; team-mode separation; the three test layers; the files table; and
+  the claim that this extends v5 (new §12 after §11).
+- English-only: a grep for accented Latin characters and common Portuguese words over every
+  changed file found **none**; the only non-ASCII character in the changed files is a
+  pre-existing `256×256` README line that is not part of the diff. No Portuguese in code,
+  comments, prompt text, tests or docs.
+
+### 5. Quality, scope and regression review
+
+- Existing behaviour: the 9 pre-existing suites and the 9 pre-existing e2e sections are green;
+  `host/team-runtime.js` changes are exactly the import + two comment lines + the `resolve()`
+  early return, with no other behaviour change; `bots` row untouched; no dependency/version/
+  client/route changes beyond the documented diagnostics key.
+- No regression in normal chats: the runtime only acts on sessions whose header records
+  `bits-orchestrator`; a preset-less session (standard) is not instrumented (verified in both
+  the fresh profile and the unit probes), and the standard preset roster/default are unchanged.
+- Diagnostics identity is correct (`agent.id` is the session id in DSH); the e2e observes the
+  same id it created.
+- Live-profile interaction: the feature's only runtime write path is the existing
+  `bits.log`; under a throwaway `DSH_HOME` nothing outside it was written. This was verified by
+  the ownership snapshot (real `~/.dsh` metadata unchanged) and by the absence of the run's
+  profile/session under the real home.
+- Worktree hygiene: `git status` shows only the expected 7 modified + 2 new files; no test
+  artifacts, screenshots, logs or temp files were left in the repo; `git diff --check` clean.
+
+## Findings
+
+**0 BLOCKER, 0 MAJOR, 1 MINOR, 4 NIT. None blocks shipping.**
+
+### F1. MINOR — the preset's standard child-list copy silently drifts on a DSH upgrade — `cordis.patch.yml:4-6`, `V5-CONTRACT.md:586-600`
+`config.plugins` is a verbatim copy of the 22 children of the installed
+`@deepseek-ai/dsh-web-app/presets/standard.patch.yml` for DSH **0.2.2-rc.1** (header pins the
+version). That copy is currently exactly equal (verified with the app's own YAML loader), and
+the 22 child names all exist in this installation. The risk is future-facing: when a DSH
+upgrade changes the standard preset (adds/removes/renames child plugins, or changes a `!!js`
+condition), the Bits Orchestrator mode keeps the old list. A *stale* list still boots and the
+roster stays healthy, so no existing test catches it (the repo e2e only asserts the preset is
+not `broken`); the mode would silently lag the standard chat. If an upgrade instead removes a
+child package the preset references, that child row fails and DSH marks the preset `broken`,
+which the e2e *would* catch. Repro: on a scratch copy of the repo, append a no-op child row to a
+scratch copy of the installed `standard.patch.yml` and boot a throwaway profile with the
+current bundle: the roster is unchanged and no test fails. Mitigation: keep the header's version
+pin as the refresh trigger (already done) and consider a release-checklist item or an e2e
+assertion that compares the preset row against the installed standard patch with the app's
+loader; do not ship a stale copy blindly. **Does not block shipping** — the current copy is
+verified correct for the installed app.
+
+### F2. NIT — the README comparison table overstates "Team tools: None: only `bit_delegate`" — `README.md:171`, `host/team-runtime.js:966-970`
+A `bits-orchestrator` session is correctly excluded from the team runtime, but the plugin's
+pre-existing **global** `team_send` tool remains visible to it when the profile has any runnable
+team: its visibility predicate is `if (!agent || resolve(agent)) return false; for (const team
+of teamMap().values()) if (team.lead && team.workspaceDir) return true`, and
+`resolve(presetAgent)` is `null`, so the predicate is satisfied exactly as for any other
+non-team chat. That is consistent with "normal chat" behaviour and is not a team binding (no
+team prompt/`team_delegate`), but the table row can be read as "only `bit_delegate` exists".
+Suggested wording: the chat gets no team-mode tools (`team_delegate`/`team_handoff`); the
+global `team_send` handoff stays available like in any non-team chat. No code change needed.
+
+### F3. NIT — `V5-CONTRACT.md` §12.4 documents `isConcurrencySafe: true`, the code (and the DSH tool type) uses a function — `V5-CONTRACT.md:695`, `host/orchestrator.js:440`
+The installed DSH tool contract is `isConcurrencySafe?(args: unknown): boolean`
+(`@deepseek-ai/dsh-tools/lib/index.js:354`, and the installed `api-catalog` type text), and the
+implementation — like `host/team-runtime.js:508` — uses `isConcurrencySafe: () => true`, which is
+correct (`orchestrator.test.mjs` calls it as a function). The contract's `isConcurrencySafe:
+true` is shorthand that a future implementer could copy literally; say
+`isConcurrencySafe: () => true`. Behaviour is correct today.
+
+### F4. NIT — new unit tests do not cover the error-containment path nor a few contract edges the docs promise — `test/orchestrator.test.mjs` (395 lines, 9 tests; `test/team-runtime.test.mjs:617`)
+The suite covers the core contract well, but it does not cover: (a) the "`agent/created` never
+throws" rule — no test injects a failing `systemPrompt.section`/`tools.register` (the failure
+containment and `diagnostics().errors` path is exercised only by this reviewer's probe);
+(b) the cwd fallback chain (`workingDirectory.get` throwing → header cwd → `process.cwd()`);
+(c) cancellation forwarding/aborted-error passthrough; (d) the duplicated-name note and its cap;
+(e) `presentCall`; (f) the team test has no positive control in the same test (a normal session
+in the same directory resolving as lead) — the suite covers binding elsewhere, so the negative
+assertion is not vacuous overall, but a same-test control would make it self-proving. Suggested
+additive tests; none of these is a behaviour defect.
+
+### F5. NIT — e2e section 10 has no "standard chat is not instrumented" control and no preset-order assertion — `test/e2e-web.mjs:810-902`
+The new section verifies roster/health/default, `session/create`/`session/prompt` and the
+`orchestrator.installed` entry, all correct. It does not assert that the preset's `order` is 5,
+nor create a preset-less session to prove it is absent from `orchestrator.installed`; this
+review's fresh-profile script covered both. Low risk (the unit suite and the roster assertions
+cover the default), but a control session costs two extra lines and makes the section prove the
+"other sessions untouched" claim end-to-end. No behaviour defect.
+
+## Residual risks
+
+- **DSH-upgrade drift of the preset child list** (F1): acceptable for the pinned
+  `0.2.2-rc.1` installation; needs a refresh deliberately when the app's `standard` preset
+  changes. The header comment names the origin and version, which is the right trigger.
+- **Live-profile/recomposition timing:** the preset row is a *bundle patch* row, so it exists
+  only after the profile is composed with the new bundle. The repo e2e and this review boot a
+  fresh profile; in a running app the plugin-manager install either recomposes live (HMR) or
+  reports that a restart is required. The README does not mention a possible restart; if the
+  product wants to promise "install and it is immediately there", add that sentence/verify on a
+  profile without HMR.
+- **Duplicate preset declaration:** the bundle ships exactly one row; a *profile* that declares
+  a second row with the same preset id is rejected by DSH (host still boots, first row wins —
+  verified). Conversely, saving the preset from the Settings editor writes its definition by row
+  id into the profile patch, which (per the recon report, not re-tested here) can override the
+  shipped child list; users who edit the preset can therefore diverge from the standard chat
+  layout. Not a defect, but do not promise in docs that UI edits keep the shipped child list.
+- **Concurrent provisioning dedupe is per plugin instance** (`creating` map in
+  `host/orchestrator.js:200`): two live instances during an HMR reload could each provision the
+  same catalog character if a delegation runs exactly in that window. Very narrow; the single-
+  instance path is deduped and verified under 6 concurrent calls.
+- **No regression test for the "never selects the chat model/effort" invariant**: the guarantee
+  holds by absence of selection calls (verified by source scan + runtime spy in this review).
+  A future change could reintroduce a `model.select` in the orchestrator runtime without any
+  repo test failing; the source-scan probe in `/tmp/orch-verify/adversarial.mjs` is the only
+  thing that would catch it. Consider folding that grep into a repo test if the invariant is
+  considered load-bearing.
+- **Read-only default is a policy, not a sandbox for DSH-route workers:** `read_only: true` is
+  forwarded to the worker runtime, and the subscription backend maps it to plan mode
+  (`bit-runtime.js` + claude-delegate), but a DSH chat-route worker still runs one model call
+  with no tools; if a future DSH worker backend gains tools, the default must be re-checked.
+  Existing v5 behaviour, unchanged by this increment.
+
+---
+
+## Lead addendum (post-review hardening, Bits Orchestrator chat preset)
+
+The Lead applied the cheap, non-behavioural items from the review above after the sign-off:
+
+- **F1 (fixed)** — `test/e2e-web.mjs` section 10 now parses the repo bundle patch and the
+  installed `@deepseek-ai/dsh-web-app/presets/standard.patch.yml` with the app's own
+  `loadOverlayPatches` and `assert.deepEqual`s the preset `config.plugins` (22 children,
+  3 `!!js` expression nodes), so a DSH upgrade that changes the standard preset fails the
+  suite instead of silently drifting; the `bots` row id/name/config and the preset row
+  id/plugin/order 5 are pinned in the same guard.
+- **F2 (fixed in `README.md`)** — the comparison table now says the chat gets no
+  `team_delegate`/`team_handoff` while the global `team_send` stays visible as in any
+  non-team chat; the section also states that an install/update appears when the profile
+  recomposes (HMR) or after an app restart.
+- **F3 (fixed in `V5-CONTRACT.md`)** — §12.4 says `isConcurrencySafe: () => true` (a function,
+  as the installed DSH tool contract requires).
+- **F4 (fixed in the tests)** — `test/orchestrator.test.mjs` is now 13 tests: the awaited
+  `agent/created` hook cannot throw (section/tool/header failures land in `errors`, partial
+  installs stay listed), the cwd fallback chain, cancellation/error pass-through, duplicate
+  name notes and their cap, and `presentCall`. The team-runtime preset test gained its
+  positive control (a normal session in the same `bindWorkspace` directory resolves as lead).
+- **F5 (fixed)** — e2e section 10 asserts the preset `order` and, as a control, creates a
+  preset-less session that must not appear in `orchestrator.installed`.
+
+Final verification after the addendum (Lead): all 9 suites → **214 tests passed** (store 33,
+catalog 16, routes 36, teams 46, projects 31, harness 9, bit-runtime 13, team-runtime 17,
+orchestrator 13), `node --check` on every changed JS file, and `node test/e2e-web.mjs` →
+**E2E PASS 10/10, exit 0** (drift guard, preset session and standard control green). Nothing
+committed or pushed. The live desktop profile was recomposed with the final bundle
+(`include:bots` toggle, then the profile patch restored to its original bytes); the live
+composition now lists the `preset-bits-orchestrator` row and the profile patch hash is back to
+its pre-change value.
+
+---
+
+## Lead addendum — Bit mode increment (v5.2)
+
+User request (after v5.1 shipped): rename the chat mode **Bits Orchestrator** → **Bit mode**, and,
+while that mode is the chosen preset of a new session, add a selector beside the mode chip to pick
+**which bit orchestrates** the chat, showing each candidate's image, name and short English
+description.
+
+### What changed
+
+| Area | Change |
+|---|---|
+| `cordis.patch.yml` | preset display name `Bit mode` (id stays `bits-orchestrator`; description unchanged) |
+| `host/orchestrator-selection.js` (new) | durable global preference `<botsRoot>/orchestrator.json` (`{version:1,bitId}`, atomic 0600); candidates = existing orchestrator bits + catalog orchestrator characters without a bit (worker characters excluded, cap 50); selecting a catalog character provisions the bit through `bits.create` with catalog defaults; worker targets refused `BIT_NOT_ORCHESTRATOR`, unknown `BIT_UNKNOWN`; `select(null)` clears |
+| `host/orchestrator.js` | prompt heading renamed; section text is now a per-turn function `buildPromptText(catalog, selection.currentBit())`; with a bit it inserts `## Orchestrating bit: <name>` + catalog summary + the bit's instructions after the intro; generic text unchanged; model/effort still never touched |
+| `host/routes.js` | one exact route `/api/bots.orchestrator` with `GET` (read) and `POST { target }` (select/clear), registered only when `deps.selection` exists; returns `{ bitId, bit, candidates }` |
+| `index.js` | builds/init/disposes the selection store, passes it to the runtime and routes, reports `orchestrator.selection.bitId` in `/api/bots.diagnostics` |
+| `client.js` | `ModeBitSeat` registered in `conversation.hero.options` (list slot next to the single `conversation.hero.agentPreset`); renders only when the blank session's `projectionValues.agentPreset === 'bits-orchestrator'`; chip with mascot/bit avatar + name; menu rows with 32px avatar, name, 2-line summary; generic "No specific bit" first (`target:null`); loading/error/busy states, Escape/outside-click close; own `<style>` (theme-token fallbacks) plus the placement rule `div:has(> [data-slot="conversation.hero.options"]){margin-left:0}` so the chip sits immediately after the mode chip; 404/absent route → chip renders nothing |
+| docs | README "Chats in Bit mode" + selector paragraph; V5-CONTRACT §12 renamed and §13 (v5.2) added |
+
+### Verification (Lead)
+
+- `node --check` on every changed JS file → OK.
+- All **10 unit suites → 232 tests passed** (store 33, catalog 16, routes 36, teams 46, projects 31,
+  harness 9, bit-runtime 13, team-runtime 17, orchestrator 17, orchestrator-selection 14).
+- `node test/e2e-web.mjs` → **E2E PASS 11/11, exit 0**: preset roster names `bits-orchestrator`
+  `Bit mode` (healthy, not default, order 5); the drift guard still deep-equals the installed
+  `standard.patch.yml` children; the new section reads the fresh selection (`bitId:null`,
+  candidates include all four orchestrator roles), selects the catalog Manager (provisions the bit
+  with catalog model/effort/instructions, persists, diagnostics reports it), refuses a worker bit
+  (`BIT_NOT_ORCHESTRATOR`) and an unknown target (`BIT_UNKNOWN`), and clears the selection.
+- `node test/visual.mjs --theme dark` and `--theme light` → **VISUAL DONE, exit 0** each: preset
+  menu offers "Bit mode"; the new chip renders right after the mode chip (geometry:
+  preset right 741.56 → chip left 743.56, same centre line, inside the hero row); the menu lists
+  the generic row + App PO + Manager + Coordinator + Sub-coordinator, every candidate with a loaded
+  256px avatar and a non-empty description; picking Coordinator provisions the bit and the chip
+  shows its avatar + name; the Bits page scenario still passes.
+  Screenshots: `test/screenshots/dark-bit-1-mode.png`, `dark-bit-2-menu.png`,
+  `dark-bit-3-selected.png` (+ light equivalents); `dark-1..7` regenerated (the pick provisions one
+  more bit) and light counterparts added.
+- Live desktop profile: the previously appended `preset-bits-orchestrator` override row in
+  `~/.dsh/profiles/desktop/cordis.patch.yml` had its display name updated to `Bit mode` (backup:
+  `cordis.patch.yml.bak-bitmode-20261110-182740`). The profile-patch config watch recomposed the
+  profile; `~/.dsh/bots/bits.log` recorded `plugin loaded` immediately after (2026-11-10T21:27:42Z)
+  with no route/runtime errors, so the new host half (selection store, routes, dynamic prompt) is
+  live. The browser half is served from the linked package; an open page picks the new bundle up on
+  the client HMR graph sync, otherwise a window reload shows the chip.
+
+### Residual risks
+
+- **Global, not per-session, selection:** one preference drives every Bit-mode chat (the chip only
+  exists on the new-session hero, where the mode itself is chosen). Changing it while another
+  Bit-mode chat is mid-conversation changes that chat's persona on its next turn; there is no
+  per-session binding by design (the session header has no room for one).
+- **Hero placement depends on DSH's slot DOM:** the chip is only in `conversation.hero.options` and
+  the after-the-mode-chip placement relies on the child slot wrapper
+  `[data-slot="conversation.hero.options"]` and the `:has()` rule. A DSH upgrade that renames the
+  slot or removes the wrapper needs a small follow-up; the chip simply loses its position (the
+  preset chip and the Bits page keep working).
+- **Preset projection dependency:** the chip's visibility reads
+  `ctx.sessions.list` summaries' `projectionValues.agentPreset`; if a future DSH stops projecting
+  the preset id, the chip disappears (no breakage of the rest of the page).
+- **Persona vs. mode rules:** the selected bit's instructions can ask for behaviour (e.g. team
+  delegation) that Bit mode does not provide; the mode prompt's invariant sections (bit_delegate,
+  worker roster, model/effort untouched) remain authoritative and follow the bit block.
+- **Live override row:** the desktop profile contains a shadow row for the preset id (from v5.1) so
+  the mode is available without a restart. It duplicates the preset's child plugin list; a DSH
+  upgrade should refresh or drop it, exactly as its own comment says.
+- **Legacy evidence:** bits created by the selector are normal records and appear on the Bits page;
+  nothing marks them as "chosen by Bit mode" beyond the `orchestrator.json` preference.

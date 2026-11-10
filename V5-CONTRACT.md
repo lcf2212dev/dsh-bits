@@ -547,3 +547,337 @@ Every worker must run the suites it touches and report the exact commands/result
 
 Never edit another owner's file. Cross-owner needs go through the Lead. Never install,
 enable, disable or modify a DSH profile; never commit to git.
+
+## 12. Chat preset: Bit mode (v5.1, renamed in v5.2)
+
+**This section extends v5**; it is the **v5.1 increment**, not a replacement. Sections 0–11 keep
+their meaning, and a profile that does not install the new preset row behaves exactly as
+documented there. The increment adds an optional **chat agent preset**: a chat created with it
+runs as an orchestrator that delegates self-contained tasks to catalog bits, one-shot, each bit
+with its own preset model and reasoning effort. The preset is selectable, never the default, and
+it never changes the chat session's own model/effort.
+
+### 12.1 Preset declaration (`cordis.patch.yml`)
+
+The bundle patch keeps the `bots` row unchanged and puts both rows in one `insert` list:
+
+```yaml
+- insert:
+    - id: bots
+      name: '@dsh-burn-plugins/dsh-bots'
+      config: {}
+    - id: preset-bits-orchestrator
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: bits-orchestrator
+        name: Bit mode
+        description: "Chat as an orchestrator of Bits: delegates self-contained tasks to catalog bits and applies each bit's preset model and reasoning effort. The chat's own model and effort stay as selected."
+        order: 5
+        plugins:
+          # Verbatim copy of the installed
+          # @deepseek-ai/dsh-web-app/presets/standard.patch.yml config.plugins
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            # …every entry, config value and !!js condition of the installed list…
+```
+
+- Row id `preset-bits-orchestrator`; preset id `bits-orchestrator`; display name
+  `Bit mode`; `order: 5` (the display name; the preset id stays `bits-orchestrator`).
+- `config.plugins` is a **verbatim copy** of the installed
+  `@deepseek-ai/dsh-web-app/presets/standard.patch.yml` child list (every entry, config value
+  and `!!js` condition). An agent preset is defined by the child plugins it declares: keeping
+  the list verbatim makes the mode a **full normal chat** (persona, instructions, tools,
+  skills, plan mode, compaction, subagents) and the runtime adds the orchestration prompt/tool
+  on top. A header comment in the file names the origin and the installed DSH version
+  (`0.2.2-rc.1`) so the copy is refreshed when the app's standard preset changes.
+- The `bots` row keeps its id/name/config; no built-in preset row and no profile default preset
+  is changed. After install the preset appears in `agentPresets/list` healthy (`broken` absent)
+  with `isDefault: false` (a preset-less session still resolves to the profile default, which is
+  `standard` in the installed app), and `session/create` with `agentPreset: bits-orchestrator`
+  records that id on the session (`session.header.agentPreset`).
+
+### 12.2 Runtime (`host/orchestrator.js`)
+
+```js
+export const ORCHESTRATOR_PRESET = 'bits-orchestrator'
+export function presetIdOfSession(session) // session.header.agentPreset trimmed; null when absent/blank
+export function isOrchestratorSession(agent) // presetIdOfSession(agent.session) === ORCHESTRATOR_PRESET
+export function installOrchestrator(ctx, deps) // -> { diagnostics(), dispose() }
+```
+
+- `deps = { bits, catalog, models, bitRuntime, log }` — the live objects already built by
+  `index.js`. `models` is accepted for parity with the other runtimes and is not needed here:
+  the catalog is the one loaded at plugin apply and `bitRuntime` performs the one-shot
+  invocation.
+- **Detection is by the session header only** (`session.header.agentPreset`), never by the
+  working directory or a team binding. Sessions in any other preset are not touched at all.
+- `installOrchestrator` subscribes to `agent/created` and also sweeps `ctx.agents.list()` once at
+  install (guarded try/catch), so agents created before the hook and agents from an HMR reload
+  are covered. Each agent is instrumented once. Per agent it registers:
+  - an agent-scoped system prompt section `bits:orchestrator`, order `700`,
+    `interpolate: false`, with the text built once from the loaded catalog (no file I/O per
+    turn, so it is stable and cache-friendly);
+  - an agent-scoped `bit_delegate` tool through `agent.ctx.tools.register`.
+- `agent/disposed` uninstalls the section and the tool of that agent; `dispose()` removes the
+  remaining ones and the hooks. Errors go to `log` and `diagnostics().errors` (timestamped,
+  capped); the `agent/created` hook never throws out of the plugin.
+- `index.js` installs the runtime right after `createBitRuntime(...)` inside try/catch (an
+  installation failure is logged and does not stop the rest of the plugin), adds its
+  `diagnostics()` to `/api/bots.diagnostics` under `orchestrator`, and calls `dispose()` in the
+  teardown effect.
+
+### 12.3 Prompt section (`bits:orchestrator`)
+
+The text states the mode and its invariants (v5.2 makes the text a function of the selected orchestrating bit, §13.3):
+
+- **Role:** the chat is a Bit-mode orchestrator: it receives the request, decides what to delegate
+  and returns the final answer. The model and reasoning effort of the chat are the ones the
+  user selected — **the mode never changes them**.
+- **Delegation:** `bit_delegate({ bit, task, read_only })` runs **one worker bit, one-shot**
+  (request → response). The worker does not see this chat, so the task must be self-contained
+  (goal and done criteria, workspace, context, files, constraints, return format). Workers run
+  in this chat's working directory and return a text report. `read_only` defaults to `true`;
+  `read_only: false` is for tasks that change files or run commands in the workspace.
+  Independent delegations may be issued in parallel.
+- **Automatic bits:** each catalog character already has a preset model and reasoning effort.
+  Delegating to a catalog name/id creates that bit with its catalog preset when no bit for that
+  character exists; an existing bit for the same character (or same name) is reused with the
+  user's own model/effort edits. Bits can be customized later on the **Bits** page.
+- **Work split:** answer conversation, planning and questions directly; delegate
+  implementation/research/review/execution to the right bits; synthesize their reports; do not
+  delegate trivial replies. Orchestrator catalog characters (Manager, Product Owner,
+  Coordinator, Sub-coordinator) cannot be delegated — the mode itself is the orchestrator, use
+  worker bits.
+- **Roster:** built once from the `bits/catalog.json` object already loaded by the plugin,
+  grouped by catalog group (`### <group label>`), one line per **worker** character, e.g.
+  `- **Builder** (`bit-builder`) — <summary> · preset: subscription/sonnet · high`.
+  The four orchestrator characters are not part of the worker roster (48 worker entries).
+
+### 12.4 Tool `bit_delegate`
+
+A plain tool-definition object in the `delegateTool` style of `host/team-runtime.js` (not
+`defineTool`; no new dependency).
+
+| parameter | type | required | meaning |
+|---|---|---|---|
+| `bit` | string | yes | catalog character name or id (`Builder`, `bit-builder`) or the name/id of an existing bit |
+| `task` | string | yes | self-contained task; the worker never sees this session |
+| `read_only` | boolean | no (default `true`) | `false` lets the bit edit files and run commands in the workspace |
+
+`execute(args, exec)`:
+
+1. Validate `bit` and `task` (non-empty after trimming) with coded `BIT_DELEGATE_INVALID`
+   errors; a missing `bitRuntime` — and a missing bits store when a catalog bit has to be
+   provisioned — is reported as coded `BIT_DELEGATE_UNAVAILABLE`.
+2. Resolve the target, in this order:
+   1. an existing bit by exact id;
+   2. an existing bit by case-insensitive trimmed name (first in store order when duplicated;
+      the ambiguity is only noted in diagnostics);
+   3. a catalog character by exact id or case-insensitive name;
+   4. otherwise a coded `BIT_UNKNOWN` listing some available names.
+3. Catalog character:
+   - an existing bit whose `character` is that id is reused (preferring the one whose name
+     matches the character name, else the first) with its **own stored model/effort**;
+   - otherwise the bit is created from the catalog with its preset **`model` and `effort`
+     passed explicitly** (`name`, `character`, `emoji`, `color`, `instructions`,
+     `isOrchestrator` from the catalog, `workspaceDir: undefined` so the store creates the
+     per-bit workspace); concurrent creations for the same character are deduplicated by an
+     in-flight promise map;
+   - a resolved bit with `isOrchestrator === true` is refused with a coded
+     `BIT_IS_ORCHESTRATOR`: worker bits are one-shot and the chat itself is the orchestrator.
+4. `cwd` = this session's working directory (`ctx.workingDirectory.get(agent.session)`, then
+   `agent.session.header.cwd`, then `process.cwd()`).
+5. `bitRuntime.invokeWorker({ bit, task, cwd, readOnly: args.read_only !== false,
+   signal: exec.signal })`; the tool result is
+   `[<bit name> · <backend>/<model> · <effort>]` + blank line + the report text, with
+   `backend` = `claude-code` (subscription alias) or `dsh` (`<provider>/<model>`), exactly
+   mirroring `resultRouteText` in `host/team-runtime.js`.
+6. Coded errors stay model-visible; cancellation is not swallowed. `isConcurrencySafe: () => true`;
+   `presentCall` returns a generic card titled `Bit delegate · <bit> · <model>/<effort>` when
+   the target can be resolved cheaply from the existing bits/catalog, otherwise
+   `Bit delegate`.
+- The tool never touches the chat session's model/effort: each worker runs with its bit's
+  preset model/effort.
+
+### 12.5 Team-mode separation
+
+`host/team-runtime.js` `resolve(agent)` returns `null` immediately for orchestrator-preset
+sessions (`isOrchestratorSession(agent)`, helpers imported from `./orchestrator.js`), before any
+binding lookup. Consequences:
+
+- a preset chat in a repository whose team has `bindWorkspace` is **never** a team lead (or
+  member): it gets no team prompt and no `team_delegate`/`team_handoff`;
+- teams/flows remain the only multi-bit path (drawn flow, roles, access/launches, orchestrator
+  members, handoff, harness guard/MCP/skills);
+- no other team-runtime behaviour changes.
+
+### 12.6 Diagnostics
+
+`GET /api/bots.diagnostics` (§7) gains an `orchestrator` key:
+
+```json
+{
+  "orchestrator": {
+    "presetId": "bits-orchestrator",
+    "installed": [{ "sessionId": "<agent/session id>", "tools": ["bit_delegate"] }],
+    "errors": [],
+    "notes": []
+  }
+}
+```
+
+`installed` lists the agents currently instrumented (with the tools registered on them);
+`errors` and `notes` are timestamped lists (installation/hook failures and advisory notes such
+as a duplicate bit name). When the runtime failed to install, `index.js` answers the same shape
+with an empty `installed`. It is the first stop for "the chat in orchestrator mode has no
+`bit_delegate`".
+
+### 12.7 Tests
+
+- **New `test/orchestrator.test.mjs`** (plain `node`, no npm deps; real `BitStore` +
+  `loadBitCatalog` in a temp `botsRoot`, fake host `ctx` and fake `bitRuntime.invokeWorker`):
+  `presetIdOfSession`/`isOrchestratorSession`; install on a `bits-orchestrator` session
+  registers one prompt section and one `bit_delegate` tool (a standard session gets nothing);
+  prompt content (role, delegation rules, read-only default, roster group headings, several
+  names with their preset model/effort, orchestrator characters excluded); delegation by
+  existing bit id and by name (the invocation receives that bit, the session cwd and
+  `readOnly: true` by default / `false` when requested; header matches the meta); catalog
+  character by name and by id (creates exactly one bit with the catalog preset
+  model/effort/emoji/color/instructions, second delegation reuses it, concurrent delegations
+  dedupe); existing custom bit for the same character reused with its own model/effort;
+  orchestrator-character target → coded `BIT_IS_ORCHESTRATOR` (no bit created); unknown bit →
+  coded error; diagnostics lists the installed session and `dispose()` clears it.
+- **`test/team-runtime.test.mjs`** — additive test: a `bits-orchestrator` session in a
+  `bindWorkspace` repository is not resolved as team lead and gets no team tools.
+- **`test/e2e-web.mjs`** — final section (10/10) in the throwaway profile over the authenticated
+  HTTP bridge: `agentPresets/list` contains `bits-orchestrator` named `Bit mode`, with
+  `isDefault: false`, no `broken` and the builtin `standard` preset still the default;
+  `session/create` with `agentPreset: 'bits-orchestrator'` returns the preset and a session id;
+  `session/prompt` is accepted and `/api/bots.diagnostics` eventually lists the session under
+  `orchestrator.installed` with `bit_delegate` and empty `errors` (a model-call failure in the
+  throwaway profile is irrelevant: admission and activation are what matters).
+- All suites of §10 stay green; `node --check` on every touched JS file.
+
+### 12.8 Files of this increment
+
+| file | change |
+|---|---|
+| `host/orchestrator.js` | **new**: preset constant/detection, prompt section, `bit_delegate` tool, diagnostics, dispose |
+| `index.js` | install the runtime after `createBitRuntime`, `orchestrator` diagnostics key, teardown dispose |
+| `host/team-runtime.js` | `resolve()` skips orchestrator-preset sessions |
+| `cordis.patch.yml` | second insert row `preset-bits-orchestrator` (standard child list copy) |
+| `test/orchestrator.test.mjs` | **new** unit suite |
+| `test/team-runtime.test.mjs` | additive preset-session test |
+| `test/e2e-web.mjs` | preset roster, preset session and installed-orchestrator section |
+| `README.md` | "Chats in orchestrator mode" |
+
+No `package.json` dependency or version change; no client/route/UI change beyond the diagnostics
+payload. The bits created on demand by `bit_delegate` are normal v5 bits (store record of §2):
+they appear on the Bits page and can be used in flows like any other bit.
+
+
+---
+
+## 13. Bit mode: orchestrating-bit selector (v5.2)
+
+**This section extends v5.1**; sections 0–12 keep their meaning. The displayed chat-mode name
+becomes **Bit mode** (preset id unchanged: `bits-orchestrator`), and, while that preset is the one
+selected for a new session, the new-session hero shows a second chip beside the mode chip that
+picks **which bit orchestrates** the chat. The chosen bit contributes its instructions to the
+orchestrator prompt; it never changes the chat's model or reasoning effort.
+
+### 13.1 Selection store (`host/orchestrator-selection.js`)
+
+`createOrchestratorSelection({ botsRoot, bits, catalog, log })` → an object with
+`init()`, `ready`, `currentBitId()`, `currentBit()`, `candidates()`, `viewFor(bit)`,
+`select(target)` and `dispose()`.
+
+- Durable preference `<botsRoot>/orchestrator.json`, mode 0600, atomic write (temporary sibling
+  + fsync + rename), document `{ version: 1, bitId: string | null }`. A missing file starts
+  empty; a corrupt document is renamed aside and starts empty (same policy as the stores).
+- The preference is **global**: every Bit-mode chat uses the current selection. It is read when
+  the prompt text is composed (per turn), so edits to the selected bit on the Bits page apply to
+  the next turn.
+- `select(target)` resolves, in order: an existing bit by exact id; an existing bit by
+  case-insensitive name; a catalog character by exact id or case-insensitive name. A catalog
+  character with no bit yet is provisioned through `bits.create` with the catalog defaults
+  (`name`, `character`, `emoji`, `color`, `instructions`, `isOrchestrator`, `model`, `effort`),
+  reusing an existing bit for that character when present. The resolved record must have
+  `isOrchestrator === true`, otherwise a coded `BIT_NOT_ORCHESTRATOR` is thrown; an unknown
+  target is a coded `BIT_UNKNOWN`. `select(null)` clears the preference.
+- `candidates()` = existing orchestrator bits (store order) then catalog orchestrator characters
+  not represented by an existing bit (catalog order); cap 50. A candidate view is
+  `{ id, target, name, character, emoji, color, avatar, summary, model, effort, isExisting }`:
+  `avatar` = `/api/bots.avatar?id=<character id>` when a catalog character is known, else
+  `/api/bots.avatar?id=<bit id>` (the client falls back to the emoji); `summary` = catalog
+  `summary.en` else the first sentence of the instructions, capped at ~160 chars; `target` is the
+  value the client posts back (`id`).
+
+### 13.2 Routes (`host/routes.js`)
+
+Registered only when `registerBotRoutes` receives `deps.selection` (older fixtures keep working):
+
+- `GET /api/bots.orchestrator` → `{ ok: true, bitId, bit, candidates }`.
+- `POST /api/bots.orchestrator` `{ target }` (`target` is a trimmed non-empty string, or
+  `null`/omitted to clear) → the same payload after `select(target)`.
+- Both handlers await `selection.ready`; coded store errors pass through the envelope; bad bodies
+  are `BAD_REQUEST`; a failed store initialization is `ORCHESTRATOR_UNAVAILABLE`.
+
+### 13.3 Prompt (`host/orchestrator.js`)
+
+The `bits:orchestrator` section stays `interpolate: false` and order 700, but its `text` is now a
+function returning `buildPromptText(catalog, selection.currentBit())` (generic when the selection
+is empty). The renamed base text keeps the v5.1 invariants (delegation rules, worker roster, work
+split, model/effort untouched). With a bit, the section inserts, right after the intro paragraph:
+
+```markdown
+## Orchestrating bit: <name>
+
+<catalog summary, when present>
+
+<the bit's instructions>
+```
+
+`installOrchestrator` accepts `selection` optionally; without it the prompt is the generic one.
+`diagnostics()` reports `selection.bitId`. `index.js` builds the store next to the bit store,
+passes it to the runtime and the routes, and disposes it on teardown.
+
+### 13.4 Client (`client.js`)
+
+A `ModeBitSeat` component registers into the existing `conversation.hero.options` list slot
+(`conversation.hero.agentPreset` is single-owner, so the new chip uses the options list of the
+same hero row and removes its right-alignment with
+`div:has(> [data-slot="conversation.hero.options"]) { margin-left: 0; }`). It reads the current
+preset from the session list projection (`projectionValues.agentPreset`) and renders only for
+`bits-orchestrator`. The chip shows the selected bit's avatar + name (or "Choose bit"); the menu
+shows rows with a 32px avatar, name and the 2-line English description, plus a first
+"No specific bit" row that clears the selection. Picking calls `POST /api/bots.orchestrator` and
+updates the chip; loading/error/empty/busy states are handled inline. The component brings its
+own `<style>` (the page token block does not apply outside the Bits page) and its own defensive
+`GET /api/bots.orchestrator` load; an older host without the routes makes the chip render
+nothing.
+
+### 13.5 Tests
+
+- `test/orchestrator.test.mjs`: renamed heading, generic vs. bit prompt, dynamic text between
+  turns, no model/effort selection.
+- `test/orchestrator-selection.test.mjs` (or additions to `test/routes.test.mjs`): store
+  persistence/corrupt-file/validation/provisioning/candidates, and both routes' payloads and
+  coded errors.
+- `test/visual.mjs`: hero scenario — pick **Bit mode**, assert the chip appears right of the mode
+  chip (geometry), the menu rows carry avatars and descriptions, picking a catalog orchestrator
+  provisions the bit and the chip/GET reflect it; screenshots saved under `test/screenshots/`.
+- `test/e2e-web.mjs`: Bit-mode name assertions (updated) and the selection routes against the
+  throwaway profile.
+
+### 13.6 Files of this increment
+
+| file | change |
+|---|---|
+| `host/orchestrator-selection.js` | **new**: durable orchestrating-bit preference, candidate views, provisioning |
+| `host/orchestrator.js` | dynamic prompt text with the selected bit; renamed heading |
+| `host/routes.js` | `GET`/`POST /api/bots.orchestrator` |
+| `index.js` | build/pass/dispose the selection store; diagnostics |
+| `client.js` | hero chip + picker, styles, placement rule, API helpers, EN strings |
+| `cordis.patch.yml` | preset display name `Bit mode` |
+| tests / docs | renamed assertions, new store/route/visual coverage, README / this section / REVIEW addendum |

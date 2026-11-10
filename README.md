@@ -130,6 +130,63 @@ DeepSeek Harness:
   when a matching file is read or edited.
 - **MCP:** the package's `.mcp.json` servers are mounted only on the marked members.
 
+## Chats in Bit mode
+
+Installing the plugin also adds a selectable chat mode, **Bit mode**. It appears with
+the other presets under **Settings → presets** and in the preset picker of a new session; it is
+not made the profile default, so you choose it per chat. A session in this mode is a normal
+chat (the standard preset's tools, skills, plan mode and compaction) plus the orchestration
+prompt and one extra tool, `bit_delegate`. Install or update the bundle while the app is
+running and the mode appears when the profile recomposes (the plugin manager applies it live
+with HMR); without HMR it appears after the app restarts.
+
+With **Bit mode** selected, a second chip appears right next to the mode chip: it picks **which
+bit orchestrates** this chat. The menu lists the orchestrator bits (avatar, name and the short
+English description); picking a catalog orchestrator character provisions its bit on first use,
+like a delegation does. The chosen bit's instructions become the chat's persona at the next
+turn — pick **No specific bit** to keep the generic orchestrator prompt. The choice is stored in
+`<botsRoot>/orchestrator.json` and shared by every Bit-mode chat; it never changes the chat's
+model or effort.
+
+The chat's own model and reasoning effort are the ones you select in the composer. The mode
+never pins or overrides them: the chat only orchestrates, and the bits it delegates to run with
+their own preset model and effort.
+
+`bit_delegate({ bit, task, read_only })` runs **one worker bit, one-shot** (request →
+response):
+
+- `bit` — a catalog character (`Builder`, `bit-builder`) or the name/id of an existing bit.
+- `task` — the self-contained task. The bit does not see the conversation, so include the goal
+  and done criteria, the workspace, the context, the files, the constraints and the report
+  format.
+- `read_only` — defaults to `true` (no edits and no commands that need approval); pass
+  `read_only: false` for a task that changes files or runs commands in the workspace.
+
+The bit runs in the chat's working directory and returns a text report, which the chat receives
+as the tool result. Independent delegations can be issued in the same response and run in
+parallel. Each catalog character already carries a preset model and reasoning effort: the first
+delegation to a character **creates that bit automatically** with its catalog preset, and later
+delegations reuse it (with any model/effort/instructions edits made on the **Bits** page). The
+four orchestrator characters of the catalog (Manager, Product Owner, Coordinator,
+Sub-coordinator) — and any bit marked as an orchestrator — cannot be delegated: the chat itself
+is the orchestrator, so delegate to worker bits.
+
+The difference from a team is deliberate and is the reason to keep both paths:
+
+| | **Chat in orchestrator mode** | **Team (executable flow)** |
+|---|---|---|
+| Who decides the steps | The chat, per request | The drawn flow and the lead |
+| Bits involved | Any worker bit (catalog or existing), one-shot; catalog bits are created on first use | The team members, with role, access and launches |
+| Route of the coordinator | Your session model/effort | The lead bit |
+| Team-mode tools | No `team_delegate`/`team_handoff` (the global `team_send` stays visible like in any non-team chat) | `team_delegate` and `team_handoff` |
+| Nested orchestration | No: one level of one-shot workers | Orchestrator members |
+| Harness guard, MCP, skills | No | Yes, from the harness package |
+| Session | The chat's own session and working directory; never bound to a team | Sessions bound to the team (`bindWorkspace`) |
+
+A chat in orchestrator mode is never treated as a team lead, even in a repository where every
+session belongs to a team. The bits it creates from the catalog are normal bits: they appear on
+the **Bits** page, can be run standalone and can be reused in flows.
+
 ## How to use
 
 1. Click **Bits** in the sidebar (robot icon).
@@ -139,6 +196,8 @@ DeepSeek Harness:
 4. **Teams** tab: create a team from scratch or from a model/harness, add bits as members,
    choose the orchestrator lead and draw the flow. **Send request** runs it.
 5. **Projects** tab: group the teams by product.
+6. **New chat**: choose the **Bit mode** preset, pick the bit that orchestrates in the chip
+   next to it, and delegate tasks to any bit from the conversation (see **Chats in Bit mode**).
 
 ## Requirements and the subscription plugin
 
@@ -211,7 +270,9 @@ bots-plugin/
 │   ├── team-runtime.js    # executable teams: lead, delegation, handoff, skills, guard
 │   ├── team-prompt.js     # lead and member texts (flow, roster, glossary)
 │   ├── team-guard.js      # bridge to the harness hook and lead policies
-│   └── team-bindings.js   # session → team/member (durable)
+│   ├── team-bindings.js   # session → team/member (durable)
+│   ├── orchestrator.js    # chat preset runtime: orchestrator prompt, bit_delegate
+│   └── orchestrator-selection.js  # Bit mode: which bit orchestrates (durable preference)
 ├── bits/
 │   ├── catalog.json       # 52 bits: name, group, emoji, color, summary, description,
 │   │                      #   isOrchestrator, default model and effort
@@ -228,22 +289,31 @@ workspace, durable binding) → the orchestrator lead receives the request and c
 `team_delegate` → worker: `bit-runtime.invokeWorker` → `claude_delegate` (subscription) or a
 chat route call → report back to the lead → final response to the dev.
 
+Flow of a Bit-mode chat: new session with the `bits-orchestrator` preset → the hero chip stores
+the orchestrating bit (`/api/bots.orchestrator`) → `host/orchestrator.js` adds the prompt (with
+the bit's instructions when one is chosen) and the `bit_delegate` tool to that agent →
+`bit_delegate` resolves (or creates from the catalog) the bit → `bit-runtime.invokeWorker` →
+the text report comes back as the tool result.
+
 ## Tests
 
 ```bash
 cd bots-plugin
 node test/store.test.mjs        # bits: durable registry, validation, migration
 node test/catalog.test.mjs      # catalog v2 (52 bits, orchestrators, default models)
-node test/routes.test.mjs       # /api/bots.* routes (CRUD, catalog, models, run)
+node test/routes.test.mjs       # /api/bots.* routes (CRUD, catalog, models, run, orchestrator)
 node test/teams.test.mjs        # teams: members by bit, orchestrator lead, migration, models
 node test/projects.test.mjs     # projects and team unlinking
 node test/harness.test.mjs      # transpiler and team from the harness
 node test/team-runtime.test.mjs # runtime with fake host: lead, one-shot workers, guard
+node test/orchestrator.test.mjs # chat preset: detection, prompt, bit_delegate, auto-provision
+node test/orchestrator-selection.test.mjs # Bit mode picker: durable selection, provisioning, routes
 node test/bit-runtime.test.mjs  # req→response: subscription, chat route, read-only
 node test/e2e-web.mjs           # E2E: isolated profile + real Web host + routes + UI
 node test/visual-teams.mjs --width 1440 --height 900   # flow editor in headless Chrome
 node test/visual-projects.mjs --width 1440 --height 900 # Projects tab in headless Chrome
 node test/visual.mjs --theme dark   # real screenshots (headless Chrome) in test/screenshots/
+                                    #   (--theme light also supported)
 ```
 
 The E2E creates a temporary `DSH_HOME`, installs the bundle, starts the real Web host on a
@@ -253,8 +323,11 @@ the active `desktop` profile. The bundle's independent review is in `REVIEW.md`.
 ## Diagnostics
 
 `GET /api/bots.diagnostics` (authenticated) returns the registry path, the bits, the team
-agents that received prompt/tools from the runtime and the latest integration errors. It is
-the first stop for "the team did not run" / "the worker failed".
+agents that received prompt/tools from the runtime, the orchestrator chats that received the
+mode's prompt and `bit_delegate` (`orchestrator.installed`), the selected orchestrating bit
+(`orchestrator.selection.bitId`) and the latest integration errors.
+It is the first stop for "the team did not run" / "the worker failed" / "the chat has no
+`bit_delegate`".
 
 ## Security and limits
 
@@ -269,5 +342,8 @@ the first stop for "the team did not run" / "the worker failed".
   cancellation through the HTTP request and has a 15-minute limit.
 - Harness secrets are not passed to Claude Code beyond the host environment (the subscription
   plugin isolates the API credentials so the OAuth login applies).
+- A chat in orchestrator mode runs with the session's own model/effort and the profile's tools;
+  its delegations are read-only by default (`--permission-mode plan` for subscription workers),
+  and `read_only: false` grants the bypass described above.
 - Deleting a bit removes the registry entry and, optionally, the workspace; directory removal
   is refused if the path escapes `botsRoot`.
