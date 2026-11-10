@@ -1,9 +1,20 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-  <rect x="5" y="8" width="14" height="11" rx="3" />
-  <path d="M12 8V4.5" />
-  <circle cx="12" cy="3.5" r="1.2" fill="#3b82f6" stroke="none" />
-  <circle cx="9.3" cy="13" r="1.15" fill="#3b82f6" stroke="none" />
-  <circle cx="14.7" cy="13" r="1.15" fill="#3b82f6" stroke="none" />
-  <path d="M9.2 16.2h5.6" />
-  <path d="M3 11.5v4M21 11.5v4" />
+<svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <path d="M18 14.5V10.5" stroke="#86B8F5" stroke-width="2.2" />
+  <circle cx="18" cy="9" r="2.3" fill="url(#bits-antenna)" />
+  <rect x="5" y="18.5" width="2.5" height="6" rx="1.25" fill="#86B8F5" />
+  <rect x="28.5" y="18.5" width="2.5" height="6" rx="1.25" fill="#5269E1" />
+  <rect x="8.5" y="14" width="19" height="15" rx="4" fill="url(#bits-head)" fill-opacity="0.85" />
+  <circle cx="14.3" cy="20" r="1.8" fill="#FFFFFF" />
+  <circle cx="21.7" cy="20" r="1.8" fill="#FFFFFF" />
+  <path d="M14.5 24.7H21.5" stroke="#FFFFFF" stroke-width="1.6" stroke-linecap="round" />
+  <defs>
+    <linearGradient id="bits-head" x1="18" y1="14" x2="18" y2="29" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#69B9FF" />
+      <stop offset="1" stop-color="#324DE2" />
+    </linearGradient>
+    <linearGradient id="bits-antenna" x1="16" y1="7" x2="20" y2="11" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6AECB6" />
+      <stop offset="1" stop-color="#37A6B1" />
+    </linearGradient>
+  </defs>
 </svg>
