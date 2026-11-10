@@ -1,5 +1,5 @@
 /**
- * Bits — browser half of the `@local/dsh-bots` bundle.
+ * Bits — browser half of the `@dsh-burn-plugins/dsh-bots` bundle.
  *
  * Contributes a "Bits" entry to the sidebar's global panel list and a full page
  * in the layout's `main` keyed slot. The page has three tabs: Bits (bit
@@ -17,7 +17,7 @@
  * values are the Host theme tokens (`--dsw-alias-*`) with CSS fallbacks.
  */
 window.__ModuleLoader__.load({
-  id: '@local/dsh-bots',
+  id: '@dsh-burn-plugins/dsh-bots',
   factory(require) {
     'use strict'
 

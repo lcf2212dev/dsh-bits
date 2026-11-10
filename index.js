@@ -9,7 +9,7 @@
  * - orchestrator bits run as DeepSeek Harness agents on the DeepSeek-V4.1-Flash
  *   Max route and coordinate a team flow;
  * - worker bits are one-shot invocations — by default through the
- *   `claude_delegate` tool of `@local/dsh-claude-delegate` (Claude
+ *   `claude_delegate` tool of `@dsh-burn-plugins/dsh-claude-delegate` (Claude
  *   subscription), or a single model call when the user points them at a DSH
  *   chat route.
  *
@@ -18,7 +18,7 @@
  * authenticated routes used by the Web page. No Docker, no per-session
  * persona injection, no notifications.
  *
- * @module @local/dsh-bots
+ * @module @dsh-burn-plugins/dsh-bots
  */
 
 import fs from 'node:fs/promises'

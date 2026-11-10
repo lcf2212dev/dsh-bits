@@ -1,6 +1,6 @@
 # Bits v5 — build contract (read first)
 
-Rebuild of `@local/dsh-bots` (product name **Bits**). Supersedes the v1–v4 contract in
+Rebuild of `@dsh-burn-plugins/dsh-bots` (product name **Bits**). Supersedes the v1–v4 contract in
 `CONTRACT.md` for the parts listed here. `CONTRACT.md` stays as historical reference; when
 this file conflicts with it, **this file wins**.
 
@@ -15,7 +15,7 @@ this file conflicts with it, **this file wins**.
     **DeepSeek-V4.1-Flash Max** route (default `deepseek-account/deepseek-flash`, effort
     `max`) and are the only bits allowed to be a team **lead**.
   - `isOrchestrator: false` bits are workers: a single invocation (request → response),
-    executed **through the `claude_delegate` tool of `@local/dsh-claude-delegate`** (Claude
+    executed **through the `claude_delegate` tool of `@dsh-burn-plugins/dsh-claude-delegate`** (Claude
     subscription / Claude Code CLI) by default. A worker may be re-pointed to a DSH chat
     model; then the invocation is a one-shot `ctx.llm.stream` call (no tools).
 - Users may change a bit's model/effort, from the models available to a normal chat
@@ -363,7 +363,7 @@ export function createBitRuntime(ctx, { bits, catalog, models, log })
     The answer is the settled canonical `value` (a string). `readOnly: true` is passed only
     when the member access is `read`; ad-hoc runs pass the request's `readOnly` flag.
     When the tool is unavailable/failed, throw a coded error with an actionable message
-    (`BIT_DELEGATE_UNAVAILABLE`): install/enable `@local/dsh-claude-delegate`, log in with
+    (`BIT_DELEGATE_UNAVAILABLE`): install/enable `@dsh-burn-plugins/dsh-claude-delegate`, log in with
     `claude`.
   - `backend: 'dsh'`: one-shot `ctx.llm.stream({ provider, model, reasoningEffort, messages:
     [{ role: 'user', content: [{ type: 'text', text: prompt }] }], signal })`; concatenate
@@ -413,12 +413,12 @@ export function createBitRuntime(ctx, { bits, catalog, models, log })
 
 ### 6.3 Wire `claude_delegate`'s read-only capability
 
-`@local/dsh-claude-delegate` (repo `/home/leandro/Documents/deepseek-harness/default-workspace/dsh-claude-delegate`,
+`@dsh-burn-plugins/dsh-claude-delegate` (repo `/home/leandro/Documents/deepseek-harness/default-workspace/dsh-claude-delegate`,
 already installed in the desktop profile) gets a small addition: an optional
 `readOnly: boolean` tool parameter. When true, the child runs with
 `--permission-mode plan` instead of `--dangerously-skip-permissions`; the default stays
 bypass. Update its README and keep its tool description accurate. No other behavior change;
-`@local/dsh-bots` does not import that package — it invokes the registered tool.
+`@dsh-burn-plugins/dsh-bots` does not import that package — it invokes the registered tool.
 
 ---
 

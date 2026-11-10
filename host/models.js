@@ -4,7 +4,7 @@
  * Two model families exist:
  *
  * 1. **Subscription** — Claude Code through the `claude_delegate` tool of
- *    `@local/dsh-claude-delegate`. Stored as `subscription/<alias>` with
+ *    `@dsh-burn-plugins/dsh-claude-delegate`. Stored as `subscription/<alias>` with
  *    `alias ∈ {opus, sonnet, haiku}`; the effort is a CLI flag.
  * 2. **DSH chat routes** — the profile's LLM providers. Stored as
  *    `<provider>/<modelId>`. Orchestrator bits must use this family (an agent

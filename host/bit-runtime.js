@@ -5,7 +5,7 @@
  * model and an effort. This module performs the invocation:
  *
  * - **Worker with a subscription model** (`backend: 'claude-code'`): calls the
- *   registered `claude_delegate` tool of `@local/dsh-claude-delegate` through
+ *   registered `claude_delegate` tool of `@dsh-burn-plugins/dsh-claude-delegate` through
  *   the host tool pipeline — one unattended Claude Code run, with the worker's
  *   cwd and `readOnly` when the member access is `read`. The tool returns only
  *   its final answer string.
@@ -141,7 +141,7 @@ export function createBitRuntime(ctx, deps = {}) {
   async function runSubscription(bit, prompt, resolved, { cwd, readOnly, signal }) {
     const tools = ctx && ctx.tools
     if (!tools || typeof tools.execute !== 'function') {
-      throw codedError('BIT_DELEGATE_UNAVAILABLE', 'A ferramenta claude_delegate não está disponível neste Harness: instale/ative o plugin @local/dsh-claude-delegate no profile e faça login com `claude`.')
+      throw codedError('BIT_DELEGATE_UNAVAILABLE', 'A ferramenta claude_delegate não está disponível neste Harness: instale/ative o plugin @dsh-burn-plugins/dsh-claude-delegate no profile e faça login com `claude`.')
     }
     const args = { task: prompt, model: resolved.alias }
     if (resolved.effort !== undefined) args.effort = resolved.effort
@@ -153,7 +153,7 @@ export function createBitRuntime(ctx, deps = {}) {
       settled = await tools.execute({ calls: [call], signal })
     } catch (error) {
       if (signal && signal.aborted) throw codedError('ABORTED', 'Execução cancelada.')
-      throw codedError('BIT_DELEGATE_UNAVAILABLE', `A ferramenta claude_delegate não está disponível: ${messageOf(error)}. Instale/ative o plugin @local/dsh-claude-delegate no profile e faça login com \`claude\`.`)
+      throw codedError('BIT_DELEGATE_UNAVAILABLE', `A ferramenta claude_delegate não está disponível: ${messageOf(error)}. Instale/ative o plugin @dsh-burn-plugins/dsh-claude-delegate no profile e faça login com \`claude\`.`)
     }
     const entries = settled && Array.isArray(settled.results) ? settled.results : []
     const entry = entries.find((item) => item && item.callId === call.id) || entries[0] || null
@@ -162,7 +162,7 @@ export function createBitRuntime(ctx, deps = {}) {
       if (signal && signal.aborted) throw codedError('ABORTED', 'Execução cancelada.')
       const detail = result && result.error && typeof result.error.message === 'string' ? result.error.message : ''
       const code = result && result.error && result.error.info && typeof result.error.info.code === 'string' ? result.error.info.code : ''
-      throw codedError('BIT_DELEGATE_UNAVAILABLE', `A ferramenta claude_delegate falhou${code ? ` (${code})` : ''}${detail ? `: ${detail}` : ''}. Instale/ative o plugin @local/dsh-claude-delegate no profile e faça login com \`claude\`.`)
+      throw codedError('BIT_DELEGATE_UNAVAILABLE', `A ferramenta claude_delegate falhou${code ? ` (${code})` : ''}${detail ? `: ${detail}` : ''}. Instale/ative o plugin @dsh-burn-plugins/dsh-claude-delegate no profile e faça login com \`claude\`.`)
     }
     return typeof result.value === 'string' ? result.value : String(result.value)
   }

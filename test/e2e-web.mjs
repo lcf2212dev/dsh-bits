@@ -15,7 +15,7 @@
  * Usage: node test/e2e-web.mjs
  * Env:
  *   DSH_INSTALL_ROOT          default ~/.local/opt/deepseek-harness
- *   BITS_E2E_DELEGATE_DIR     optional @local/dsh-claude-delegate package dir;
+ *   BITS_E2E_DELEGATE_DIR     optional @dsh-burn-plugins/dsh-claude-delegate package dir;
  *                             when set, the profile installs it and the suite
  *                             runs one REAL subscription worker invocation
  *                             (needs `claude` installed and logged in).
@@ -120,11 +120,11 @@ async function installProfile() {
   await fs.mkdir(profileDir, { recursive: true })
   await fs.writeFile(path.join(profileDir, 'cordis.yml'), '# e2e profile\n[]\n')
   await fs.writeFile(path.join(profileDir, 'pnpm-workspace.yaml'), 'packages:\n  - .\n\nnodeLinker: hoisted\nautoInstallPeers: false\n')
-  const dependencies = { '@local/dsh-bots': `file:${BUNDLE_DIR}` }
-  const bundles = ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', '@local/dsh-bots']
+  const dependencies = { '@dsh-burn-plugins/dsh-bots': `file:${BUNDLE_DIR}` }
+  const bundles = ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', '@dsh-burn-plugins/dsh-bots']
   if (DELEGATE_DIR !== '') {
-    dependencies['@local/dsh-claude-delegate'] = `file:${DELEGATE_DIR}`
-    bundles.push('@local/dsh-claude-delegate')
+    dependencies['@dsh-burn-plugins/dsh-claude-delegate'] = `file:${DELEGATE_DIR}`
+    bundles.push('@dsh-burn-plugins/dsh-claude-delegate')
   }
   await fs.writeFile(path.join(profileDir, 'package.json'), JSON.stringify({
     name: 'dsh-profile-bots-e2e',
@@ -373,14 +373,14 @@ async function main() {
     const indexHtml = await indexResponse.text()
     const hrefs = [...indexHtml.matchAll(/(?:href|src)="([^"]+)"/g)]
       .map((match) => match[1].replaceAll('&amp;', '&'))
-      .filter((href) => href.includes('@local/dsh-bots/client.js'))
+      .filter((href) => href.includes('@dsh-burn-plugins/dsh-bots/client.js'))
     assert.ok(hrefs.length > 0, 'the boot payload does not reference the Bits client bundle')
     const bundleHref = hrefs.find((href) => href.includes('??')) ?? hrefs[0]
     const response = await fetch(new URL(bundleHref, `${origin}/`), { headers: { cookie } })
     assert.equal(response.status, 200, `client bundle ${bundleHref} answered HTTP ${response.status}`)
     const body = await response.text()
     assert.ok(body.includes('__ModuleLoader__'), 'served bundle does not contain the module loader registration')
-    assert.ok(body.includes('@local/dsh-bots'), 'served bundle does not register the bundle id')
+    assert.ok(body.includes('@dsh-burn-plugins/dsh-bots'), 'served bundle does not register the bundle id')
     assert.ok(body.includes('Bits'), 'served bundle does not contain the Bits page code')
     assert.ok(!/Máquina virtual/i.test(body), 'served bundle still contains the v4 VM copy')
     console.log(`   served ${bundleHref} (${body.length} bytes)`)
@@ -483,7 +483,7 @@ async function main() {
     // Request validation.
     await expectError('/api/bots.run', { id: builder.id, request: '' }, 'BAD_REQUEST')
     await expectError('/api/bots.run', { id: 'deadbeef01', request: 'oi' }, 'BOT_NOT_FOUND')
-    // Without @local/dsh-claude-delegate installed, the subscription backend
+    // Without @dsh-burn-plugins/dsh-claude-delegate installed, the subscription backend
     // fails with an actionable coded error instead of hanging or crashing.
     if (DELEGATE_DIR === '') {
       const unavailable = await api('/api/bots.run', { body: { id: builder.id, request: 'Responda apenas: ok', readOnly: true } })

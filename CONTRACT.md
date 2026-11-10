@@ -271,7 +271,7 @@ Browser module format (exact wrapper; factory returns the plugin module):
 
 ```js
 window.__ModuleLoader__.load({
-  id: '@local/dsh-bots',
+  id: '@dsh-burn-plugins/dsh-bots',
   factory(require) {
     const React = require('react')
     const h = React.createElement

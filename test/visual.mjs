@@ -82,8 +82,8 @@ async function installProfile() {
   await fs.writeFile(path.join(dir, 'package.json'), JSON.stringify({
     name: 'dsh-profile-bits-visual',
     private: true,
-    dependencies: { '@local/dsh-bots': `file:${BUNDLE_DIR}` },
-    dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', '@local/dsh-bots'] } },
+    dependencies: { '@dsh-burn-plugins/dsh-bots': `file:${BUNDLE_DIR}` },
+    dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', '@dsh-burn-plugins/dsh-bots'] } },
   }, null, 2))
   // Pin the UI language so screenshots are deterministic.
   await fs.writeFile(path.join(dir, 'cordis.patch.yml'), `- id: locale\n  name: '@deepseek-ai/dsh-client-locale'\n  config:\n    preference: ${option('lang', 'pt')}\n`)

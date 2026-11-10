@@ -1,4 +1,4 @@
-# Independent review — Bots bundle (`@local/dsh-bots` v0.1.0)
+# Independent review — Bots bundle (`@dsh-burn-plugins/dsh-bots` v0.1.0)
 
 Reviewer: `verifier` (independent, read-only on code; only this file was written).
 Scope: `bots-plugin/` as of 2026-11-08. Target: DSH Desktop profile (`desktop`, DSH 0.2.2-rc.1,
@@ -562,7 +562,7 @@ in-process plugin reload were verified by the Lead afterwards.
 
 # Independent review — Bits v5 (2026-11-10)
 
-Fresh-eyes, read-only review of the v5 rebuild of `@local/dsh-bots` (working tree at HEAD
+Fresh-eyes, read-only review of the v5 rebuild of `@dsh-burn-plugins/dsh-bots` (working tree at HEAD
 `445eee5`, still uncommitted), written by the verifier teammate that wrote none of the v5
 code. Audited against `V5-CONTRACT.md` (the whole file), with the severity/style conventions
 of the reviews above. The only file this verifier wrote is this section; no code, test,
@@ -630,8 +630,8 @@ Independent checks beyond the shipped tests:
 - **claude-delegate diff**: only the `readOnly` parameter, the `--permission-mode plan`
   branch (default still `--dangerously-skip-permissions`) and the README/description
   paragraphs changed; nothing else. The desktop profile links both
-  `@local/dsh-bots` and `@local/dsh-claude-delegate` from these working trees
-  (`~/.dsh/profiles/desktop/node_modules/@local/*` are symlinks), so the flag is live
+  `@dsh-burn-plugins/dsh-bots` and `@dsh-burn-plugins/dsh-claude-delegate` from these working trees
+  (`~/.dsh/profiles/desktop/node_modules/@dsh-burn-plugins/*` are symlinks), so the flag is live
   after a plugin reload — no reinstall step needed.
 
 ## Findings

@@ -23,7 +23,7 @@ O modo de execução vem de `isOrchestrator`:
 | | **Orquestrador** (`isOrchestrator: true`) | **Worker** (`isOrchestrator: false`) |
 |---|---|---|
 | O que faz | Conduz um **fluxo de time**: entende o pedido, decide a ordem, delega etapas e devolve o relatório final. | Recebe **uma requisição** (uma etapa do fluxo) e devolve **uma resposta**. |
-| Onde roda | Agente do DeepSeek Harness, num modelo de rota do chat (padrão **DeepSeek-V4.1-Flash**, esforço **Max**). | Invocação única: por padrão no **Claude Code da sua assinatura**, via a tool `claude_delegate` do plugin **`@local/dsh-claude-delegate`** (o "plugin que criamos"); ou uma chamada única de modelo, se o bit for apontado para uma rota do chat. |
+| Onde roda | Agente do DeepSeek Harness, num modelo de rota do chat (padrão **DeepSeek-V4.1-Flash**, esforço **Max**). | Invocação única: por padrão no **Claude Code da sua assinatura**, via a tool `claude_delegate` do plugin **`@dsh-burn-plugins/dsh-claude-delegate`** (o "plugin que criamos"); ou uma chamada única de modelo, se o bit for apontado para uma rota do chat. |
 | Ferramentas | Tem as ferramentas do Harness e delega aos membros do time. | No modo assinatura, roda com as ferramentas do Claude Code na pasta do fluxo (ler/editar/executar). No modo rota do chat, devolve texto (sem ferramentas). |
 | Memória | Sessão do fluxo (durável). | Nenhuma entre chamadas: o que o bit "lembra" é o `task`/contexto que o orquestrador envia. |
 
@@ -144,7 +144,7 @@ verdade no DeepSeek Harness:
 ## Requisitos e o plugin da assinatura
 
 - Perfil com a camada Web (`@deepseek-ai/dsh-web-app`).
-- Para workers no modo assinatura: o plugin **`@local/dsh-claude-delegate`** instalado no
+- Para workers no modo assinatura: o plugin **`@dsh-burn-plugins/dsh-claude-delegate`** instalado no
   perfil e o **Claude Code** instalado e logado na máquina (`claude` no PATH do Harness).
   Esse plugin expõe a tool `claude_delegate` (modelo e esforço por chamada); o bundle dos
   Bits a invoca pela pipeline de ferramentas do Harness, sem importar o pacote.
@@ -171,7 +171,7 @@ O patch do bundle (`cordis.patch.yml`) aceita, na linha `bots`, um `config` opci
 ```yaml
 - insert:
     - id: bots
-      name: '@local/dsh-bots'
+      name: '@dsh-burn-plugins/dsh-bots'
       config:
         botsRoot: /caminho/absoluto/para/bits   # padrão: $DSH_HOME/bots
 ```
