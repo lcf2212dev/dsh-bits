@@ -413,7 +413,7 @@ export function createBitRuntime(ctx, { bits, catalog, models, log })
 
 ### 6.3 Wire `claude_delegate`'s read-only capability
 
-`@local/dsh-claude-delegate` (repo `/home/leandro/Documents/deepseek-harness/default-workspace/claude-delegate`,
+`@local/dsh-claude-delegate` (repo `/home/leandro/Documents/deepseek-harness/default-workspace/dsh-claude-delegate`,
 already installed in the desktop profile) gets a small addition: an optional
 `readOnly: boolean` tool parameter. When true, the child runs with
 `--permission-mode plan` instead of `--dangerously-skip-permissions`; the default stays
