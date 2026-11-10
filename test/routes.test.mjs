@@ -68,11 +68,11 @@ function makeRecord(overrides = {}) {
   const id = overrides.id ?? 'a1b2c3d4e5';
   return {
     id,
-    name: 'Pesquisador',
+    name: 'Researcher',
     character: null,
     emoji: '🤖',
     color: '#7c3aed',
-    instructions: 'Você é o Pesquisador.',
+    instructions: 'You are the Researcher.',
     isOrchestrator: false,
     model: 'subscription/sonnet',
     effort: 'high',
@@ -89,8 +89,8 @@ const SCOUT = Object.freeze({
   group: 'workers',
   emoji: '🔎',
   color: '#c88f36',
-  summary: { pt: 'Localiza arquivos.', en: 'Finds files.' },
-  instructions: 'Contexto do scout.',
+  summary: { en: 'Finds files.' },
+  instructions: 'Scout context.',
   isOrchestrator: false,
   model: 'subscription/haiku',
   effort: 'low',
@@ -102,8 +102,8 @@ const COORDINATOR = Object.freeze({
   group: 'management',
   emoji: '🧭',
   color: '#2563eb',
-  summary: { pt: 'Coordena o fluxo.', en: 'Coordinates the flow.' },
-  instructions: 'Contexto do coordinator.',
+  summary: { en: 'Coordinates the flow.' },
+  instructions: 'Coordinator context.',
   isOrchestrator: true,
   model: 'deepseek-account/deepseek-flash',
   effort: 'max',
@@ -120,8 +120,8 @@ function makeCatalog() {
   return {
     version: 2,
     groups: [
-      { id: 'workers', label: { pt: 'Workers', en: 'Workers' } },
-      { id: 'management', label: { pt: 'Gestão', en: 'Management' } },
+      { id: 'workers', label: { en: 'Workers' } },
+      { id: 'management', label: { en: 'Management' } },
     ],
     bits: bits.map(clone),
     error: null,
@@ -137,7 +137,7 @@ function makeCatalog() {
 const MODEL_OPTIONS = Object.freeze([
   {
     id: 'subscription/opus',
-    label: 'Claude Opus 5.5 (assinatura)',
+    label: 'Claude Opus 5.5 (subscription)',
     group: 'subscription',
     backend: 'claude-code',
     alias: 'opus',
@@ -457,7 +457,7 @@ await test('create returns bit and bot aliases from only documented fields', asy
   const payload = await callJson(app.routes, '/api/bots.create', {
     method: 'POST',
     body: {
-      name: 'Pesquisador',
+      name: 'Researcher',
       character: 'bit-scout',
       emoji: '🧪',
       color: '#123456',
@@ -474,7 +474,7 @@ await test('create returns bit and bot aliases from only documented fields', asy
 
   assert.equal(payload.ok, true);
   assert.equal(payload.bit.id, 'f00dfeed11');
-  assert.equal(payload.bit.name, 'Pesquisador');
+  assert.equal(payload.bit.name, 'Researcher');
   assert.equal(payload.bit.character, 'bit-scout');
   assert.equal(payload.bit.emoji, '🧪');
   assert.equal(payload.bit.model, 'subscription/opus');
@@ -487,7 +487,7 @@ await test('create returns bit and bot aliases from only documented fields', asy
   assert.equal(forwarded.id, undefined, 'route does not let callers force an id');
   assert.equal(forwarded.workspaceDir, undefined, 'route does not let callers force a workspace');
   assert.equal(forwarded.vm, undefined, 'route does not forward the removed vm field');
-  assert.equal(forwarded.name, 'Pesquisador');
+  assert.equal(forwarded.name, 'Researcher');
   assert.equal(forwarded.character, 'bit-scout');
   assert.equal(forwarded.isOrchestrator, false);
   assert.equal(forwarded.model, 'subscription/opus');
@@ -544,7 +544,7 @@ await test('create rejects unknown catalog characters before touching the store'
 
   payload = await callJson(app.routes, '/api/bots.create', {
     method: 'POST',
-    body: { name: 'Sem personagem', character: null },
+    body: { name: 'No character', character: null },
   });
   assert.equal(payload.ok, true, 'null clears the character');
 });
@@ -557,7 +557,7 @@ await test('update returns the patched bit and its bot alias', async () => {
   const record = makeRecord();
   const app = setup({ records: [record] });
   const patch = {
-    name: 'Novo nome',
+    name: 'New name',
     isOrchestrator: true,
     model: 'deepseek-account/deepseek-flash',
     effort: 'max',
@@ -569,7 +569,7 @@ await test('update returns the patched bit and its bot alias', async () => {
 
   assert.equal(payload.ok, true);
   assert.equal(payload.bit.id, record.id);
-  assert.equal(payload.bit.name, 'Novo nome');
+  assert.equal(payload.bit.name, 'New name');
   assert.equal(payload.bit.isOrchestrator, true);
   assert.equal(payload.bit.model, 'deepseek-account/deepseek-flash');
   assert.equal(payload.bit.effort, 'max');
@@ -717,8 +717,8 @@ await test('catalog returns the v2 bits with model/effort/isOrchestrator and ava
   assert.equal(payload.ok, true);
   assert.equal(payload.version, 2);
   assert.deepEqual(payload.groups, [
-    { id: 'workers', label: { pt: 'Workers', en: 'Workers' } },
-    { id: 'management', label: { pt: 'Gestão', en: 'Management' } },
+    { id: 'workers', label: { en: 'Workers' } },
+    { id: 'management', label: { en: 'Management' } },
   ]);
   assert.equal(payload.bits.length, 2);
   const scout = payload.bits.find((bit) => bit.id === 'bit-scout');
@@ -803,14 +803,14 @@ await test('models and run report BIT_RUNTIME_UNAVAILABLE without a runtime', as
 
   payload = await callJson(app.routes, '/api/bots.run', {
     method: 'POST',
-    body: { id: 'a1b2c3d4e5', request: 'tarefa' },
+    body: { id: 'a1b2c3d4e5', request: 'task' },
   });
   assert.equal(payload.error.code, 'BOT_NOT_FOUND', 'validation still runs before the runtime check');
 
   const withRecord = setup({ runtime: null, records: [makeRecord()] });
   payload = await callJson(withRecord.routes, '/api/bots.run', {
     method: 'POST',
-    body: { id: 'a1b2c3d4e5', request: 'tarefa' },
+    body: { id: 'a1b2c3d4e5', request: 'task' },
   });
   assert.equal(payload.error.code, 'BIT_RUNTIME_UNAVAILABLE');
 });
@@ -824,7 +824,7 @@ await test('run invokes a worker bit with the defaults (readOnly true, bit works
   const app = setup({ records: [record] });
   const payload = await callJson(app.routes, '/api/bots.run', {
     method: 'POST',
-    body: { id: record.id, request: '  implemente a feature  ' },
+    body: { id: record.id, request: '  implement the feature  ' },
   });
 
   assert.equal(payload.ok, true);
@@ -839,7 +839,7 @@ await test('run invokes a worker bit with the defaults (readOnly true, bit works
   assert.equal(app.runtime.runCalls.length, 1);
   const runCall = app.runtime.runCalls[0];
   assert.deepEqual(runCall.bit, record, 'the bit record is forwarded');
-  assert.equal(runCall.request, '  implemente a feature  ', 'the request text is preserved');
+  assert.equal(runCall.request, '  implement the feature  ', 'the request text is preserved');
   assert.equal(runCall.readOnly, true, 'ad-hoc runs default to read-only');
   assert.equal(runCall.cwd, record.workspaceDir, 'cwd defaults to the bit workspace');
   assert.ok(app.runtime.runSignals[0] instanceof AbortSignal, 'an AbortSignal is passed to the runtime');
@@ -852,7 +852,7 @@ await test('run forwards readOnly: false', async () => {
   const app = setup({ records: [record] });
   const payload = await callJson(app.routes, '/api/bots.run', {
     method: 'POST',
-    body: { id: record.id, request: 'tarefa', readOnly: false },
+    body: { id: record.id, request: 'task', readOnly: false },
   });
   assert.equal(payload.ok, true);
   assert.equal(app.runtime.runCalls[0].readOnly, false);
@@ -863,11 +863,11 @@ await test('run refuses orchestrator bits without invoking the runtime', async (
   const app = setup({ records: [record] });
   const payload = await callJson(app.routes, '/api/bots.run', {
     method: 'POST',
-    body: { id: record.id, request: 'tarefa' },
+    body: { id: record.id, request: 'task' },
   });
   assert.equal(payload.ok, false);
   assert.equal(payload.error.code, 'BIT_IS_ORCHESTRATOR');
-  assert.equal(payload.error.message, 'Orquestradores executam em fluxos');
+  assert.equal(payload.error.message, 'Orchestrators run inside flows');
   assert.deepEqual(app.runtime.runCalls, [], 'the runtime is not called');
   assert.equal(app.bits.calls.some((entry) => entry[0] === 'ensureWorkspace'), false);
 });
@@ -901,7 +901,7 @@ await test('run passes coded runtime errors through verbatim', async () => {
     app.runtime.runError = coded(code, `failure from ${code}`);
     const payload = await callJson(app.routes, '/api/bots.run', {
       method: 'POST',
-      body: { id: record.id, request: 'tarefa' },
+      body: { id: record.id, request: 'task' },
     });
     assert.deepEqual(payload.error, { code, message: `failure from ${code}` }, code);
   }
@@ -913,7 +913,7 @@ await test('run maps an uncoded runtime failure to BIT_RUN_FAILED', async () => 
   app.runtime.runError = new Error('delegate exploded');
   const payload = await callJson(app.routes, '/api/bots.run', {
     method: 'POST',
-    body: { id: record.id, request: 'tarefa' },
+    body: { id: record.id, request: 'task' },
   });
   assert.deepEqual(payload.error, { code: 'BIT_RUN_FAILED', message: 'delegate exploded' });
 });
@@ -924,7 +924,7 @@ await test('run tolerates a plain-text runtime result and rejects a malformed on
   app.runtime.runImpl = async () => 'texto simples';
   let payload = await callJson(app.routes, '/api/bots.run', {
     method: 'POST',
-    body: { id: record.id, request: 'tarefa' },
+    body: { id: record.id, request: 'task' },
   });
   assert.deepEqual(payload.response, 'texto simples');
   assert.deepEqual(payload.meta, {});
@@ -932,7 +932,7 @@ await test('run tolerates a plain-text runtime result and rejects a malformed on
   app.runtime.runImpl = async () => ({ meta: {} });
   payload = await callJson(app.routes, '/api/bots.run', {
     method: 'POST',
-    body: { id: record.id, request: 'tarefa' },
+    body: { id: record.id, request: 'task' },
   });
   assert.equal(payload.error.code, 'BIT_RUN_FAILED');
   assert.match(payload.error.message, /invalid response/);
@@ -959,19 +959,19 @@ await test('run forwards a transport abort to the runtime', async () => {
   const app = setup({ records: [record] });
   app.runtime.runImpl = (params) =>
     new Promise((_resolve, reject) => {
-      params.signal.addEventListener('abort', () => reject(new Error('cancelada pelo cliente')));
+      params.signal.addEventListener('abort', () => reject(new Error('cancelled by the client')));
     });
   const controller = new AbortController();
   const pending = callJson(app.routes, '/api/bots.run', {
     method: 'POST',
-    body: { id: record.id, request: 'tarefa' },
+    body: { id: record.id, request: 'task' },
     signal: controller.signal,
   });
   await new Promise((resolve) => setTimeout(resolve, 20));
   controller.abort();
   const payload = await pending;
   assert.equal(payload.error.code, 'BIT_RUN_FAILED', 'an aborted run is reported as a failed run');
-  assert.equal(payload.error.message, 'cancelada pelo cliente');
+  assert.equal(payload.error.message, 'cancelled by the client');
   assert.equal(app.runtime.runSignals[0].aborted, true);
 });
 
@@ -981,7 +981,7 @@ await test('run survives a failed workspace ensure (logged only)', async () => {
   app.bits.ensureWorkspaceError = new Error('mkdir denied');
   const payload = await callJson(app.routes, '/api/bots.run', {
     method: 'POST',
-    body: { id: record.id, request: 'tarefa' },
+    body: { id: record.id, request: 'task' },
   });
   assert.equal(payload.ok, true, 'the invocation is not failed by mkdir');
   assert.ok(app.logs.some((line) => line.includes('mkdir denied')));

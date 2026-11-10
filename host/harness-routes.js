@@ -94,7 +94,7 @@ export function bitForPreset(name, has) {
 }
 
 function slugMember(name, taken) {
-  let base = String(name).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'membro'
+  let base = String(name).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'member'
   if (!/^[a-z0-9]/.test(base)) base = `m-${base}`
   let id = base
   for (let index = 2; taken.has(id); index += 1) id = `${base}-${index}`
@@ -110,8 +110,8 @@ function slugMember(name, taken) {
  */
 export function harnessLeadInstructions() {
   return [
-    'Você é a sessão principal do harness e só orquestra: entende o pedido, escolhe o fluxo (skill) certo, delega cada etapa ao membro adequado com `team_delegate`, confere os relatórios e responde ao dev.',
-    'Leia a skill do fluxo antes do primeiro passo. Você não roda comandos nem edita arquivos.',
+    'You are the harness main session and you only orchestrate: you understand the request, choose the right flow (skill), delegate each step to the appropriate member with `team_delegate`, check the reports and answer the dev.',
+    'Read the flow skill before the first step. You do not run commands or edit files.',
   ].join('\n\n')
 }
 
@@ -132,7 +132,7 @@ export function harnessLeadInstructions() {
  * @returns {{ bits: Array<Record<string, any>>, team: Record<string, any> }}
  */
 export function teamFromPack(manifest, { name, workspaceDir = null, has, catalog = null } = {}) {
-  const taken = new Set(['lider'])
+  const taken = new Set(['lead'])
   const presets = (manifest.agents || []).filter((agent) => agent.instructions)
   const idOf = new Map(presets.map((agent) => [agent.name, slugMember(agent.name, taken)]))
   const catalogOf = (character) => {
@@ -169,9 +169,9 @@ export function teamFromPack(manifest, { name, workspaceDir = null, has, catalog
     }
   })
   const lead = {
-    id: 'lider',
-    bitKey: 'lider',
-    role: 'Sessão principal: conversa com o dev, decide e delega cada etapa a um membro',
+    id: 'lead',
+    bitKey: 'lead',
+    role: 'Main session: talks to the dev, decides and delegates each step to a member',
     access: 'read',
     launches: members.map((member) => member.id),
     skills: [],
@@ -179,8 +179,8 @@ export function teamFromPack(manifest, { name, workspaceDir = null, has, catalog
     mcp: [],
   }
   bits.unshift({
-    key: 'lider',
-    name: 'Orquestrador',
+    key: 'lead',
+    name: 'Orchestrator',
     character: has && !has('bit-coordinator') ? null : 'bit-coordinator',
     instructions: harnessLeadInstructions(),
     isOrchestrator: true,
@@ -188,8 +188,8 @@ export function teamFromPack(manifest, { name, workspaceDir = null, has, catalog
     effort: ORCHESTRATOR_EFFORT,
   })
   const nodes = [
-    { id: 'start', type: 'start', x: 0, y: 0, label: 'Pedido do dev', detail: '' },
-    { id: 'lead', type: 'step', x: -26, y: 104, label: 'Entender e escolher o fluxo', detail: 'Ler a skill do fluxo.', memberId: 'lider' },
+    { id: 'start', type: 'start', x: 0, y: 0, label: 'Dev request', detail: '' },
+    { id: 'lead', type: 'step', x: -26, y: 104, label: 'Understand and choose the flow', detail: 'Read the flow skill.', memberId: 'lead' },
   ]
   const edges = [{ id: 'e-start', from: 'start', to: 'lead', label: '', kind: 'flow' }]
   members.forEach((member, index) => {
@@ -200,24 +200,24 @@ export function teamFromPack(manifest, { name, workspaceDir = null, has, catalog
     edges.push({ id: `e-${member.id}`, from: 'lead', to: node.id, label: '', kind: 'delegate' })
   })
   const lastY = 240 + Math.ceil(members.length / 3) * 104 + 24
-  nodes.push({ id: 'end', type: 'end', x: 0, y: lastY, label: 'Relatório ao dev', detail: '' })
+  nodes.push({ id: 'end', type: 'end', x: 0, y: lastY, label: 'Report to the dev', detail: '' })
   edges.push({ id: 'e-end', from: 'lead', to: 'end', label: '', kind: 'flow' })
   return {
     bits,
     team: {
       name: String(name || manifest.name || manifest.id).slice(0, 60),
-      description: `Time gerado do harness ${manifest.name || manifest.id}: ${members.length} presets, ${(manifest.skills || []).length} skills.`,
+      description: `Team generated from the harness ${manifest.name || manifest.id}: ${members.length} presets, ${(manifest.skills || []).length} skills.`,
       emoji: '🧭',
       color: '#0891b2',
       workspaceDir,
       members: [lead, ...members],
       flow: { nodes, edges },
-      lead: 'lider',
+      lead: 'lead',
       harness: manifest.id,
       bindWorkspace: false,
       rules: '',
       skills: [],
-      entry: [{ id: 'request', label: 'Pedido', template: '{pedido}' }],
+      entry: [{ id: 'request', label: 'Request', template: '{request}' }],
     },
   }
 }
@@ -284,7 +284,7 @@ export function registerHarnessRoutes(ctx, deps) {
       const input = await body(request)
       const team = deps.teams.get(typeof input.id === 'string' ? input.id : '')
       if (!team) throw codedError('TEAM_NOT_FOUND', `Team "${String(input.id)}" was not found`)
-      if (!team.workspaceDir) throw codedError('TEAM_NO_WORKSPACE', 'O time não tem repositório ou pasta definido.')
+      if (!team.workspaceDir) throw codedError('TEAM_NO_WORKSPACE', 'The team has no repository or folder defined.')
       if (typeof deps.ensureDirectoryWorkspace !== 'function') throw codedError('WORKSPACE_UNAVAILABLE', 'Workspace registry unavailable')
       const workspaceId = await deps.ensureDirectoryWorkspace(team.workspaceDir, team.name)
       if (!workspaceId) throw codedError('WORKSPACE_UNAVAILABLE', `Could not register ${team.workspaceDir} as a workspace`)

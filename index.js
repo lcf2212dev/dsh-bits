@@ -150,7 +150,7 @@ export function apply(ctx, config = {}) {
     try {
       canonical = await fs.realpath(directory)
     } catch {
-      throw Object.assign(new Error(`Diretório não encontrado: ${directory}`), { code: 'TEAM_NO_WORKSPACE' })
+      throw Object.assign(new Error(`Directory not found: ${directory}`), { code: 'TEAM_NO_WORKSPACE' })
     }
     try {
       const existing = ctx.workspaceRegistry.list().find((workspace) => workspace.path === canonical)
@@ -164,7 +164,7 @@ export function apply(ctx, config = {}) {
   }
 
   // Model catalog (subscription aliases + the profile's DSH chat routes) and
-  // the request→response runtime used by both the ad-hoc "Executar" route and
+  // the request→response runtime used by both the ad-hoc "Run" route and
   // team delegation.
   const models = createModelCatalog(ctx)
   const bitRuntime = createBitRuntime(ctx, { bits, catalog, models, log })

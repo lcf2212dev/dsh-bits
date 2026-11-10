@@ -304,7 +304,7 @@ export function installTeamRuntime(ctx, deps) {
     if (binding.role === 'lead') {
       const text = leadPromptText(input)
       return binding.child
-        ? `${text}\n\n## Você foi chamado por outro time\n\nEsta sessão é o líder de outro time que delegou a você a etapa do seu time. Siga o seu fluxo, delegue aos seus bits e ponha o relatório completo na sua mensagem final: ela volta a quem chamou. Você não fala com o dev: devolva perguntas e PAUSAs no relatório.`
+        ? `${text}\n\n## You were called by another team\n\nThis session is the lead of another team that delegated its team step to you. Follow your flow, delegate to your bits and put the complete report in your final message: it goes back to the caller. You do not talk to the dev: return questions and PAUSEs in the report.`
         : text
     }
     return memberPromptText(input)
@@ -348,7 +348,7 @@ export function installTeamRuntime(ctx, deps) {
   /** `<backend>/<model> · <effort>` text of a worker invocation result. */
   function resultRouteText(meta) {
     const backend = meta && meta.backend === 'claude-code' ? 'claude-code' : 'dsh'
-    const model = meta && typeof meta.model === 'string' && meta.model !== '' ? meta.model : 'modelo'
+    const model = meta && typeof meta.model === 'string' && meta.model !== '' ? meta.model : 'model'
     const short = backend === 'claude-code' ? model.replace(/^subscription\//, '') : model
     return meta && typeof meta.effort === 'string' && meta.effort !== '' ? `${backend}/${short} · ${meta.effort}` : `${backend}/${short}`
   }
@@ -359,17 +359,17 @@ export function installTeamRuntime(ctx, deps) {
    */
   async function delegateToAgent(agent, binding, target, targetBit, task, exec) {
     const provider = spawnProvider()
-    if (!provider) throw codedError('TEAM_DELEGATE_UNAVAILABLE', 'Nenhum provedor de subagentes com rota própria está disponível neste perfil.')
+    if (!provider) throw codedError('TEAM_DELEGATE_UNAVAILABLE', 'No subagent provider with its own route is available in this profile.')
     let childBinding
     let routeBit = targetBit
     let label = bitNameOf(targetBit, target)
     let routeTeam = null
     if (target.teamRef) {
       const other = teamMap().get(target.teamRef)
-      if (!other) throw codedError('TEAM_INVALID', `O time referenciado por "${target.id}" não existe mais.`)
+      if (!other) throw codedError('TEAM_INVALID', `The team referenced by "${target.id}" no longer exists.`)
       const otherLead = memberOf(other, other.lead)
       routeBit = lookupBit(otherLead)
-      if (!routeBit) throw codedError('TEAM_INVALID', `O time "${other.name}" não tem um bit de liderança válido.`)
+      if (!routeBit) throw codedError('TEAM_INVALID', `The team "${other.name}" has no valid leadership bit.`)
       childBinding = { teamId: other.id, role: 'lead', parentSession: binding.sessionId }
       label = other.name
       routeTeam = other
@@ -377,13 +377,13 @@ export function installTeamRuntime(ctx, deps) {
       childBinding = { teamId: binding.team.id, memberId: target.id, role: 'member', parentSession: binding.sessionId }
     }
     if (!isOrchestratorBit(routeBit)) {
-      throw codedError('TEAM_LEAD_NOT_ORCHESTRATOR', `O bit "${bitNameOf(routeBit, target)}"${routeTeam ? ` (líder do time «${routeTeam.name}»)` : ''} precisa ser um orquestrador para rodar como agente.`)
+      throw codedError('TEAM_LEAD_NOT_ORCHESTRATOR', `The bit "${bitNameOf(routeBit, target)}"${routeTeam ? ` (lead of team «${routeTeam.name}»)` : ''} must be an orchestrator to run as an agent.`)
     }
     const route = await models.routeFor(routeBit)
     const childId = randomUUID()
     await bindings.set(childId, childBinding)
-    const caller = binding.member ? memberNameOf(binding.member) : 'o líder'
-    const prompt = `Tarefa delegada por ${caller} (time ${binding.team.name}):\n\n${task}`
+    const caller = binding.member ? memberNameOf(binding.member) : 'the lead'
+    const prompt = `Task delegated by ${caller} (team ${binding.team.name}):\n\n${task}`
     let run
     try {
       run = await ctx.subagents.startActivation({
@@ -401,7 +401,7 @@ export function installTeamRuntime(ctx, deps) {
       })
     } catch (error) {
       await bindings.delete(childId).catch(() => {})
-      throw codedError('TEAM_DELEGATE_FAILED', `Não foi possível iniciar ${label}: ${messageOf(error)}`)
+      throw codedError('TEAM_DELEGATE_FAILED', `Could not start ${label}: ${messageOf(error)}`)
     }
     const stop = () => {
       try { run.dispose() } catch { /* already settled */ }
@@ -413,9 +413,9 @@ export function installTeamRuntime(ctx, deps) {
       const text = blocks.filter((block) => block && block.type === 'text').map((block) => block.text).join('\n').trim()
       const routeText = `${route.provider}/${route.model}${route.reasoningEffort ? ` · ${route.reasoningEffort}` : ''}`
       return [
-        `[${label} · ${result.stopReason} · ${routeText} · sessão ${run.childId}]`,
-        text || '(o bit terminou sem mensagem final)',
-        result.diagnostic ? `\nDiagnóstico: ${result.diagnostic}` : '',
+        `[${label} · ${result.stopReason} · ${routeText} · session ${run.childId}]`,
+        text || '(the bit ended without a final message)',
+        result.diagnostic ? `\nDiagnostic: ${result.diagnostic}` : '',
       ].join('\n')
     } finally {
       exec.signal.removeEventListener('abort', stop)
@@ -429,7 +429,7 @@ export function installTeamRuntime(ctx, deps) {
    */
   async function delegateToWorker(agent, binding, target, targetBit, task, exec) {
     if (!bitRuntime || typeof bitRuntime.invokeWorker !== 'function') {
-      throw codedError('BIT_DELEGATE_UNAVAILABLE', 'O runtime dos bits não está disponível neste Harness: não é possível executar bits workers.')
+      throw codedError('BIT_DELEGATE_UNAVAILABLE', 'The bits runtime is not available in this Harness: it is not possible to run worker bits.')
     }
     const cwd = delegationCwd(agent, binding.team)
     const readOnly = target.access === 'read'
@@ -438,27 +438,27 @@ export function installTeamRuntime(ctx, deps) {
       result = await bitRuntime.invokeWorker({ bit: targetBit, task, cwd, readOnly, signal: exec.signal })
     } catch (error) {
       if (exec.signal && exec.signal.aborted) throw error
-      throw codedError(error && typeof error.code === 'string' ? error.code : 'BIT_RUN_FAILED', `O bit "${bitNameOf(targetBit, target)}" falhou: ${messageOf(error)}`)
+      throw codedError(error && typeof error.code === 'string' ? error.code : 'BIT_RUN_FAILED', `The bit "${bitNameOf(targetBit, target)}" failed: ${messageOf(error)}`)
     }
-    const text = result && typeof result.text === 'string' && result.text.trim() !== '' ? result.text.trim() : '(o bit terminou sem resposta)'
+    const text = result && typeof result.text === 'string' && result.text.trim() !== '' ? result.text.trim() : '(the bit ended without a response)'
     const meta = (result && result.meta) || {}
     return [`[${bitNameOf(targetBit, target)} · ${resultRouteText(meta)}]`, text].join('\n')
   }
 
   async function delegate(agent, args, exec) {
     const binding = resolve(agent)
-    if (!binding) throw codedError('TEAM_DELEGATE_INVALID', 'team_delegate só existe em sessões de um time.')
+    if (!binding) throw codedError('TEAM_DELEGATE_INVALID', 'team_delegate only exists in sessions of a team.')
     const allowed = launchableFor(binding)
     const target = allowed.find((member) => member.id === args.member)
     if (!target) {
-      throw codedError('TEAM_DELEGATE_INVALID', `"${args.member}" não pode ser lançado por ${binding.member ? memberNameOf(binding.member) : 'este agente'}. Permitidos: ${allowed.map((member) => member.id).join(', ') || 'nenhum'}.`)
+      throw codedError('TEAM_DELEGATE_INVALID', `"${args.member}" cannot be launched by ${binding.member ? memberNameOf(binding.member) : 'this agent'}. Allowed: ${allowed.map((member) => member.id).join(', ') || 'none'}.`)
     }
     const task = typeof args.task === 'string' ? args.task.trim() : ''
-    if (!task) throw codedError('TEAM_DELEGATE_INVALID', 'team_delegate: "task" é obrigatório e precisa ser autocontido.')
+    if (!task) throw codedError('TEAM_DELEGATE_INVALID', 'team_delegate: "task" is required and must be self-contained.')
     // teamRef targets always run the other team's lead as a child agent.
     if (target.teamRef) return delegateToAgent(agent, binding, target, null, task, exec)
     const targetBit = lookupBit(target)
-    if (!targetBit) throw codedError('TEAM_INVALID', `O bit do membro "${target.id}" (bitId "${target.bitId || '?'}") não existe mais.`)
+    if (!targetBit) throw codedError('TEAM_INVALID', `The bit of member "${target.id}" (bitId "${target.bitId || '?'}") no longer exists.`)
     // Orchestrator bits run as child agents; worker bits are single-shot invocations.
     if (isOrchestratorBit(targetBit)) return delegateToAgent(agent, binding, target, targetBit, task, exec)
     return delegateToWorker(agent, binding, target, targetBit, task, exec)
@@ -470,11 +470,11 @@ export function installTeamRuntime(ctx, deps) {
     const lines = allowed.map((member) => {
       if (member.teamRef) {
         const other = teamMap().get(member.teamRef)
-        return `- ${member.id}: time «${other ? other.name : member.teamRef}» (o líder dele executa e devolve o relatório)`
+        return `- ${member.id}: team «${other ? other.name : member.teamRef}» (its lead runs it and returns the report)`
       }
       const bit = lookupBit(member)
-      const kind = isOrchestratorBit(bit) ? 'orquestrador, roda como agente filho' : 'worker, invocação única'
-      return `- ${member.id}: ${memberNameOf(member)} — ${member.role || ''}${member.access === 'read' ? ' (somente leitura)' : ''} · ${kind}${bit ? ` · ${bit.model || 'modelo padrão'}${bit.effort ? ` · ${bit.effort}` : ''}` : ''}`
+      const kind = isOrchestratorBit(bit) ? 'orchestrator, runs as a child agent' : 'worker, one-shot invocation'
+      return `- ${member.id}: ${memberNameOf(member)} — ${member.role || ''}${member.access === 'read' ? ' (read-only)' : ''} · ${kind}${bit ? ` · ${bit.model || 'default model'}${bit.effort ? ` · ${bit.effort}` : ''}` : ''}`
     })
     return {
       name: 'team_delegate',
@@ -490,7 +490,7 @@ export function installTeamRuntime(ctx, deps) {
         type: 'object',
         properties: {
           member: { type: 'string', enum: allowed.map((member) => member.id), description: 'Member id from the roster.' },
-          task: { type: 'string', description: 'Complete, self-contained task for the bit (pt-BR), including the expected report format.' },
+          task: { type: 'string', description: 'Complete, self-contained task for the bit, including the expected report format.' },
         },
         required: ['member', 'task'],
         additionalProperties: false,
@@ -550,17 +550,17 @@ export function installTeamRuntime(ctx, deps) {
       async execute(args, exec) {
         const agent = exec.agent
         const current = resolve(agent)
-        if (!current || current.role !== 'lead' || current.child) throw new Error('team_handoff é só do líder da sessão principal.')
+        if (!current || current.role !== 'lead' || current.child) throw new Error('team_handoff is only for the lead of the main session.')
         const target = handoffTargets(current.team).find((other) => other.id === args.team)
-        if (!target) throw new Error(`Time "${args.team}" não é alcançável a partir de ${current.team.name}.`)
+        if (!target) throw new Error(`Team "${args.team}" is not reachable from ${current.team.name}.`)
         await bindings.set(current.sessionId, { teamId: target.id, role: 'lead', parentSession: null })
         // New team: new persona, roster, tools and skills from the next step on.
         reinstall(agent)
         invalidateSkills()
         const lead = memberOf(target, target.lead)
         return [
-          `Sessão passada ao time «${target.name}». A partir de agora você é ${lead ? `**${memberNameOf(lead)}** (\`${lead.id}\`)` : 'o líder'} desse time: siga o fluxo e as skills dele.`,
-          `Pedido: ${String(args.request || '').trim()}`,
+          `Session passed to the team «${target.name}». From now on you are ${lead ? `**${memberNameOf(lead)}** (\`${lead.id}\`)` : 'the lead'} of that team: follow its flow and skills.`,
+          `Request: ${String(args.request || '').trim()}`,
         ].join('\n')
       },
     }
@@ -768,18 +768,18 @@ export function installTeamRuntime(ctx, deps) {
   async function startMission({ team: ref, prompt, title }) {
     await ready
     const team = findTeam(ref)
-    if (!team) throw Object.assign(new Error(`Time "${ref}" não encontrado.`), { code: 'TEAM_NOT_FOUND' })
-    if (!team.lead) throw Object.assign(new Error(`O time ${team.name} não tem líder.`), { code: 'TEAM_NO_LEAD' })
+    if (!team) throw Object.assign(new Error(`Team "${ref}" not found.`), { code: 'TEAM_NOT_FOUND' })
+    if (!team.lead) throw Object.assign(new Error(`The team ${team.name} has no lead.`), { code: 'TEAM_NO_LEAD' })
     const leadMember = memberOf(team, team.lead)
-    if (!leadMember) throw Object.assign(new Error(`O líder do time ${team.name} ("${team.lead}") não existe.`), { code: 'TEAM_NO_LEAD' })
+    if (!leadMember) throw Object.assign(new Error(`The lead of team ${team.name} ("${team.lead}") does not exist.`), { code: 'TEAM_NO_LEAD' })
     const leadBit = lookupBit(leadMember)
-    if (!leadBit) throw codedError('TEAM_INVALID', `O bit do líder do time ${team.name} (bitId "${leadMember.bitId || '?'}") não existe mais.`)
-    if (!isOrchestratorBit(leadBit)) throw codedError('TEAM_LEAD_NOT_ORCHESTRATOR', `O líder do time ${team.name} (${bitNameOf(leadBit, leadMember)}) precisa ser um bit orquestrador.`)
-    if (!team.workspaceDir || !existsSync(team.workspaceDir)) throw Object.assign(new Error(`O time ${team.name} não tem um repositório ou pasta válido.`), { code: 'TEAM_NO_WORKSPACE' })
+    if (!leadBit) throw codedError('TEAM_INVALID', `The lead bit of team ${team.name} (bitId "${leadMember.bitId || '?'}") no longer exists.`)
+    if (!isOrchestratorBit(leadBit)) throw codedError('TEAM_LEAD_NOT_ORCHESTRATOR', `The lead of team ${team.name} (${bitNameOf(leadBit, leadMember)}) must be an orchestrator bit.`)
+    if (!team.workspaceDir || !existsSync(team.workspaceDir)) throw Object.assign(new Error(`The team ${team.name} has no valid repository or folder.`), { code: 'TEAM_NO_WORKSPACE' })
     const text = String(prompt || '').trim()
-    if (!text) throw Object.assign(new Error('O pedido está vazio.'), { code: 'BAD_REQUEST' })
+    if (!text) throw Object.assign(new Error('The request is empty.'), { code: 'BAD_REQUEST' })
     const controller = ctx.get('sessionController')
-    if (!controller) throw Object.assign(new Error('Este Harness não cria sessões por plugin (sem sessionController).'), { code: 'SESSIONS_UNAVAILABLE' })
+    if (!controller) throw Object.assign(new Error('This Harness does not create sessions from a plugin (no sessionController).'), { code: 'SESSIONS_UNAVAILABLE' })
     // The lead agent runs on the lead bit's DSH route (DeepSeek-V4.1-Flash Max
     // by default); fail before creating the session when the route is invalid.
     const leadRoute = await models.routeFor(leadBit)
@@ -835,21 +835,21 @@ export function installTeamRuntime(ctx, deps) {
   }
 
   /**
-   * Continue a team session (answer a PAUSA, add a request): the message is
+   * Continue a team session (answer a PAUSE, add a request): the message is
    * delivered to the session's lead as a new user message.
    *
    * @param {{ sessionId: string, prompt: string }} input
    */
   async function continueMission({ sessionId, prompt }) {
     const text = String(prompt || '').trim()
-    if (!text) throw Object.assign(new Error('A resposta está vazia.'), { code: 'BAD_REQUEST' })
+    if (!text) throw Object.assign(new Error('The response is empty.'), { code: 'BAD_REQUEST' })
     await ready
     const stored = bindings.get(String(sessionId || ''))
     if (!stored || stored.role !== 'lead' || stored.parentSession) {
-      throw Object.assign(new Error(`A sessão ${sessionId} não é a sessão principal de um time.`), { code: 'TEAM_SESSION_NOT_FOUND' })
+      throw Object.assign(new Error(`Session ${sessionId} is not the main session of a team.`), { code: 'TEAM_SESSION_NOT_FOUND' })
     }
     const controller = ctx.get('sessionController')
-    if (!controller) throw Object.assign(new Error('Este Harness não retoma sessões por plugin (sem sessionController).'), { code: 'SESSIONS_UNAVAILABLE' })
+    if (!controller) throw Object.assign(new Error('This Harness does not resume sessions from a plugin (no sessionController).'), { code: 'SESSIONS_UNAVAILABLE' })
     const resolved = await controller.resolveAgent(sessionId)
     if (resolved && resolved.error) throw resolved.error
     const agent = resolved && resolved.agent
@@ -869,7 +869,7 @@ export function installTeamRuntime(ctx, deps) {
   /* -------------------------- request queue folder -------------------------- */
 
   // `<botsRoot>/team-inbox/*.json` with { team, request, title? } starts a mission
-  // ({ session, request } continues one, e.g. the answer to a PAUSA);
+  // ({ session, request } continues one, e.g. the answer to a PAUSE);
   // the file moves to processed/ (with the session id) or failed/ (with the error).
   const inboxDir = path.join(botsRoot, 'team-inbox')
   let inboxBusy = false
@@ -930,15 +930,15 @@ export function installTeamRuntime(ctx, deps) {
     disposers.push(ctx.tools.register({
       name: 'team_send',
       description: [
-        'Send a request (for example "implemente o AB 160047") to a team of bits: opens a new session in the team repository, led by the team lead, and starts it right away.',
-        'Use only when the user asks to hand work to a team. Returns the new session id; the team works there on its own (PAUSA questions appear in that session).',
+        'Send a request (for example "implement AB 160047") to a team of bits: opens a new session in the team repository, led by the team lead, and starts it right away.',
+        'Use only when the user asks to hand work to a team. Returns the new session id; the team works there on its own (PAUSE questions appear in that session).',
       ].join(' '),
       parameters: {
         type: 'object',
         properties: {
-          team: { type: 'string', description: 'Team id or name (e.g. "DSC", "DSC · Implementação"). Ignored when `session` is given.' },
-          request: { type: 'string', description: 'The request exactly as the user wants it delivered to the team lead (pt-BR).' },
-          session: { type: 'string', description: 'Optional id of an existing team session to continue (for example the answer to a PAUSA) instead of opening a new one.' },
+          team: { type: 'string', description: 'Team id or name (e.g. "DSC", "DSC · Implementation"). Ignored when `session` is given.' },
+          request: { type: 'string', description: 'The request exactly as the user wants it delivered to the team lead (verbatim from the user).' },
+          session: { type: 'string', description: 'Optional id of an existing team session to continue (for example the answer to a PAUSE) instead of opening a new one.' },
         },
         required: ['request'],
         additionalProperties: false,
@@ -952,11 +952,11 @@ export function installTeamRuntime(ctx, deps) {
       async execute(args) {
         if (args.session) {
           const continued = await continueMission({ sessionId: args.session, prompt: args.request })
-          return `Mensagem entregue à sessão ${continued.sessionId} do time «${continued.teamName}».`
+          return `Message delivered to session ${continued.sessionId} of team «${continued.teamName}».`
         }
-        if (!args.team) throw new Error('team_send: informe "team" (ou "session" para continuar uma sessão).')
+        if (!args.team) throw new Error('team_send: provide "team" (or "session" to continue a session).')
         const started = await startMission({ team: args.team, prompt: args.request })
-        return `Pedido entregue ao time «${started.teamName}». Sessão ${started.sessionId} aberta em ${started.cwd} (aparece na barra lateral, no workspace do repositório).`
+        return `Request delivered to team «${started.teamName}». Session ${started.sessionId} opened in ${started.cwd} (it appears in the sidebar, in the repository workspace).`
       },
     }, {
       when: ({ agent }) => {
@@ -1056,14 +1056,14 @@ export function installTeamRuntime(ctx, deps) {
       if (!binding) return next()
       const role = roleOf(binding)
       if (!teamToolAllowed(exec.name, role)) {
-        const label = binding.member ? memberNameOf(binding.member) : 'o líder'
+        const label = binding.member ? memberNameOf(binding.member) : 'the lead'
         return {
           kind: 'deny',
           reason: role.orchestrator
-            ? `Regra do time: ${label} só orquestra. Delegue a etapa a um bit com team_delegate.`
+            ? `Team rule: ${label} only orchestrates. Delegate the step to a bit with team_delegate.`
             : role.readOnly && ['write', 'edit', 'apply_patch', 'str_replace_editor'].includes(exec.name)
-              ? `Regra do repositório: ${label} é um bit somente leitura e não edita arquivos. Devolva a edição a quem chamou.`
-              : `Regra do time: a ferramenta ${exec.name} não faz parte do bit ${binding.member ? binding.member.id : ''}. Devolva a etapa a quem chamou se ela exigir outra ferramenta.`,
+              ? `Repository rule: ${label} is a read-only bit and does not edit files. Return the edit to the caller.`
+              : `Team rule: the tool ${exec.name} is not part of the bit ${binding.member ? binding.member.id : ''}. Return the step to the caller if it requires another tool.`,
         }
       }
       if (UNGUARDED_TOOLS.has(exec.name)) return next()
@@ -1073,7 +1073,7 @@ export function installTeamRuntime(ctx, deps) {
           const file = exec.arguments && exec.arguments.file_path
           const absolute = typeof file === 'string' ? path.resolve(sessionCwd(agent) || '/', file) : ''
           if (!leadMayRead(absolute, { packDir: packData ? packData.pack.packDir : null, dataDir: botsRoot })) {
-            return { kind: 'deny', reason: 'Regra do time: o líder só lê o pacote do harness e arquivos .dsc/ (contexto, validação). Leitura de código, card, logs ou web vai a um bit (team_delegate).' }
+            return { kind: 'deny', reason: 'Team rule: the lead only reads the harness pack and .dsc/ files (context, validation). Reading code, card, logs or web goes to a bit (team_delegate).' }
           }
         }
       }
@@ -1125,7 +1125,7 @@ export function installTeamRuntime(ctx, deps) {
       const message = Object.freeze({
         id: randomUUID(),
         role: 'user',
-        content: [{ type: 'text', text: `<system-reminder>\nInstruções do harness para arquivos como \`${file}\`:\n\n${hits.map((item) => `### ${item.name} (${item.applyTo.join(', ')})\n\n${item.body}`).join('\n\n')}\n</system-reminder>` }],
+        content: [{ type: 'text', text: `<system-reminder>\nHarness instructions for files like \`${file}\`:\n\n${hits.map((item) => `### ${item.name} (${item.applyTo.join(', ')})\n\n${item.body}`).join('\n\n')}\n</system-reminder>` }],
         source: { kind: 'bits-team-instructions', form: 'notice', summary: hits.map((item) => item.name).join(', ') },
       })
       return { ...downstream, additionalContexts: [...(downstream.additionalContexts || []), message] }

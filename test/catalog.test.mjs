@@ -182,7 +182,6 @@ await test('shipped catalog is schema v2 with 52 bits in 7 groups', async () => 
   const groupIds = new Set(catalog.groups.map((group) => group.id))
   assert.equal(groupIds.size, 7)
   for (const group of catalog.groups) {
-    assert.notEqual(group.label.pt, '')
     assert.notEqual(group.label.en, '')
   }
   const seen = new Set()
@@ -192,7 +191,7 @@ await test('shipped catalog is schema v2 with 52 bits in 7 groups', async () => 
     seen.add(bit.id)
     assert.ok(groupIds.has(bit.group), `${bit.id} group`)
     assert.match(bit.color, /^#[0-9a-f]{6}$/, `${bit.id} color`)
-    assert.ok(bit.summary.pt && bit.summary.en, `${bit.id} summaries`)
+    assert.ok(bit.summary.en, `${bit.id} summaries`)
     assert.ok(bit.instructions.length > 100 && bit.instructions.length <= 1500, `${bit.id} instructions length`)
     assert.match(bit.instructions, /Report back with /, `${bit.id} report line`)
     assert.ok(!bit.instructions.includes('Portuguese'), `${bit.id} has no language mention`)
@@ -283,7 +282,7 @@ await test('a missing catalog degrades to an empty catalog with an error', async
 await test('normalizeCatalog drops malformed rows and duplicates', async () => {
   const result = normalizeCatalog({
     version: 2,
-    groups: [{ id: 'g', label: { pt: 'G' } }, { id: 'g' }, { id: 'Bad Id' }],
+    groups: [{ id: 'g', label: { en: 'G' } }, { id: 'g' }, { id: 'Bad Id' }],
     bits: [
       { id: 'bit-a', name: 'A', group: 'g', color: '#ABCDEF' },
       { id: 'bit-a', name: 'dup' },
@@ -293,7 +292,7 @@ await test('normalizeCatalog drops malformed rows and duplicates', async () => {
     ],
   })
   assert.equal(result.version, 2)
-  assert.deepEqual(result.groups, [{ id: 'g', label: { pt: 'G', en: 'G' } }])
+  assert.deepEqual(result.groups, [{ id: 'g', label: { en: 'G' } }])
   assert.deepEqual(result.bits.map((bit) => bit.id), ['bit-a', 'bit-c'])
   assert.equal(result.bits[0].color, '#abcdef')
   assert.equal(result.bits[1].group, null)
@@ -303,7 +302,7 @@ await test('normalizeCatalog drops malformed rows and duplicates', async () => {
 await test('normalizeCatalog fills schema v2 defaults for old (v1) rows', async () => {
   const result = normalizeCatalog({
     version: 1,
-    groups: [{ id: 'general', label: { pt: 'Geral', en: 'General' } }],
+    groups: [{ id: 'general', label: { en: 'General' } }],
     bits: [
       { id: 'bit-old', name: 'Old', group: 'general' },
       {
@@ -445,7 +444,7 @@ await test('create/update accept catalog characters and reject unknown ones', as
   assert.equal(created.bit.model, 'subscription/haiku', 'route create inherits the catalog defaults')
   assert.equal(created.bit.effort, 'low')
 
-  const manager = await (await app.call('/api/bots.create', { name: 'Chefe', character: 'bit-manager' })).json()
+  const manager = await (await app.call('/api/bots.create', { name: 'Boss', character: 'bit-manager' })).json()
   assert.equal(manager.ok, true)
   assert.equal(manager.bit.isOrchestrator, true)
   assert.equal(manager.bit.model, 'deepseek-account/deepseek-flash')
@@ -486,7 +485,7 @@ await test('routes without a catalog dependency degrade gracefully', async () =>
   assert.equal(payload.version, 2)
   assert.equal((await app.call('/api/bots.avatar?id=bit-scout')).status, 404)
 
-  const created = await (await app.call('/api/bots.create', { name: 'Sem catálogo', character: 'bit-not-in-catalog' })).json()
+  const created = await (await app.call('/api/bots.create', { name: 'No catalog', character: 'bit-not-in-catalog' })).json()
   assert.equal(created.ok, true, 'the route lets the store validate a syntactically valid character')
 })
 

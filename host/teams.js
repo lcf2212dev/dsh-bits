@@ -308,7 +308,7 @@ function normalizeMcpNames(value, field) {
   return [...new Set(names)];
 }
 
-/** Request templates offered by "Enviar AB" ({n} and {pedido} placeholders). */
+/** Request templates offered by "Send request" ({n} and {request} placeholders). */
 function normalizeEntry(value) {
   const raw = boundedArray(value, 'entry', MAX_ENTRY);
   const ids = new Set();

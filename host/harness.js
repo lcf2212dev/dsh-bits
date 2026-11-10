@@ -213,14 +213,14 @@ export const SCRIPT_PATCHES = [
     file: '.github/hooks/scripts/guard/paths.cjs',
     from: 'const insideRepo = (abs, repo) =>\n  !!repo && (isInside(repo.top, abs) || isInside(repo.principal, abs));',
     to: 'const insideRepo = (abs, repo) =>\n  (!!process.env.DSH_HARNESS_PACK_ROOT && isInside(process.env.DSH_HARNESS_PACK_ROOT, abs)) ||\n  (!!repo && (isInside(repo.top, abs) || isInside(repo.principal, abs)));',
-    why: 'Os scripts do harness moram no pacote (fora do repositório): rodá-los não é "script de fora do repositório".',
+    why: 'Harness scripts live in the package (outside the repository): running them is not an "outside-the-repository script".',
   },
   {
     id: 'where.packVersion',
     file: '.github/scripts/where.mjs',
     from: "readFileSync(path.join(dir, '.github', 'harness.json'), 'utf8')",
     to: "readFileSync(path.join(process.env.DSH_HARNESS_PACK_ROOT || dir, '.github', 'harness.json'), 'utf8')",
-    why: 'A versão do harness vem do pacote do time (igual para a Raiz e as WTs), não da árvore.',
+    why: 'The harness version comes from the team pack (the same for the Root and the WTs), not from the tree.',
   },
 ]
 
@@ -232,12 +232,12 @@ async function applyPatches(packDir, patches) {
     try {
       text = await fs.readFile(file, 'utf8')
     } catch {
-      results.push({ id: patch.id, file: patch.file, applied: false, reason: 'arquivo ausente', why: patch.why })
+      results.push({ id: patch.id, file: patch.file, applied: false, reason: 'file missing', why: patch.why })
       continue
     }
     const count = text.split(patch.from).length - 1
     if (count !== 1) {
-      results.push({ id: patch.id, file: patch.file, applied: false, reason: `âncora encontrada ${count} vez(es)`, why: patch.why })
+      results.push({ id: patch.id, file: patch.file, applied: false, reason: `anchor found ${count} time(s)`, why: patch.why })
       continue
     }
     await fs.writeFile(file, text.replace(patch.from, patch.to))
@@ -284,7 +284,7 @@ async function collectAgents(packDir, files) {
   return agents.sort((a, b) => a.name.localeCompare(b.name))
 }
 
-/** Skill names from a `**Skills:** leia antes a [`x`](../skills/x/SKILL.md)…` line. */
+/** Skill names from a `**Skills:** read [`x`](../skills/x/SKILL.md) first` line. */
 function skillsLine(body) {
   const line = body.split(/\r?\n/).find((item) => /^\*\*Skills:\*\*/.test(item.trim()))
   if (!line) return []

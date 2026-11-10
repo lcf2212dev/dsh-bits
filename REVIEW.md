@@ -42,9 +42,9 @@ the bot name, emoji, `instructions` (0..20000 chars) and `workspaceDir`. `dsh-sy
 interpolates sections by default and **throws** on any unresolved `{{name}}` reference
 (`dsh-system-prompt/lib/index.js:119-121,160-187`; README: “an unknown reference … throws”).
 Failure scenario: a user writes a persona containing a common template placeholder
-(`Você é {{nome}}, o pesquisador…`, `Responda a {{user}}`, `{{ name }}`) — the exact use case
-this feature advertises (“instruções permanentes”). The first model request in that bot session
-fails during prompt assembly with `unknown prompt variable "{{nome}}" in section
+(`You are {{name}}, the researcher…`, `Reply to {{user}}`, `{{ name }}`) — the exact use case
+this feature advertises (“permanent instructions”). The first model request in that bot session
+fails during prompt assembly with `unknown prompt variable "{{name}}" in section
 "bots:persona:<id>"`; every turn fails, and the error surfaces as a broken conversation with no
 indication that the persona text is the cause. Data is not corrupted but the bot is unusable and
 the failure looks like a harness bug.
@@ -64,7 +64,7 @@ has both shells and the persona claims “The host shell tool is intentionally u
 The inverse toggle (VM off on a live VM-bot session) leaves the restriction installed and
 `vm_bash` gone: the agent has **no** shell. Editing a bot also changes what `when` sees for
 instructions? No — instructions are frozen at attach; the machine rules go stale too.
-Failure scenario: `Conversar` → `Editar` → enable “Máquina virtual” → next message: agent can run
+Failure scenario: `Chat` → `Edit` → enable “Virtual machine” → next message: agent can run
 host `bash` (danger-full-access in this profile) while the product UI/README says commands run in
 the container. That is the isolation boundary the feature sells, weakened by a supported UI action.
 Fix (choose one): (a) on `POST /api/bots.update` re-install/refresh the agent registration for the
@@ -100,7 +100,7 @@ A `vm_bash` call already executing (or starting between the two) holds the old r
 container for a bot that no longer exists. The route cannot later manage it (no record → every
 `/api/bots.*` returns `BOT_NOT_FOUND`), the UI never shows it, and `dsh-bot-<id>` plus its
 workspace volume state leaks. Also `vm.remove` failure is only logged.
-Failure scenario: user types a message and clicks “Excluir bot” before the turn’s first
+Failure scenario: user types a message and clicks “Delete bot” before the turn’s first
 `vm_bash` finishes: orphan container remains running indefinitely.
 Fix: add a deleted/tombstone set consulted by `vm_bash` (`when` and `execute`) and by
 `installBotAgents`; make `ensure()` carry a record-existence check (inject a `isKnownBot(id)`
@@ -111,7 +111,7 @@ delete-while-exec-running.
 ### MINOR
 
 #### m1. Concurrent `ensure()` reports a false `VM_NAME_CONFLICT` — `host/vm.js:547-570`
-Two concurrent first-time starts (UI “Iniciar VM” + first `vm_bash`, or two windows) both see the
+Two concurrent first-time starts (UI “Start VM” + first `vm_bash`, or two windows) both see the
 container missing; the loser’s `docker run` fails with “already in use” and is mapped to
 `VM_NAME_CONFLICT` (“refusing to touch it”) although the winner is the plugin’s own labelled
 container. The model receives a scary conflict message; retry usually recovers.
@@ -141,7 +141,7 @@ a symlink (or whose parent chain gained a symlink) when `deleteWorkspace` is req
 #### m4. `vm.image` edits are not reconciled with an existing container — `host/vm.js:496-575`, `host/routes.js:407`
 `#assertManaged` only checks `managed` + `id` labels; the image is not compared. After the user
 edits the image (UI allows any reference), the status/`BotView.vmStatus.image` reports the new
-image while the running container still uses the old one (the UI badge says “Rodando” with the
+image while the running container still uses the old one (the UI badge says “Running” with the
 new image). Silent divergence from the record; re-creating requires manually removing the VM.
 Fix: compare `Config.Image`/container labels with the record and either report a `detail`/state
 mismatch or offer/require `remove` before the next start.
@@ -165,11 +165,11 @@ remove`) so probes and actions serialize.
 - n3. `host/vm.js:540-548` `-v ${workspaceDir}:${workspaceDir}` breaks if `botsRoot` contains a
   colon; not reachable from routes today (workspaceDir is not client-settable — good), but a
   colon in configured `botsRoot` yields a confusing Docker mount error. Validate at construction.
-- n4. `client.js:1830` registers dictionaries as `{ en, pt, 'pt-BR': pt }`. Runtime accepts it
-  (`dsh-client-locale/lib/client.js:1675-1706`) and the shipped `pt` language pack
-  (`fallback: 'en'`) covers the active locale; the documented typed contract asks for `zh`+`en`
-  and `'pt-BR'` is a redundant entry. Harmless, but registering `{ zh?, en, pt }` (or the
-  per-locale form) is cleaner. No functional defect found.
+- n4. `client.js` registers a single dictionary: `ctx.locale.register(NS, { en: EN })`
+  (`client.js:6938`), with the team strings (`TEAM_EN`, `client.js:1802`) merged into `EN`
+  (`client.js:2097`). The earlier bilingual registration (two dictionaries, regional locale
+  aliases and a language pack) is gone; the runtime is satisfied with the single `en` entry,
+  which is the expected documented form. No functional defect found.
 - n5. `host/agent.js:167-171` diagnostics ring keeps only 20 entries and `installAgent` records an
   agent in `attached` even if both persona and restriction registration failed (`host/agent.js:248-254`),
   so `/api/bots.diagnostics` can report “attached” for an agent that got no persona. Record the
@@ -271,8 +271,8 @@ Client
   React text nodes; the only user-controlled style value is `bot.color`, regex-validated
   (`/^#[0-9a-fA-F]{6}$/`) in `normalizeBot`; CSS is a static `<style>` string using theme tokens
   with fallbacks.
-- Dictionaries: complete parity `en`/`pt` (83 keys each) and cover every key the CONTRACT requires;
-  reported errors are localized through `t`.
+- Dictionaries: the single English dictionary (`EN`, absorbing `TEAM_EN`) covers every key the
+  CONTRACT requires; reported errors are localized through `t`.
 - `package.json` `dsh` manifest is valid for the installed validators: `bundle.patch`,
   `client.platform: "web"`, `client.immediately: true` (boolean accepted,
   `dsh-client-modules/lib/index.js:88-99`), `client.inject` package list.
@@ -314,7 +314,7 @@ as-is:
   With B1 present, any persona that contains a `{{…}}` template — a plausible first-day edit —
   makes that bot’s sessions fail every turn with an unrelated-looking prompt-assembly error.
 - M1 should be fixed or explicitly documented before the feature is presented as an isolation
-  boundary (“a ferramenta bash do host fica oculta”): today it is only true at the moment the
+  boundary (“the host bash tool is hidden”): today it is only true at the moment the
   agent was created, not after the user edits the bot.
 - M2/M3 are lifecycle/teardown races that a long-running Desktop profile will eventually hit
   (HMR/unload, delete-while-busy) but they do not endanger existing user data; schedule them as
@@ -338,7 +338,7 @@ code was edited, nothing was installed, the profile was not touched. Only this f
 
 | ID | Status | Evidence / residual note |
 |---|---|---|
-| **B1** persona interpolation | **FIXED** | `host/agent.js:231-243` now registers the section with `interpolate: false` and a `text()` callback reading the live record. `test/agent.test.mjs` asserts `interpolate === false`, `typeof text === 'function'`, and that literal `{{nome}}`/`{{fonte}}` in instructions survive. Correct: `dsh-system-prompt` only interpolates when `interpolate !== false` (`lib/index.js:119-121, 160-187`). |
+| **B1** persona interpolation | **FIXED** | `host/agent.js:231-243` now registers the section with `interpolate: false` and a `text()` callback reading the live record. `test/agent.test.mjs` asserts `interpolate === false`, `typeof text === 'function'`, and that literal `{{name}}`/`{{source}}` in instructions survive. Correct: `dsh-system-prompt` only interpolates when `interpolate !== false` (`lib/index.js:119-121, 160-187`). |
 | **M1** live VM toggle | **FIXED** (with one residual, see R5) | `refreshBot()` (`host/agent.js:279-295`) re-registers for every live agent of the bot; wired through `onBotChanged` from `routes.js:372-376, 404-408` and `index.js:141-144`; persona `text()` is dynamic. Defense-in-depth `ctx.tools.guard()` added (`host/agent.js:398-415`). API verified against `dsh-tools`: `guard(exec)` is checked after pre-execute policy (`lib/types/pipeline.js:154, lib/types/index.js:314-330`), gets the real `exec` with `.name`/`.agent`, and a returned string is the denial reason (`Error: <reason>` content). Guard no-ops for non-VM bots, non-bot agents, and non-shell tools (unit test asserts all three). `test/agent.test.mjs` covers enable→disable→re-enable on a live agent (restriction present/absent/present, persona text, `when`); `test/e2e-web.mjs:460-484` (new step 5c) verifies the same through the real host: `restricted` flips false/true, `errors === []`. |
 | **M2** non-sticky dispose | **FIXED** | `#disposed` sticky flag (`host/vm.js:239`), set first in `dispose()` (`:936-946`), short-circuited at `#run` entry (`:1337-1350`) and again immediately before `spawn` (`:1475-1480`). `test/vm-lifecycle.test.mjs` covers in-flight abort + post-dispose short-circuit against real Docker. Post-dispose `status()` degrades through its existing `VM_ABORTED` catch, `available()` reports a cancelled probe; no throw escapes during teardown. **Caveat:** this correct behavior makes the old `test/vm.test.mjs` red — see R1 (test file must be updated). |
 | **M3** orphan container on delete | **FIXED (residual edge R3)** | `forget()` tombstone (`host/vm.js:909-925`) + `#assertNotForgotten` in `ensure`/`stop`/`restart`/`exec` (`:504, 619, 661, 757`); `remove()` deliberately unguarded as the cleanup path (`:695-698`) and `routes.js:435-448` calls `forget()` then `remove()`. `test/vm-lifecycle.test.mjs` asserts `VM_BOT_DELETED` for ensure/exec after forget and that `remove()` still works. Legit re-create after `remove()` is **not** broken: only `forget()` sets the tombstone, `remove()` does not, bot ids are not reusable (`BOT_ID_EXISTS`), and vms are per-instance. |
@@ -350,7 +350,7 @@ code was edited, nothing was installed, the profile was not touched. Only this f
 | **n1** login-shell description | **FIXED** | `host/vm.js:324` now says “fresh `bash -lc` process”. |
 | **n2** label trust | **OPEN** (should be documented as convention, not boundary) | unchanged. |
 | **n3** colon in `botsRoot` mount | **OPEN** (cosmetic, trusted config only) | unchanged. |
-| **n4** locale dict shape | **OPEN** (harmless) | runtime still accepts `{en, pt, 'pt-BR'}`; shipped `pt` pack covers the active locale. |
+| **n4** locale dict shape | **FIXED** (English-only) | `client.js:6938` registers `{ en: EN }`; the earlier bilingual registration and its locale aliases are gone. |
 | **n5** diagnostics flags | **FIXED** | `host/agent.js:260-268` records `restricted`/`personaOk`; E2E asserts `restricted` transitions. |
 | **n6** workspaceRemoved flag | **OPEN** (cosmetic) | unchanged. |
 
@@ -590,7 +590,7 @@ plugin change, and the real persisted state under `~/.dsh/bots`.
 | `node test/team-runtime.test.mjs` | **PASS** — `team-runtime: 16 tests passed`, exit 0 |
 | `node test/e2e-web.mjs` | **PASS** — 9/9 sections, throwaway `DSH_HOME`, temp profile removed; without the delegate plugin the subscription run fails with the actionable `BIT_DELEGATE_UNAVAILABLE` and a DSH-route worker with `BIT_MODEL_INVALID`; 52 catalog bits/4 orchestrators, 3 subscription model options, team template instantiates 11 bits+members, removed v4 routes answer non-200 |
 | `BITS_E2E_DELEGATE_DIR=/home/leandro/Documents/deepseek-harness/default-workspace/dsh-claude-delegate node test/e2e-web.mjs` | **PASS** — real subscription worker: `REAL subscription run answered in 4923ms: ok`, `meta.backend = claude-code`, `meta.model = subscription/haiku`; delegate plugin installed from its local dir into the throwaway profile |
-| `node test/visual.mjs --width 1440 --height 900` | **PASS** — `VISUAL DONE`, exit 0 (7 dark screenshots + card/dialog/Executar interactions) |
+| `node test/visual.mjs --width 1440 --height 900` | **PASS** — `VISUAL DONE`, exit 0 (7 dark screenshots + card/dialog/Run interactions) |
 | `node test/visual-teams.mjs --width 1440 --height 900` | **PASS** — 2/2 checks (fromTemplate in the UI/fresh bitId members/orchestrator-only lead/`teams.run` wiring; editor interactions incl. member bit picker/read-only route) |
 | `node test/visual-projects.mjs --width 1440 --height 900` | **PASS** — project CRUD/membership/shared rule/detach/badges, exit 0 |
 | adversarial probe scripts (`/tmp/v5verify/adversarial1.mjs`, `adversarial2.mjs`; not part of the repo) | **PASS** 26/26 and 32/32 — see "Adversarial checks executed" below |
@@ -657,13 +657,13 @@ applies). **Does not block shipping.**
 (`orchestrator: orchestrates(binding) && readOnly`); a lead with `access: 'write'` instead
 gets `MEMBER_ALLOWED_TOOLS` (`bash`, `write`, `edit`, glob/web/…) and the lead-only read
 boundary in the pre-execute policy (`host/team-runtime.js:1071-1078`) is skipped. Yet
-`leadPromptText`/glossary always tells the lead it "só orquestra: as ferramentas de
-terminal, escrita, busca e web ficam fora do seu alcance" (`host/team-prompt.js:236`), and
+`leadPromptText`/glossary always tells the lead it "only orchestrates: the terminal, write,
+search and web tools are out of its reach" (`host/team-prompt.js:236`), and
 v5 now requires the lead to be an orchestrator bit (§5.1). The editor does not prevent it:
 the member access select is rendered for every member including the lead
 (`client.js:6899`) and `normalizeTeam` has no lead-access rule
-(`host/teams.js:412-416`). Concrete scenario: a user opens `DSC · Entrega`, changes the
-lead member's access to "leitura e escrita", saves (accepted), and the next root session of
+(`host/teams.js:412-416`). Concrete scenario: a user opens `DSC · Delivery`, changes the
+lead member's access to "read and write", saves (accepted), and the next root session of
 that team can run `bash`/`write` while its own prompt and flow skills say it cannot. The
 policy is deliberately "kept from v4" (comment at `host/team-runtime.js:279-282`) and is
 user-initiated, so this is a consistency/UX defect, not a privilege escalation. Suggested
@@ -725,7 +725,7 @@ contract only requires validation on the write path; noted as a consistency nit,
 
 - **§0 pivot**: no VM machinery anywhere in the working tree — `host/vm.js`, `host/agent.js`,
   `host/notify.js` and their tests are deleted; repository-wide grep finds `docker`/`vm`/
-  `notify`/`Conversar` only in historical `CONTRACT.md`, absence assertions in tests, or
+  `notify`/`Chat` only in historical `CONTRACT.md`, absence assertions in tests, or
   doc comments saying they were removed. `client.js` has no VM/chat/notify/`bots.images`/
   `bots.vm` string or call left (`test/visual.mjs` asserts the rendered page text too).
 - **§1 models** (`host/models.js`): exact subscription labels/aliases/efforts; DSH route
@@ -807,16 +807,16 @@ contract only requires validation on the write path; noted as a consistency nit,
   avatar/name/character/group/orchestrator-worker badge/model label·effort, no VM badge;
   the editor has the isOrchestrator switch, model select from `/api/bots.models` and effort
   select, snaps model+effort atomically in one state update when the family changes, offers
-  "restaurar descrição padrão", blocks orchestrator+subscription; workers get "Executar"
+  "Restore default description", blocks orchestrator+subscription; workers get "Run"
   (request textarea, read-only default **on**, busy state, response/error panel) and
-  orchestrators show "Executa em fluxos" + the teams they lead and no Executar button;
+  orchestrators show "Executes in flows" + the teams they lead and no Run button;
   member editor picks a bit grouped by catalog group with role/access/launches/teamRef/mcp/
   skills and read-only model/effort badges, lead selector only offers orchestrator members,
   an invalid current lead is shown inline, save is blocked with a toast; templates create via
-  `POST /api/bots.teams.fromTemplate`; "Enviar pedido" calls `POST /api/bots.teams.run`,
+  `POST /api/bots.teams.fromTemplate`; "Send request" calls `POST /api/bots.teams.run`,
   shows busy/created-session and opens it through `uiWorkspace.openSession` when possible;
-  the flow editor and Projects tab are behaviourally unchanged; pt/en dictionaries have
-  parity for the new keys (86/86 keys each, no missing key side). The served bundle renders
+  the flow editor and Projects tab are behaviourally unchanged; the single English dictionary
+  covers the new keys (no missing key). The served bundle renders
   in the real host (E2E) and in headless Chrome (visual suites).
 - **§9 files/config/docs**: deletions done; `package.json` v0.4.0 description/keywords have
   no VM terms; `cordis.patch.yml` `bots` row config is empty (`botsRoot` only, as allowed);
@@ -870,7 +870,7 @@ Independent fixtures driven directly against the shipped modules:
   boundaries are the cwd (team workspace) and the permission mode, and repo/web content in
   the prompt can steer the subscribed CLI. The contract explicitly keeps bypass as the
   default; members marked `access: read` get `readOnly: true` → `--permission-mode plan`,
-  which the real E2E invocation exercised. Documented in README's "Segurança e limites";
+  which the real E2E invocation exercised. Documented in README's "Security and limits";
   no change requested.
 - No new network/auth surface: routes stay on the authenticated host connection registry
   (same convention as v4); the avatar route stays id-whitelisted (no path escape); the

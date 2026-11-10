@@ -32,7 +32,6 @@ bots-plugin/
   cordis.patch.yml      (Lead)
   icon.svg              (Lead)
   locale/en.json        (Lead)  bundle display metadata only
-  locale/pt.json        (Lead)
   index.js              (Lead)  host plugin entry: apply(ctx, config)
   host/store.js         (host-store worker: task-1)
   host/routes.js        (host-store worker: task-1)
@@ -60,11 +59,11 @@ Persisted record (JSON in `$DSH_HOME/bots/bots.json`, `$DSH_HOME` = `~/.dsh`):
   "bots": [
     {
       "id": "3f9a1c2b7e",
-      "name": "Pesquisador",
+      "name": "Researcher",
       "character": "bit-researcher",
       "emoji": "🔬",
       "color": "#7c3aed",
-      "instructions": "Você é o Pesquisador...",
+      "instructions": "You are the Researcher...",
       "workspaceDir": "~/.dsh/bots/3f9a1c2b7e/workspace",
       "vm": { "enabled": true, "image": "ubuntu:24.04" },
       "createdAt": "2026-11-08T20:00:00.000Z",
@@ -237,7 +236,7 @@ Routes (paths are exact; methods as listed; body is JSON):
 | `/api/bots.vm` | POST | `{ id, action: 'start'|'stop'|'restart'|'remove'|'status' }` | `{ bot: BotView }` |
 | `/api/bots.images` | GET | – | `{ images: [...], defaultImage }` |
 | `/api/bots.docker` | GET | – | `{ available, version, error }` |
-| `/api/bots.catalog` | GET | – | `{ version, groups: [{ id, label: { pt, en } }], bits: [{ id, name, group, emoji, color, summary: { pt, en }, instructions, avatar }], error }` |
+| `/api/bots.catalog` | GET | – | `{ version, groups: [{ id, label: { en } }], bits: [{ id, name, group, emoji, color, summary: { en }, instructions, avatar }], error }` |
 | `/api/bots.avatar?id=<bit>` | GET | – | binary `image/webp` (HTTP 404 for an unknown id; the only non-JSON route) |
 
 `BotView` composition in routes: record + `workspaceId` (from `ensureWorkspaceId(record)`,
@@ -291,7 +290,7 @@ Registration (copy this shape):
 const PANEL_ID = 'bots'
 
 exports.apply = function apply(ctx) {
-  ctx.effect(() => ctx.locale.register(NS, { en, 'pt-BR': pt, pt }), 'bots: dictionaries')
+  ctx.effect(() => ctx.locale.register(NS, { en: EN }), 'bots: dictionaries')
   const t = ctx.locale.bind(NS)
 
   ctx.slots.inject('main', () => ctx.slots.register({
@@ -317,21 +316,21 @@ also read services with `ctx.get(...)` held in a closure). Navigation to a bot c
 navigating New-Session path); select the panel initially with `ctx.layout.selectPanel(PANEL_ID)`
 only from controls, never on load.
 
-Page requirements (Portuguese-first with English fallback; all copy through `t`):
-- Header: title "Bots", one-line description, primary `Novo bot` button, refresh button and
-  Docker availability pill (green `Docker pronto` / red `Docker indisponível: …`).
+Page requirements (English-only; all copy through `t`):
+- Header: title "Bots", one-line description, primary `New bot` button, refresh button and
+  Docker availability pill (green `Docker ready` / red `Docker unavailable: …`).
 - Empty state with explanation + create button. Loading skeleton/text. Error state with retry.
 - Bot cards: emoji avatar with `color` background, name, persona excerpt (2–3 lines),
-  workspace path (monospace, truncated), VM state badge (`Rodando`/`Desligada`/`Criada`/`Sem
-  VM`/`Imagem ausente`/`Docker indisponível`), and actions: `Conversar` (primary; disabled
-  without `workspaceId`), `Editar`, overflow menu or buttons for `Iniciar VM`, `Parar VM`,
-  `Reiniciar VM`, `Remover VM`, `Excluir bot`.
+  workspace path (monospace, truncated), VM state badge (`Running`/`Stopped`/`Created`/`No
+  VM`/`Image missing`/`Docker unavailable`), and actions: `Chat` (primary; disabled
+  without `workspaceId`), `Edit`, overflow menu or buttons for `Start VM`, `Stop VM`,
+  `Restart VM`, `Remove VM`, `Delete bot`.
 - Create/edit dialog: name, emoji (text input + small preset palette), color palette,
   instructions textarea (8+ rows), VM toggle; when enabled, image `<select>` populated from
   `/api/bots.images` plus a free-text field for any image reference; inline validation and
   server error text; Escape/backdrop closes; focus first field on open; disable while saving.
-- Delete confirmation: states that workspace files are kept unless "Também apagar os
-  arquivos do workspace" is checked; names the bot; confirm button destructive.
+- Delete confirmation: states that workspace files are kept unless "Also delete the
+  workspace files" is checked; names the bot; confirm button destructive.
 - Toasts for success/failure (auto-dismiss ~4 s), one at a time is fine.
 - Data access: plain `fetch('/api/bots.list')` etc. relative to the app origin (cookie auth
   is automatic); JSON helpers: `fetchJson(path, body)` and verify `{ ok }`.
@@ -350,13 +349,13 @@ Page requirements (Portuguese-first with English fallback; all copy through `t`)
 - Accessibility: buttons are `<button>` with `aria-label` where icon-only, dialog has
   `role="dialog"` and `aria-modal="true"`, Escape closes, destructive actions confirm.
 
-Locale dictionaries: keys at least `panel`, `title`, `subtitle`, `newBot`, `editBot`,
+Locale dictionary: keys at least `panel`, `title`, `subtitle`, `newBot`, `editBot`,
 `chat`, `edit`, `delete`, `deleteTitle`, `deleteBody`, `deleteFiles`, `cancel`, `save`,
 `saving`, `name`, `emoji`, `color`, `instructions`, `instructionsHint`, `vm`, `vmEnable`,
 `vmImage`, `vmRunning`, `vmStopped`, `vmMissing`, `vmNoVm`, `vmStart`, `vmStop`,
 `vmRestart`, `vmRemove`, `vmImageMissing`, `dockerUnavailable`, `dockerReady`, `workspace`,
 `loading`, `empty`, `emptyHint`, `error`, `retry`, `confirm`, `deleted`, `saved`, `created`,
-`failed`, `refresh`. Both `pt` and `en` complete.
+`failed`, `refresh`. The single English dictionary (`EN`) is complete.
 
 The component must be robust to any response shape mismatch (guard arrays/objects) so a
 host bug shows an error state instead of a blank slot (`slot entry crashed`).
@@ -389,14 +388,14 @@ Installed DSH packages (read the READMEs for exact API behavior; do not import t
 - Working copy of node_modules? None needed: host modules must stay dependency-free.
 
 DeepSeek Harness is English-first for code identifiers; user-visible copy in this bundle is
-Portuguese and English.
+English.
 
 ---
 
 ## 10. Teams of bits (v2)
 
 A **team** groups bits into roles (members) and describes how work flows between them as an
-editable graph (nodes + edges). The Web UI shows a "Times" tab with a visual flow editor.
+editable graph (nodes + edges). The Web UI shows a "Teams" tab with a visual flow editor.
 Teams are pure data in v2: no agent runtime uses them yet.
 
 ### 10.1 Record (`<botsRoot>/teams.json`)
@@ -408,7 +407,7 @@ Teams are pure data in v2: no agent runtime uses them yet.
     {
       "id": "a1b2c3d4e5",
       "name": "DSC",
-      "description": "Time do design system...",
+      "description": "Design system team...",
       "emoji": "👥",
       "color": "#2563eb",
       "workspaceDir": "/home/me/dsc",
@@ -417,7 +416,7 @@ Teams are pure data in v2: no agent runtime uses them yet.
           "id": "builder",
           "character": "bit-builder",
           "name": "Builder",
-          "role": "Implementa a partir dos testes vermelhos",
+          "role": "Implements from the red tests",
           "model": "Sonnet 5.5",
           "provider": "anthropic-2",
           "effort": "medium",
@@ -428,8 +427,8 @@ Teams are pure data in v2: no agent runtime uses them yet.
       ],
       "flow": {
         "nodes": [
-          { "id": "n1", "type": "step", "x": 120, "y": 80, "label": "Verde", "detail": "...", "memberId": "builder" },
-          { "id": "g1", "type": "group", "x": 0, "y": 0, "w": 320, "h": 400, "label": "3. Implementar", "color": "#2563eb" }
+          { "id": "n1", "type": "step", "x": 120, "y": 80, "label": "Green", "detail": "...", "memberId": "builder" },
+          { "id": "g1", "type": "group", "x": 0, "y": 0, "w": 320, "h": 400, "label": "3. Implement", "color": "#2563eb" }
         ],
         "edges": [
           { "id": "e1", "from": "n1", "to": "n2", "label": "", "kind": "flow" }
@@ -528,7 +527,7 @@ running a member) and passes the whole session to another team with `team_handof
 | `bindWorkspace` | boolean | root sessions opened inside `workspaceDir` (any subdirectory, e.g. `worktrees/AB-<n>`) belong to this team's lead. At most one team per workspace should set it. |
 | `rules` | string ≤ 40000 | extra team rules appended after the pack rules. |
 | `skills` | skill names[] | pack skills visible to the team; `[]` = all pack skills. |
-| `entry` | `{ id, label ≤ 60, template ≤ 2000 }[]` ≤ 20 | request templates for "Enviar pedido"; placeholders `{n}` (card number) and `{pedido}` (free text). |
+| `entry` | `{ id, label ≤ 60, template ≤ 2000 }[]` ≤ 20 | request templates for "Send request"; placeholders `{n}` (card number) and `{request}` (free text). |
 | `members[].provider` | provider id \| `""` | pins the profile provider (account) the member model resolves in; empty = caller's provider. |
 | `members[].skills` | skill names[] | skills the member reads first (from the preset "**Skills:**" line). |
 | `members[].teamRef` | team id \| null | the member stands for another team: delegating to it runs that team's lead. |
@@ -565,13 +564,13 @@ agents: [{ name, description, model, tier, effort, readOnly, launches, skills }]
 skills: [{ name, description }], instructions: [{ name, applyTo }], mcp: string[],
 patches: [{ id, applied, reason }] }`.
 
-### 11.4 Sending a request ("Enviar pedido")
+### 11.4 Sending a request ("Send request")
 
 Client only: `POST /api/bots.teams.workspace {id}` → `ctx.uiWorkspace.startSession(workspaceId,
 { prompt, whenDraftExists: 'replace' })`. The new session opens with the request in the
-composer; the user sends it. The prompt is the chosen `entry.template` with `{n}`/`{pedido}`
+composer; the user sends it. The prompt is the chosen `entry.template` with `{n}`/`{request}`
 filled. When the target team is not the workspace-bound team, the prompt is prefixed with
-`[Time: <team name>] ` and the bound team's lead hands the session off to it.
+`[Team: <team name>] ` and the bound team's lead hands the session off to it.
 
 ### 11.5 Runtime (`host/team-runtime.js`)
 
@@ -595,15 +594,15 @@ filled. When the target team is not the workspace-bound team, the prompt is pref
   provider, so a second account for the same model names is never confused with the first; an
   unknown provider or a label missing from it fails the delegation with a coded message instead of
   silently falling back to another account. The roster shows the pinned account
-  (`Claude Opus 5.5 — Anthropic (conta 2) · xhigh`).
+  (`Claude Opus 5.5 — Anthropic (account 2) · xhigh`).
 
 ---
 
 ## 12. Projects layer (v4)
 
-A **project** is the level above teams: a named container ("DSC", "Prefeitura") that lists the
-teams working on it. The Web page gains a third top-level tab, **Projetos** (tabs become
-`Bits | Times | Projetos`); the **Times** tab lists the teams that are **not exclusive to a
+A **project** is the level above teams: a named container ("DSC", "City Hall") that lists the
+teams working on it. The Web page gains a third top-level tab, **Projects** (tabs become
+`Bits | Teams | Projects`); the **Teams** tab lists the teams that are **not exclusive to a
 project** — shared teams and teams with no project — while an **unshared team that belongs to a
 project is listed only inside that project** (§12.4). Projects live in their own durable file so
 `teams.json` keeps working on its own (v1/v2/v3 data loads unchanged).
@@ -624,7 +623,7 @@ project.
     {
       "id": "d5c0000001",
       "name": "DSC",
-      "description": "Design system React Native da CAIXA",
+      "description": "CAIXA's React Native design system",
       "emoji": "📁",
       "color": "#2563eb",
       "createdAt": "ISO",
@@ -723,7 +722,7 @@ teardown. A broken `projects.json` must never block bots or teams.
 ### 12.4 Client (`client.js`)
 
 **Tabs.** `readStoredTab` accepts `'bots' | 'teams' | 'projects'`; `PageTabs` gains
-`{ id: 'projects', label: t('tabProjects'), icon: h(ProjectsGlyph) }` after Times. `BotsPage`
+`{ id: 'projects', label: t('tabProjects'), icon: h(ProjectsGlyph) }` after Teams. `BotsPage`
 renders `ProjectsView` for `tab === 'projects'` with the same props it gives `TeamsView`
 (`t`, `lang`, `catalog`, `onRetryCatalog`, `showToast`, `startSession`, `tabs`).
 
@@ -737,7 +736,7 @@ Projects tab shows `t('routeMissing')`, the Teams tab simply shows no project in
 **Teams tab.** The card grid lists only the teams that are **not exclusive to a project**:
 `team.shared === false && team.projectIds.length > 0` is hidden (it lives in its project);
 every other team — shared, or with no project — stays listed. The full team list is still used
-for cross-references (workspace conflicts, `teams` in the editor's "pode lançar", the send
+for cross-references (workspace conflicts, `teams` in the editor's "can launch", the send
 dialog), only the grid is filtered. When teams are hidden:
 
 - some visible: a `dsh-bots-banner` above the grid says
@@ -745,7 +744,7 @@ dialog), only the grid is filtered. When teams are hidden:
   `t('openProjectsTab')` that switches to the Projects tab (`onSelectTab` prop from `BotsPage`).
 - none visible: the empty state is `teamsInProjectsTitle` / `tf(t, 'teamsInProjectsHint', { n })`
   + `t('openProjectsTab')` (distinct from `teamsEmpty`/`teamsEmptyHint`, which still means "no
-  teams at all"). The toolbar keeps `Novo time`, which creates a project-less team.
+  teams at all"). The toolbar keeps `New team`, which creates a project-less team.
 
 Saving a team from this tab that becomes exclusive to a project toasts
 `t('teamMovedToProject')` instead of letting the card vanish silently.
@@ -770,23 +769,23 @@ emoji + name (unknown id → `t('projectUnknown')`); nothing when no project. Th
 **Projects tab.** New `ProjectsView(props)` mirrors `TeamsView` structure (loads projects,
 teams, packs, providers, templates; keeps its own dialogs/editor) and has two screens:
 
-1. **List**: toolbar keeps `Novo projeto` (primary) next to refresh; body is a card grid
+1. **List**: toolbar keeps `New project` (primary) next to refresh; body is a card grid
    (`ul.dsh-bots-cards` + `ProjectCard`): emoji/color avatar, name, description excerpt,
    `t('projectTeamsCount')` badge (`{n}` teams whose `projectIds` include it) and
-   `t('projectSharedCount')` badge when any is shared; actions **Abrir**, edit (pencil), delete.
-   Empty state: `projectsEmpty` / `projectsEmptyHint` + `Novo projeto`. Loading/error states
+   `t('projectSharedCount')` badge when any is shared; actions **Open**, edit (pencil), delete.
+   Empty state: `projectsEmpty` / `projectsEmptyHint` + `New project`. Loading/error states
    mirror `TeamsView` (`projectsLoading` / `projectsError` + retry).
 2. **Detail** (clicked project): back button `t('backToProjects')`; header with emoji/color,
-   name, description and actions: `Novo time` (primary, opens `NewTeamDialog` with `projectId`),
-   `Adicionar times` (outline, opens the team picker), edit, delete. Body: `ul.dsh-bots-cards`
+   name, description and actions: `New team` (primary, opens `NewTeamDialog` with `projectId`),
+   `Add teams` (outline, opens the team picker), edit, delete. Body: `ul.dsh-bots-cards`
    with the `TeamCard`s of that project (`team.projectIds.includes(project.id)`); empty hint
    `noProjectTeams` / `noProjectTeamsHint`. Each card keeps the normal actions plus
-   **Remover do projeto** (`onDetach`) which patches the team's `projectIds` without touching
+   **Remove from project** (`onDetach`) which patches the team's `projectIds` without touching
    anything else. Opening a card's flow renders **`TeamEditor` inside the Projects tab**
    (same component, same props as Teams tab) so the user stays in context.
 
 Project dialogs: `ProjectDialog` (create/edit) with name (required), description, emoji and a
-color palette (reuse `GROUP_COLORS` swatches); `ProjectTeamsDialog` ("Adicionar times") lists
+color palette (reuse `GROUP_COLORS` swatches); `ProjectTeamsDialog` ("Add teams") lists
 every team with a checkbox: checked when already in the project; a team that is **not shared and
 already in another project** is disabled with
 `t('projectTeamNotShared') + ' (' + other project name + ')'`, and a team not shared and free is
@@ -798,7 +797,8 @@ changed (full `teamPayload` patch), then reloads teams + projects. Delete projec
 `projectCreated` / `projectSaved`.
 
 **Styles/localization.** New CSS goes in `TEAM_STYLES` and follows the existing visual language;
-every new string exists in **both** `TEAM_PT` (primary) and `TEAM_EN`. Required keys:
+every new string exists in the English dictionary (`TEAM_EN`, merged into the client's single
+`EN` dictionary). Required keys:
 `tabProjects`, `projectsSubtitle`, `projectsLoading`, `projectsError`, `projectsEmpty`,
 `projectsEmptyHint`, `newProject`, `projectCreated`, `projectSaved`, `projectDeleted`,
 `projectName`, `projectNamePlaceholder`, `projectNameRequired`, `projectDescription`,
@@ -811,7 +811,7 @@ every new string exists in **both** `TEAM_PT` (primary) and `TEAM_EN`. Required 
 `teamProjects`, `teamProjectsHint`, `noProject`, `projectUnknown`, `projectNewTeam`,
 `createProject`, `teamsInProjectsTitle`, `teamsInProjectsHint`, `teamsInProjectsNotice`,
 `openProjectsTab`, `teamMovedToProject`.
-(pt-BR primary wording; en fallback.)
+(English-only wording.)
 
 ### 12.5 Backward compatibility and live data
 

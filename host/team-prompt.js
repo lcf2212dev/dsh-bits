@@ -15,21 +15,21 @@
  */
 
 const TYPE_TEXT = {
-  start: 'Início',
-  end: 'Fim',
-  step: 'Etapa',
-  decision: 'Decisão',
-  pause: 'PAUSA (dev)',
-  note: 'Nota',
-  team: 'Outro time',
-  group: 'Fase',
+  start: 'Start',
+  end: 'End',
+  step: 'Step',
+  decision: 'Decision',
+  pause: 'PAUSE (dev)',
+  note: 'Note',
+  team: 'Other team',
+  group: 'Phase',
 }
 
 const EDGE_TEXT = {
   flow: '',
-  loop: ' (retorno/correção)',
-  delegate: ' (delegação)',
-  handoff: ' (passagem ao outro time)',
+  loop: ' (loop/fix)',
+  delegate: ' (delegation)',
+  handoff: ' (handoff to the other team)',
 }
 
 function sizeOf(node) {
@@ -82,8 +82,8 @@ export function backendOf(bit) {
 export function modelTextOf(bit) {
   if (!bit) return '—'
   const backend = backendOf(bit)
-  const model = typeof bit.model === 'string' && bit.model.trim() !== '' ? bit.model.trim() : 'modelo padrão'
-  const effort = typeof bit.effort === 'string' && bit.effort.trim() !== '' ? bit.effort.trim() : 'padrão'
+  const model = typeof bit.model === 'string' && bit.model.trim() !== '' ? bit.model.trim() : 'default model'
+  const effort = typeof bit.effort === 'string' && bit.effort.trim() !== '' ? bit.effort.trim() : 'default'
   return `${backend} · ${model} · ${effort}`
 }
 
@@ -93,7 +93,7 @@ function memberBit(bitsById, member) {
 }
 
 function memberLabel(member, bitsById) {
-  if (!member) return 'sem bit'
+  if (!member) return 'no bit'
   return `${bitNameOf(memberBit(bitsById, member), member)} (\`${member.id}\`)`
 }
 
@@ -110,7 +110,7 @@ function memberLabel(member, bitsById) {
 export function flowText(team, teamsById = {}, bitsById = {}) {
   const nodes = Array.isArray(team?.flow?.nodes) ? team.flow.nodes : []
   const edges = Array.isArray(team?.flow?.edges) ? team.flow.edges : []
-  if (nodes.length === 0) return '(o time ainda não tem fluxo desenhado)'
+  if (nodes.length === 0) return '(the team has no flow drawn yet)'
   const members = Object.fromEntries((team.members || []).map((member) => [member.id, member]))
   const byId = Object.fromEntries(nodes.map((node) => [node.id, node]))
   const outgoing = {}
@@ -121,19 +121,19 @@ export function flowText(team, teamsById = {}, bitsById = {}) {
   const lines = []
 
   const describe = (node) => {
-    const label = node.label ? `«${node.label}»` : '«sem título»'
+    const label = node.label ? `«${node.label}»` : '«untitled»'
     let who = ''
     if (node.type === 'step') {
       const member = members[node.memberId]
       who = ` — ${memberLabel(member, bitsById)}`
       if (member && member.teamRef) {
         const other = teamsById[member.teamRef]
-        who += ` → time ${other ? `«${other.name}»` : member.teamRef}`
+        who += ` → team ${other ? `«${other.name}»` : member.teamRef}`
       }
     }
     if (node.type === 'team') {
       const other = teamsById[node.teamRef]
-      who = ` — time ${other ? `«${other.name}»` : (node.teamRef || '?')}`
+      who = ` — team ${other ? `«${other.name}»` : (node.teamRef || '?')}`
     }
     const detail = node.detail ? ` ${node.detail.replace(/\s+/g, ' ').trim()}` : ''
     const out = [`- [${node.id}] ${TYPE_TEXT[node.type] || node.type} ${label}${who}.${detail}`]
@@ -147,7 +147,7 @@ export function flowText(team, teamsById = {}, bitsById = {}) {
 
   for (const group of groups) {
     const children = nodes.filter((node) => node.type !== 'group' && node.type !== 'note' && !placed.has(node.id) && inside(group, node)).sort(byPosition)
-    lines.push('', `### ${group.label || 'Fase'}${group.detail ? ` — ${group.detail}` : ''}`)
+    lines.push('', `### ${group.label || 'Phase'}${group.detail ? ` — ${group.detail}` : ''}`)
     for (const node of children) {
       placed.add(node.id)
       lines.push(...describe(node))
@@ -155,13 +155,13 @@ export function flowText(team, teamsById = {}, bitsById = {}) {
   }
   const loose = nodes.filter((node) => node.type !== 'group' && node.type !== 'note' && !placed.has(node.id)).sort(byPosition)
   if (loose.length > 0) {
-    lines.push('', '### Fora das fases')
+    lines.push('', '### Outside the phases')
     for (const node of loose) lines.push(...describe(node))
   }
   const notes = nodes.filter((node) => node.type === 'note').sort(byPosition)
   if (notes.length > 0) {
-    lines.push('', '### Notas')
-    for (const note of notes) lines.push(`- **${note.label || 'Nota'}:** ${String(note.detail || '').replace(/\s*\n\s*/g, ' ')}`)
+    lines.push('', '### Notes')
+    for (const note of notes) lines.push(`- **${note.label || 'Note'}:** ${String(note.detail || '').replace(/\s*\n\s*/g, ' ')}`)
   }
   return lines.join('\n').trim()
 }
@@ -176,15 +176,15 @@ export function flowText(team, teamsById = {}, bitsById = {}) {
  * @returns {string}
  */
 export function rosterText(team, teamsById = {}, bitsById = {}) {
-  const rows = ['| bit (`id` do membro) | papel | backend · modelo · esforço | acesso | pode lançar | ler antes |', '|---|---|---|---|---|---|']
+  const rows = ['| bit (member `id`) | role | backend · model · effort | access | may launch | read first |', '|---|---|---|---|---|---|']
   for (const member of team.members || []) {
     const bit = memberBit(bitsById, member)
     const other = member.teamRef ? teamsById[member.teamRef] : null
-    const lead = member.id === team.lead ? ' **(líder)**' : ''
-    const name = other ? `time «${other.name}»` : bitNameOf(bit, member)
+    const lead = member.id === team.lead ? ' **(lead)**' : ''
+    const name = other ? `team «${other.name}»` : bitNameOf(bit, member)
     const role = other ? (member.role || other.description || '') : member.role
     const route = other ? '—' : modelTextOf(bit)
-    const access = other ? '—' : member.access === 'read' ? 'somente leitura' : 'leitura e escrita'
+    const access = other ? '—' : member.access === 'read' ? 'read-only' : 'read and write'
     const launches = member.launches && member.launches.length ? member.launches.map((id) => `\`${id}\``).join(', ') : '—'
     const skills = member.skills && member.skills.length ? member.skills.map((name) => `\`${name}\``).join(', ') : '—'
     rows.push(`| ${name} (\`${member.id}\`)${lead} | ${String(role || '').replace(/\|/g, '/')} | ${route} | ${access} | ${launches} | ${skills} |`)
@@ -202,7 +202,7 @@ export function instructionIndexText(pack) {
   const list = pack && Array.isArray(pack.instructions) ? pack.instructions : []
   if (list.length === 0) return ''
   const lines = [
-    'Ao ler, criar ou editar um arquivo que casa com um destes padrões, o texto da instrução é anexado automaticamente à conversa (uma vez). Antes de editar, você pode lê-la direto:',
+    'When you read, create or edit a file matching one of these patterns, the instruction text is attached to the conversation automatically (once). Before editing, you can read it directly:',
   ]
   for (const item of list) {
     lines.push(`- \`${item.name}\` (${item.applyTo.join(', ')}): \`${pack.packDir}/${item.path}\`${item.description ? ` — ${item.description}` : ''}`)
@@ -219,31 +219,31 @@ export function instructionIndexText(pack) {
  */
 export function glossaryText(role, { packDir = null } = {}) {
   const common = [
-    'O harness foi escrito para o GitHub Copilot (janela Agents do VS Code) e o Claude Code. Aqui ele roda como um **time de bits no DeepSeek Harness**. Leia os textos do harness assim:',
-    '- "preset", "subagente", "lançar o `x`", "`task` com `agent_type`", "`runSubagent`" → **bit do time**: `team_delegate({ member: "x", task: "…" })`. Os presets do harness são os bits do roster acima. Um bit **worker** (`isOrchestrator: false`) é uma invocação de uma vez: não vê esta conversa, roda no workspace do fluxo e devolve só um relatório em texto — escreva a tarefa autocontida (objetivo e critério de pronto, `<WT>`, o que já foi decidido, arquivos, skills a ler, proibições, formato do retorno), como manda "Como escrever o prompt" da skill `subagent-routing`.',
-    '- Um bit **orquestrador** (`isOrchestrator: true`) roda como agente filho com o próprio roster, fluxo e regras; o relatório dele volta inteiro como resultado do `team_delegate`. Delegações independentes podem ir na mesma resposta (rodam em paralelo).',
-    '- "o hook nega", "git-guard", "`--read-only`", "`--launches`" → o **guarda do time** roda o mesmo `git-guard.cjs` do harness antes de cada ferramenta de cada agente (o modo somente leitura vale para bits de leitura, e a invocação de um worker de leitura chama o Claude Code com `readOnly`), e o `team_delegate` só aceita os membros de "pode lançar". A negação chega como erro "Regra do repositório: …"; não tente contorná-la.',
+    'The harness was written for GitHub Copilot (VS Code Agents window) and Claude Code. Here it runs as a **team of bits in the DeepSeek Harness**. Read the harness texts like this:',
+    '- "preset", "subagent", "launch `x`", "`task` with `agent_type`", "`runSubagent`" → **team bit**: `team_delegate({ member: "x", task: "…" })`. The harness presets are the bits of the roster above. A **worker** bit (`isOrchestrator: false`) is a one-shot invocation: it does not see this conversation, runs in the flow workspace and returns only a text report — write the task self-contained (goal and done criteria, `<WT>`, what has already been decided, files, skills to read, prohibitions, return format), as the "How to write the prompt" section of the `subagent-routing` skill says.',
+    '- An **orchestrator** bit (`isOrchestrator: true`) runs as a child agent with its own roster, flow and rules; its report comes back whole as the `team_delegate` result. Independent delegations can go in the same response (they run in parallel).',
+    '- "the hook denies", "git-guard", "`--read-only`", "`--launches`" → the **team guard** runs the same harness `git-guard.cjs` before every tool of every agent (read-only mode applies to read bits, and invoking a read worker calls Claude Code with `readOnly`), and `team_delegate` only accepts the members listed in "may launch". The denial arrives as the error "Repository rule: …"; do not try to work around it.',
     packDir
-      ? `- Caminhos \`.github/...\` do harness (skills, scripts, hooks, instructions, agents, \`harness.json\`) e o \`AGENTS.md\` ficam no **pacote do time** \`${packDir}\`, não no repositório; os comandos dos textos já apontam para lá. Os scripts seguem recebendo a WT por \`--dir <WT>\`, e o \`.env\` continua na raiz do checkout principal.`
-      : '- Este time não carrega pacote de harness.',
-    '- Skills: use a ferramenta `skill` com o nome (ela devolve o diretório base; `references/` e `scripts/` ficam nele).',
-    '- MCP: os servidores do `.mcp.json` do harness só existem nos bits configurados para eles (ferramentas `mcp__<servidor>__*`). Sem a ferramenta, siga o caminho alternativo da skill (ex.: script REST) ou devolva o caso.',
-    '- "Copilot Fusion", "harness Local", "Customizations", "This Computer"/"modo Branch", MCP `dsc-files` e a falta de `create`/`edit` não se aplicam: todo bit com escrita tem `write` e `edit`.',
-    '- Modelos e esforço ("Claude Opus 5.5 (assinatura)", `reasoning-effort`) já estão configurados em cada bit do roster; não os passe na delegação.',
+      ? `- Harness \`.github/...\` paths (skills, scripts, hooks, instructions, agents, \`harness.json\`) and the \`AGENTS.md\` live in the **team pack** \`${packDir}\`, not in the repository; the commands in the texts already point there. The scripts still receive the WT via \`--dir <WT>\`, and the \`.env\` stays in the root of the main checkout.`
+      : '- This team does not load a harness pack.',
+    '- Skills: use the `skill` tool with the name (it returns the base directory; `references/` and `scripts/` live in it).',
+    '- MCP: the harness `.mcp.json` servers only exist in the bits configured for them (tools `mcp__<server>__*`). Without the tool, follow the alternative path in the skill (e.g. REST script) or return the case.',
+    '- "Copilot Fusion", "Local harness", "Customizations", "This Computer"/"Branch mode", MCP `dsc-files` and the absence of `create`/`edit` do not apply: every bit with write access has `write` and `edit`.',
+    '- Models and effort ("Claude Opus 5.5 (subscription)", `reasoning-effort`) are already configured in each bit of the roster; do not pass them in the delegation.',
   ]
   if (role === 'lead') {
     common.push(
-      '- "sessão principal" → **esta sessão**, a do líder do time. Você só orquestra: as ferramentas de terminal, escrita, busca e web ficam fora do seu alcance, e o guarda só deixa você ler o pacote do harness e arquivos `.dsc/`.',
-      '- "PAUSA" → pergunte ao dev com as opções e uma recomendação e **encerre a resposta** (ou use `ask_user_question`). Não siga supondo a resposta.',
-      '- "Onde rodar": `create-wt` e `open-wt` **não** pedem sessão nova. Depois que um bit criar (ou achar) a WT, mude o diretório desta sessão para `worktrees/AB-<n>` com `working_directory` e siga nesta sessão; os bits workers que você lançar herdam esse diretório. `work-here` e `operate-from-root` seguem como estão. `pause` continua sendo PAUSA.',
-      '- Outro fluxo (outro time do roster ou do fluxo): `team_handoff({ team: "<id do membro do time ou nome do time>", request: "pedido literal + o que já se sabe" })` passa **esta sessão** ao líder daquele time. Para usar outro time como etapa e receber o relatório de volta (ex.: validação), delegue ao membro que o representa com `team_delegate`.',
-      '- Mensagem que começa com `[Time: <nome>]` foi enviada pela página Bits para aquele time: passe a sessão a ele com `team_handoff` sem fazer mais nada.',
+      '- "main session" → **this session**, the session of the team lead. You only orchestrate: the terminal, write, search and web tools are out of your reach, and the guard only lets you read the harness pack and `.dsc/` files.',
+      '- "PAUSE" → ask the dev with the options and a recommendation and **end the response** (or use `ask_user_question`). Do not keep going assuming the answer.',
+      '- "Where to run": `create-wt` and `open-wt` do **not** ask for a new session. Once a bit creates (or finds) the WT, change the directory of this session to `worktrees/AB-<n>` with `working_directory` and continue in this session; the worker bits you launch inherit that directory. `work-here` and `operate-from-root` stay as they are. `pause` remains PAUSE.',
+      '- Another flow (another team of the roster or of the flow): `team_handoff({ team: "<team member id or team name>", request: "literal request + what is already known" })` passes **this session** to the lead of that team. To use another team as a step and receive the report back (e.g. validation), delegate to the member that represents it with `team_delegate`.',
+      '- A message that starts with `[Team: <name>]` was sent by the Bits page to that team: pass the session to it with `team_handoff` without doing anything else.',
     )
   } else {
     common.push(
-      '- Você é um **bit orquestrador** chamado por `team_delegate` e roda como agente filho. "Devolva ao agente que chamou" = ponha a pergunta, com opções e recomendação, no seu relatório final e encerre. Você não fala com o dev.',
-      '- Sua **mensagem final é o relatório** que volta a quem chamou: ponha nela tudo o que importa (`arquivo:linha`, saídas coladas, o que delegou e o que voltou). Mensagens intermediárias não chegam.',
-      '- Opere no diretório recebido na tarefa (`git -C <WT>`, `yarn --cwd <WT>`, `--dir <WT>`).',
+      '- You are an **orchestrator** bit called by `team_delegate` and run as a child agent. "Return to the agent that called you" = put the question, with options and recommendation, in your final report and stop. You do not talk to the dev.',
+      '- Your **final message is the report** that goes back to the caller: put everything that matters in it (`file:line`, pasted outputs, what you delegated and what came back). Intermediate messages do not arrive.',
+      '- Operate in the directory received in the task (`git -C <WT>`, `yarn --cwd <WT>`, `--dir <WT>`).',
     )
   }
   return common.join('\n')
@@ -262,33 +262,33 @@ function section(title, body) {
  * @returns {string}
  */
 export function leadPromptText({ team, member, bit = null, bitsById = {}, teamsById = {}, pack = null, rules = '', conduct = '' }) {
-  const lead = member || { id: 'lider', name: 'Líder', skills: [] }
+  const lead = member || { id: 'lead', name: 'Lead', skills: [] }
   const name = bitNameOf(bit, lead)
   const header = [
-    `# Time de bits: ${team.name}`,
+    `# Team of bits: ${team.name}`,
     '',
-    `Você é **${name}** (\`${lead.id}\`), líder do time **${team.name}**${team.description ? `: ${team.description}` : '.'}`,
-    team.workspaceDir ? `Repositório do time: \`${team.workspaceDir}\`.` : '',
-    pack ? `Harness: pacote \`${pack.id}\` (versão ${pack.harnessVersion ?? '?'}) em \`${pack.packDir}\`, transpilado de \`${pack.source && pack.source.dir}\`.` : '',
+    `You are **${name}** (\`${lead.id}\`), lead of the team **${team.name}**${team.description ? `: ${team.description}` : '.'}`,
+    team.workspaceDir ? `Team repository: \`${team.workspaceDir}\`.` : '',
+    pack ? `Harness: pack \`${pack.id}\` (version ${pack.harnessVersion ?? '?'}) at \`${pack.packDir}\`, transpiled from \`${pack.source && pack.source.dir}\`.` : '',
   ].filter(Boolean).join('\n')
   const skills = lead.skills && lead.skills.length
-    ? `Antes do primeiro passo, carregue com \`skill\`: ${lead.skills.map((skillName) => `\`${skillName}\``).join(', ')}.`
+    ? `Before the first step, load with \`skill\`: ${lead.skills.map((skillName) => `\`${skillName}\``).join(', ')}.`
     : ''
   const delegation = [
-    'Delegue com `team_delegate({ member, task })`.',
-    '**Bits worker** (`isOrchestrator: false`) são invocações de uma vez: não veem esta conversa, rodam no workspace do fluxo (ou no diretório desta sessão quando ele está dentro do workspace) e devolvem só um relatório em texto — a tarefa precisa ser autocontida (objetivo e critério de pronto, `<WT>`, o que já foi decidido, arquivos, skills a ler, proibições, formato do relatório).',
-    '**Bits orquestradores** (`isOrchestrator: true`) rodam como agente filho com o próprio roster, fluxo e regras; o relatório deles volta inteiro. Um membro "time «X»" executa o líder daquele time e devolve o relatório dele.',
+    'Delegate with `team_delegate({ member, task })`.',
+    '**Worker bits** (`isOrchestrator: false`) are one-shot invocations: they do not see this conversation, run in the flow workspace (or in the directory of this session when it is inside the workspace) and return only a text report — the task must be self-contained (goal and done criteria, `<WT>`, what has already been decided, files, skills to read, prohibitions, report format).',
+    '**Orchestrator bits** (`isOrchestrator: true`) run as a child agent with their own roster, flow and rules; their report comes back whole. A "team «X»" member runs the lead of that team and returns its report.',
   ].join('\n')
   return [
     header,
-    section('Sua função', [bitInstructionsOf(bit), skills].filter(Boolean).join('\n\n')),
-    section('O time', `${rosterText(team, teamsById, bitsById)}\n\n${delegation}`),
-    section('O fluxo do time', `Desenhado na página Bits → Times (o dev pode editá-lo). Siga-o; ele resume as skills, e em caso de conflito vale a skill.\n\n${flowText(team, teamsById, bitsById)}`),
-    section('Regras do repositório (AGENTS.md do harness)', rules),
-    section('Conduta', conduct),
-    section('Regras extras do time', team.rules),
-    section('Tradução do harness para o DeepSeek Harness', glossaryText('lead', { packDir: pack ? pack.packDir : null })),
-    section('Instruções por tipo de arquivo', instructionIndexText(pack)),
+    section('Your role', [bitInstructionsOf(bit), skills].filter(Boolean).join('\n\n')),
+    section('The team', `${rosterText(team, teamsById, bitsById)}\n\n${delegation}`),
+    section('The team flow', `Drawn on the Bits page → Teams (the dev can edit it). Follow it; it summarizes the skills, and in case of conflict the skill wins.\n\n${flowText(team, teamsById, bitsById)}`),
+    section('Repository rules (AGENTS.md of the harness)', rules),
+    section('Conduct', conduct),
+    section('Extra team rules', team.rules),
+    section('Translation of the harness to the DeepSeek Harness', glossaryText('lead', { packDir: pack ? pack.packDir : null })),
+    section('Instructions by file type', instructionIndexText(pack)),
   ].filter(Boolean).join('\n\n')
 }
 
@@ -302,30 +302,30 @@ export function leadPromptText({ team, member, bit = null, bitsById = {}, teamsB
 export function memberPromptText({ team, member, bit = null, bitsById = {}, teamsById = {}, pack = null, rules = '', conduct = '' }) {
   const name = bitNameOf(bit, member)
   const launches = member.launches && member.launches.length
-    ? `Você pode lançar, com \`team_delegate\`: ${member.launches.map((id) => {
+    ? `You may launch, with \`team_delegate\`: ${member.launches.map((id) => {
       const other = (team.members || []).find((item) => item.id === id)
       return other ? `${bitNameOf(memberBit(bitsById, other), other)} (\`${id}\`)` : `\`${id}\``
-    }).join(', ')}. Qualquer outro é negado.`
-    : 'Você não lança outros bits: a etapa é sua.'
+    }).join(', ')}. Any other is denied.`
+    : 'You do not launch other bits: the step is yours.'
   const access = member.access === 'read'
-    ? 'Somente leitura: `write` e `edit` não existem para você, e o guarda nega no terminal tudo o que altera a árvore (git que muda a árvore, testes sem `--ci`, gravação no repositório).'
-    : 'Leitura e escrita, dentro das regras do guarda.'
+    ? 'Read-only: `write` and `edit` do not exist for you, and the guard denies in the terminal everything that changes the tree (git that changes the tree, tests without `--ci`, writes to the repository).'
+    : 'Read and write, within the guard rules.'
   const skills = member.skills && member.skills.length
-    ? `Antes de começar, carregue com \`skill\`: ${member.skills.map((skillName) => `\`${skillName}\``).join(', ')}.`
+    ? `Before starting, load with \`skill\`: ${member.skills.map((skillName) => `\`${skillName}\``).join(', ')}.`
     : ''
   const role = bit && bit.isOrchestrator === true
-    ? 'Você é um bit **orquestrador** desta etapa: roda como agente filho, coordena o passo e devolve o relatório completo na sua mensagem final.'
-    : `Você é **${name}** (\`${member.id}\`), bit do time **${team.name}**.`
+    ? 'You are an **orchestrator** bit of this step: you run as a child agent, coordinate the step and return the complete report in your final message.'
+    : `You are **${name}** (\`${member.id}\`), a bit of the team **${team.name}**.`
   return [
-    `# ${name} — bit do time ${team.name}`,
+    `# ${name} — bit of the team ${team.name}`,
     `${role} ${member.role || ''}`.trim(),
-    section('Sua função', [bitInstructionsOf(bit), skills].filter(Boolean).join('\n\n')),
-    section('Acesso e delegação', `${access}\n\n${launches}`),
-    section('O time', rosterText(team, teamsById, bitsById)),
-    section('Regras do repositório (AGENTS.md do harness)', rules),
-    section('Conduta', conduct),
-    section('Regras extras do time', team.rules),
-    section('Tradução do harness para o DeepSeek Harness', glossaryText('member', { packDir: pack ? pack.packDir : null })),
-    section('Instruções por tipo de arquivo', instructionIndexText(pack)),
+    section('Your role', [bitInstructionsOf(bit), skills].filter(Boolean).join('\n\n')),
+    section('Access and delegation', `${access}\n\n${launches}`),
+    section('The team', rosterText(team, teamsById, bitsById)),
+    section('Repository rules (AGENTS.md of the harness)', rules),
+    section('Conduct', conduct),
+    section('Extra team rules', team.rules),
+    section('Translation of the harness to the DeepSeek Harness', glossaryText('member', { packDir: pack ? pack.packDir : null })),
+    section('Instructions by file type', instructionIndexText(pack)),
   ].filter(Boolean).join('\n\n')
 }

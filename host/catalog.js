@@ -59,13 +59,11 @@ function isPlainObject(value) {
 
 /**
  * @param {unknown} value
- * @returns {{ pt: string, en: string }}
+ * @returns {{ en: string }}
  */
 function localized(value) {
   const source = isPlainObject(value) ? value : {}
-  const en = typeof source.en === 'string' ? source.en : ''
-  const pt = typeof source.pt === 'string' ? source.pt : en
-  return { pt, en: en || pt }
+  return { en: typeof source.en === 'string' ? source.en : '' }
 }
 
 /**

@@ -59,8 +59,8 @@ process.stdin.on('end', () => {
   const readOnly = process.argv.includes('--read-only')
   const command = (event.tool_input && event.tool_input.command) || ''
   const deny = (reason) => { process.stdout.write(JSON.stringify({ permissionDecision: 'deny', permissionDecisionReason: reason })); process.stderr.write(reason); process.exit(2) }
-  if (/git stash/.test(command)) deny('Regra do repositório: git stash é proibido.')
-  if (readOnly && /^(Write|Edit)$/.test(event.tool_name)) deny('Regra do repositório: bit somente leitura.')
+  if (/git stash/.test(command)) deny('Repository rule: git stash is forbidden.')
+  if (readOnly && /^(Write|Edit)$/.test(event.tool_name)) deny('Repository rule: read-only bit.')
   if (!process.env.DSH_HARNESS_PACK_ROOT) deny('pack root missing')
   process.stdout.write('{}')
 })
@@ -73,10 +73,10 @@ async function fixture() {
   const workspace = await tempDir('dsh-bits-tr-ws-')
   const elsewhere = await tempDir('dsh-bits-tr-out-')
   const packDir = path.join(botsRoot, 'harness', 'demo')
-  await write(packDir, 'AGENTS.md', '# Regras DSC\n\nSessão principal só orquestra. Rode `node .github/scripts/where.mjs`.\n')
-  await write(packDir, '.github/copilot-instructions.md', '# Conduta\n\nResponda em pt-BR.\n')
+  await write(packDir, 'AGENTS.md', '# DSC Rules\n\nThe main session only orchestrates. Run `node .github/scripts/where.mjs`.\n')
+  await write(packDir, '.github/copilot-instructions.md', '# Conduct\n\nAnswer in English.\n')
   await write(packDir, '.github/hooks/scripts/git-guard.cjs', GUARD)
-  await write(packDir, '.github/skills/tdd/SKILL.md', '---\nname: tdd\ndescription: Teste primeiro.\n---\n\n# TDD\n\nVermelho, verde.\n')
+  await write(packDir, '.github/skills/tdd/SKILL.md', '---\nname: tdd\ndescription: Test first.\n---\n\n# TDD\n\nRed, green.\n')
   await write(packDir, '.github/skills/tdd/references/x.md', 'ref\n')
   await write(packDir, '.github/instructions/ui.instructions.md', "---\nname: ui-components\ndescription: UI.\napplyTo: '**/packages/ui/src/**/*.tsx'\n---\n\n# UI\n\nUse tokens.\n")
   await fs.writeFile(path.join(packDir, 'manifest.json'), JSON.stringify({
@@ -95,7 +95,7 @@ async function fixture() {
     }],
     skills: [{
       name: 'tdd',
-      description: 'Teste primeiro.',
+      description: 'Test first.',
       path: '.github/skills/tdd/SKILL.md',
       dir: '.github/skills/tdd',
     }],
@@ -103,73 +103,73 @@ async function fixture() {
   }, null, 2))
 
   const bits = new Map(Object.entries({
-    'bit-lider': { id: 'bit-lider', name: 'Orquestrador', isOrchestrator: true, model: 'deepseek-account/deepseek-flash', effort: 'max', instructions: 'Só orquestre e delegue.' },
-    'bit-runner': { id: 'bit-runner', name: 'Runner', isOrchestrator: false, model: 'subscription/haiku', effort: 'low', instructions: 'Execute comandos.', workspaceDir: workspace },
-    'bit-scout': { id: 'bit-scout', name: 'Scout', isOrchestrator: false, model: 'subscription/haiku', effort: 'low', instructions: 'Só leitura e pesquisa.', workspaceDir: workspace },
-    'bit-analyst': { id: 'bit-analyst', name: 'Analyst', isOrchestrator: false, model: 'deepseek-account/deepseek-flash', effort: 'high', instructions: 'Analise o código.', workspaceDir: workspace },
-    'bit-reviewer': { id: 'bit-reviewer', name: 'Reviewer', isOrchestrator: true, model: 'deepseek-account/deepseek-flash', effort: 'high', instructions: 'Revise a etapa.' },
-    'bit-validator': { id: 'bit-validator', name: 'Validator', isOrchestrator: true, model: 'deepseek-account/deepseek-flash', effort: 'xhigh', instructions: 'Valide o trabalho.' },
-    'bit-haiku-2': { id: 'bit-haiku-2', name: 'Haiku conta 2', isOrchestrator: false, model: 'subscription/haiku', effort: 'high', instructions: 'Execute rápido.', workspaceDir: workspace },
+    'bit-lead': { id: 'bit-lead', name: 'Orchestrator', isOrchestrator: true, model: 'deepseek-account/deepseek-flash', effort: 'max', instructions: 'Only orchestrate and delegate.' },
+    'bit-runner': { id: 'bit-runner', name: 'Runner', isOrchestrator: false, model: 'subscription/haiku', effort: 'low', instructions: 'Run commands.', workspaceDir: workspace },
+    'bit-scout': { id: 'bit-scout', name: 'Scout', isOrchestrator: false, model: 'subscription/haiku', effort: 'low', instructions: 'Read and research only.', workspaceDir: workspace },
+    'bit-analyst': { id: 'bit-analyst', name: 'Analyst', isOrchestrator: false, model: 'deepseek-account/deepseek-flash', effort: 'high', instructions: 'Analyze the code.', workspaceDir: workspace },
+    'bit-reviewer': { id: 'bit-reviewer', name: 'Reviewer', isOrchestrator: true, model: 'deepseek-account/deepseek-flash', effort: 'high', instructions: 'Review the step.' },
+    'bit-validator': { id: 'bit-validator', name: 'Validator', isOrchestrator: true, model: 'deepseek-account/deepseek-flash', effort: 'xhigh', instructions: 'Validate the work.' },
+    'bit-haiku-2': { id: 'bit-haiku-2', name: 'Haiku account 2', isOrchestrator: false, model: 'subscription/haiku', effort: 'high', instructions: 'Run fast.', workspaceDir: workspace },
   }))
 
   const validation = {
     id: 'team-val',
-    name: 'Validação',
-    description: 'Valida entregas',
+    name: 'Validation',
+    description: 'Validates deliveries',
     harness: 'demo',
     workspaceDir: workspace,
     lead: 'validator',
     members: [
-      { id: 'validator', bitId: 'bit-validator', role: 'Valida o trabalho', access: 'read', launches: ['haiku-2'], skills: [] },
-      { id: 'haiku-2', bitId: 'bit-haiku-2', role: 'Roda os testes', access: 'write' },
+      { id: 'validator', bitId: 'bit-validator', role: 'Validates the work', access: 'read', launches: ['haiku-2'], skills: [] },
+      { id: 'haiku-2', bitId: 'bit-haiku-2', role: 'Runs the tests', access: 'write' },
     ],
   }
   const main = {
     id: 'team-main',
-    name: 'Implementação',
-    description: 'Implementa o pedido',
+    name: 'Implementation',
+    description: 'Implements the request',
     emoji: '👥',
     harness: 'demo',
     workspaceDir: workspace,
-    lead: 'lider',
+    lead: 'lead',
     bindWorkspace: true,
-    rules: 'Regra extra do time.',
+    rules: 'Extra team rule.',
     members: [
-      { id: 'lider', bitId: 'bit-lider', role: 'Orquestra o fluxo', access: 'read', launches: ['runner', 'scout', 'analyst', 'reviewer', 'validacao'], skills: ['tdd'] },
-      { id: 'runner', bitId: 'bit-runner', role: 'Executa comandos', access: 'write' },
-      { id: 'scout', bitId: 'bit-scout', role: 'Localiza código', access: 'read' },
-      { id: 'analyst', bitId: 'bit-analyst', role: 'Analisa o código', access: 'read' },
-      { id: 'reviewer', bitId: 'bit-reviewer', role: 'Revisa a etapa', access: 'write' },
-      { id: 'validacao', teamRef: 'team-val', role: 'Time de validação' },
+      { id: 'lead', bitId: 'bit-lead', role: 'Orchestrates the flow', access: 'read', launches: ['runner', 'scout', 'analyst', 'reviewer', 'validacao'], skills: ['tdd'] },
+      { id: 'runner', bitId: 'bit-runner', role: 'Run commands', access: 'write' },
+      { id: 'scout', bitId: 'bit-scout', role: 'Locates code', access: 'read' },
+      { id: 'analyst', bitId: 'bit-analyst', role: 'Analyzes the code', access: 'read' },
+      { id: 'reviewer', bitId: 'bit-reviewer', role: 'Reviews the step', access: 'write' },
+      { id: 'validacao', teamRef: 'team-val', role: 'Validation team' },
     ],
     flow: {
       nodes: [
-        { id: 'g', type: 'group', x: 0, y: 0, w: 300, h: 400, label: '1. Fase' },
-        { id: 's', type: 'start', x: 40, y: 50, label: 'Pedido' },
-        { id: 'r', type: 'step', x: 30, y: 150, label: 'Rodar where', memberId: 'runner' },
-        { id: 't', type: 'team', x: 30, y: 250, label: 'Validar', teamRef: 'team-val' },
+        { id: 'g', type: 'group', x: 0, y: 0, w: 300, h: 400, label: '1. Phase' },
+        { id: 's', type: 'start', x: 40, y: 50, label: 'Request' },
+        { id: 'r', type: 'step', x: 30, y: 150, label: 'Run where', memberId: 'runner' },
+        { id: 't', type: 'team', x: 30, y: 250, label: 'Validate', teamRef: 'team-val' },
       ],
-      edges: [{ id: 'e1', from: 's', to: 'r' }, { id: 'e2', from: 'r', to: 't', label: 'pronto', kind: 'handoff' }],
+      edges: [{ id: 'e1', from: 's', to: 'r' }, { id: 'e2', from: 'r', to: 't', label: 'ready', kind: 'handoff' }],
     },
   }
   const broken = {
     id: 'team-broken',
-    name: 'Quebrado',
+    name: 'Broken',
     harness: 'demo',
     workspaceDir: elsewhere,
     lead: 'runner',
-    members: [{ id: 'runner', bitId: 'bit-runner', role: 'Executor', access: 'write' }],
+    members: [{ id: 'runner', bitId: 'bit-runner', role: 'Runs things', access: 'write' }],
     flow: { nodes: [], edges: [] },
   }
   const orphan = {
     id: 'team-orphan',
-    name: 'Órfão',
+    name: 'Orphan',
     harness: 'demo',
     workspaceDir: elsewhere,
     lead: 'ghost',
     members: [
-      { id: 'ghost', bitId: 'bit-gone', role: 'Some', access: 'write' },
-      { id: 'gone', bitId: 'bit-gone', role: 'Sumiu', access: 'write' },
+      { id: 'ghost', bitId: 'bit-gone', role: 'Fleeting', access: 'write' },
+      { id: 'gone', bitId: 'bit-gone', role: 'Vanished', access: 'write' },
     ],
     flow: { nodes: [], edges: [] },
   }
@@ -193,7 +193,7 @@ function fakeHost({ workspace, botsRoot }) {
     agents: [],
     selected: [],
     claudeCalls: [],
-    claudeSettle: (call) => ({ results: [{ callId: call.id, result: { isError: false, value: 'relatório do Runner' } }] }),
+    claudeSettle: (call) => ({ results: [{ callId: call.id, result: { isError: false, value: 'Runner report' } }] }),
     streams: [],
     toolExecuteThrows: null,
   }
@@ -247,8 +247,8 @@ function fakeHost({ workspace, botsRoot }) {
     stream(options) {
       state.streams.push(options)
       return (async function* () {
-        yield { type: 'text-delta', index: 0, text: 'análise ' }
-        yield { type: 'text-delta', index: 0, text: 'pronta' }
+        yield { type: 'text-delta', index: 0, text: 'analysis ' }
+        yield { type: 'text-delta', index: 0, text: 'ready' }
         yield { type: 'finish', reason: { kind: 'success' } }
       })()
     },
@@ -281,7 +281,7 @@ function fakeHost({ workspace, botsRoot }) {
         await emit('agent/created', { agent: child, source: 'startup' })
         return {
           childId: spec.childId,
-          result: Promise.resolve({ output: [{ type: 'text', text: `relatório de ${spec.childId}` }], stopReason: 'completed' }),
+          result: Promise.resolve({ output: [{ type: 'text', text: `report from ${spec.childId}` }], stopReason: 'completed' }),
           dispose() {},
         }
       },
@@ -310,30 +310,30 @@ await test('pure helpers: flowText/rosterText with bits, guard mapping, lead rea
     lead: 'l',
     members: [
       { id: 'l', bitId: 'bit-l', access: 'read', launches: ['b'] },
-      { id: 'b', bitId: 'bit-b', role: 'Implementa', access: 'write', launches: ['l'], skills: ['tdd'] },
+      { id: 'b', bitId: 'bit-b', role: 'Implements', access: 'write', launches: ['l'], skills: ['tdd'] },
     ],
     flow: {
       nodes: [
-        { id: 'g', type: 'group', x: 0, y: 0, w: 300, h: 300, label: 'Fase A', detail: 'det' },
-        { id: 'a', type: 'start', x: 20, y: 50, label: 'Pedido' },
-        { id: 'b1', type: 'step', x: 20, y: 150, label: 'Fazer', memberId: 'b', detail: 'com testes' },
-        { id: 'n', type: 'note', x: 900, y: 0, label: 'Regra', detail: 'linha 1\nlinha 2' },
+        { id: 'g', type: 'group', x: 0, y: 0, w: 300, h: 300, label: 'Phase A', detail: 'det' },
+        { id: 'a', type: 'start', x: 20, y: 50, label: 'Request' },
+        { id: 'b1', type: 'step', x: 20, y: 150, label: 'Do it', memberId: 'b', detail: 'with tests' },
+        { id: 'n', type: 'note', x: 900, y: 0, label: 'Rule', detail: 'line 1\nline 2' },
       ],
       edges: [{ id: 'e', from: 'a', to: 'b1', label: 'ok', kind: 'loop' }],
     },
   }
   const bitsById = {
-    'bit-l': { id: 'bit-l', name: 'Líder', isOrchestrator: true, model: 'deepseek-account/deepseek-flash', effort: 'max', instructions: 'x' },
+    'bit-l': { id: 'bit-l', name: 'Lead', isOrchestrator: true, model: 'deepseek-account/deepseek-flash', effort: 'max', instructions: 'x' },
     'bit-b': { id: 'bit-b', name: 'Builder', isOrchestrator: false, model: 'subscription/sonnet', effort: 'medium', instructions: 'y' },
   }
   const text = flowText(team, {}, bitsById)
-  assert.match(text, /### Fase A — det/)
-  assert.match(text, /\[b1\] Etapa «Fazer» — Builder \(`b`\)\. com testes/)
-  assert.match(text, /→ “ok”: \[b1\] «Fazer» \(retorno\/correção\)/)
-  assert.match(text, /\*\*Regra:\*\* linha 1 linha 2/)
+  assert.match(text, /### Phase A — det/)
+  assert.match(text, /\[b1\] Step «Do it» — Builder \(`b`\)\. with tests/)
+  assert.match(text, /→ “ok”: \[b1\] «Do it» \(loop\/fix\)/)
+  assert.match(text, /\*\*Rule:\*\* line 1 line 2/)
   const roster = rosterText(team, {}, bitsById)
-  assert.match(roster, /Líder \(`l`\) \*\*\(líder\)\*\* .* dsh · deepseek-account\/deepseek-flash · max \| somente leitura/)
-  assert.match(roster, /Builder \(`b`\) \| Implementa \| claude-code · subscription\/sonnet · medium \| leitura e escrita \| `l` \| `tdd`/)
+  assert.match(roster, /Lead \(`l`\) \*\*\(lead\)\*\* .* dsh · deepseek-account\/deepseek-flash · max \| read-only/)
+  assert.match(roster, /Builder \(`b`\) \| Implements \| claude-code · subscription\/sonnet · medium \| read and write \| `l` \| `tdd`/)
   assert.deepEqual(toClaudeTool('bash', { command: 'ls' }), { tool: 'Bash', input: { command: 'ls' } })
   assert.equal(toClaudeTool('edit', { file_path: '/a', old_string: 'x', new_string: 'y' }).tool, 'Edit')
   const event = guardEvent({ name: 'bash', arguments: { command: 'ls', workdir: '/w' } }, { sessionId: 's', cwd: '/c', agentType: 'runner' })
@@ -341,7 +341,7 @@ await test('pure helpers: flowText/rosterText with bits, guard mapping, lead rea
   assert.equal(event.agent_type, 'runner')
   assert.equal(event.hook_event_name, 'PreToolUse')
   assert.equal(leadMayRead('/p/.github/skills/x/SKILL.md', { packDir: '/p', dataDir: '/d' }), true)
-  assert.equal(leadMayRead('/repo/worktrees/AB-1/.dsc/contexto.md', { packDir: '/p', dataDir: '/d' }), true)
+  assert.equal(leadMayRead('/repo/worktrees/AB-1/.dsc/context.md', { packDir: '/p', dataDir: '/d' }), true)
   assert.equal(leadMayRead('/repo/packages/a.ts', { packDir: '/p', dataDir: '/d' }), false)
 })
 
@@ -364,24 +364,24 @@ await test('a root session in the bound workspace becomes the team lead, on the 
   const section = host.sections.get('root-1')
   assert.ok(section, 'prompt section installed')
   const text = section.text()
-  assert.match(text, /# Time de bits: Implementação/)
-  assert.match(text, /Você é \*\*Orquestrador\*\* \(`lider`\)/)
+  assert.match(text, /# Team of bits: Implementation/)
+  assert.match(text, /You are \*\*Orchestrator\*\* \(`lead`\)/)
   // Persona/context comes from the referenced bit.
-  assert.match(text, /Só orquestre e delegue\./)
+  assert.match(text, /Only orchestrate and delegate\./)
   // Roster shows the bit name, role, access, backend and model/effort.
-  assert.match(text, /Runner \(`runner`\) \| Executa comandos \| claude-code · subscription\/haiku · low \| leitura e escrita/)
-  assert.match(text, /Analyst \(`analyst`\) \| Analisa o código \| dsh · deepseek-account\/deepseek-flash · high/)
-  assert.match(text, /time «Validação» \(`validacao`\) \| Time de validação \| — \| —/)
+  assert.match(text, /Runner \(`runner`\) \| Run commands \| claude-code · subscription\/haiku · low \| read and write/)
+  assert.match(text, /Analyst \(`analyst`\) \| Analyzes the code \| dsh · deepseek-account\/deepseek-flash · high/)
+  assert.match(text, /team «Validation» \(`validacao`\) \| Validation team \| — \| —/)
   // The lead text explains single-shot workers and child-agent orchestrators.
-  assert.match(text, /Bits worker.*são invocações de uma vez/)
-  assert.match(text, /Bits orquestradores.*rodam como agente filho/s)
-  assert.match(text, /# Regras DSC/)
-  assert.match(text, /# Conduta/)
-  assert.match(text, /Regra extra do time\./)
-  assert.match(text, /\[r\] Etapa «Rodar where» — Runner \(`runner`\)/)
-  assert.match(text, /→ “pronto”: \[t\] «Validar» \(passagem ao outro time\)/)
+  assert.match(text, /Worker bits.*one-shot invocations/)
+  assert.match(text, /Orchestrator bits.*run as a child agent/s)
+  assert.match(text, /# DSC Rules/)
+  assert.match(text, /# Conduct/)
+  assert.match(text, /Extra team rule\./)
+  assert.match(text, /\[r\] Step «Run where» — Runner \(`runner`\)/)
+  assert.match(text, /→ “ready”: \[t\] «Validate» \(handoff to the other team\)/)
   assert.match(text, /`ui-components` \(\*\*\/packages\/ui\/src\/\*\*\/\*\.tsx\)/)
-  assert.match(text, /carregue com `skill`: `tdd`/)
+  assert.match(text, /load with `skill`: `tdd`/)
   const deny = host.state.restricts.get('root-1').deny
   for (const name of ['bash', 'write', 'edit', 'glob', 'grep', 'web_fetch', 'subagent', 'spawn_teammate', 'send_message', 'plugin_manager', 'create_goal', 'schedule_create']) assert.ok(deny.includes(name), `lead hides ${name}`)
   for (const name of ['read', 'skill', 'todo_write', 'ask_user_question', 'working_directory']) assert.ok(!deny.includes(name), `lead keeps ${name}`)
@@ -393,7 +393,7 @@ await test('a root session in the bound workspace becomes the team lead, on the 
   // The delegate description distinguishes worker from orchestrator bits.
   const description = tools.get('team_delegate').description
   assert.match(description, /Worker bits \(isOrchestrator: false\) are single-shot invocations/)
-  assert.match(description, /Runner — Executa comandos/)
+  assert.match(description, /Runner — Run commands/)
 })
 
 await test('the lead may only read the pack and .dsc files; it cannot run tools it does not have', async () => {
@@ -402,28 +402,28 @@ await test('the lead may only read the pack and .dsc files; it cannot run tools 
   assert.equal((await host.preExecute(execOf(lead, 'read', { file_path: '.dsc/contexto.md' }))).kind, 'allow')
   const denied = await host.preExecute(execOf(lead, 'read', { file_path: 'packages/a.ts' }))
   assert.equal(denied.kind, 'deny')
-  assert.match(denied.reason, /só lê o pacote do harness/)
+  assert.match(denied.reason, /only reads the harness pack/)
   assert.equal((await host.preExecute(execOf(lead, 'bash', { command: 'ls' }))).kind, 'deny')
 })
 
 let runnerOutput
 await test('delegating to a worker bit calls the registered claude_delegate tool (prompt/model/effort/cwd/readOnly)', async () => {
   const delegateDef = host.state.tools.get('root-1').get('team_delegate')
-  runnerOutput = await delegateDef.execute({ member: 'runner', task: 'Implemente o botão' }, execOf(lead, 'team_delegate', {}))
+  runnerOutput = await delegateDef.execute({ member: 'runner', task: 'Implement the button' }, execOf(lead, 'team_delegate', {}))
   assert.equal(host.state.started.length, 0, 'a worker never starts a child agent')
   assert.equal(host.state.claudeCalls.length, 1)
   const call = host.state.claudeCalls[0].call
   assert.equal(call.name, 'claude_delegate')
   const args = JSON.parse(call.arguments)
   assert.deepEqual(args, {
-    task: 'Execute comandos.\n\n---\n\nImplemente o botão',
+    task: 'Run commands.\n\n---\n\nImplement the button',
     model: 'haiku',
     effort: 'low',
     cwd: env.workspace,
     readOnly: false,
   })
-  assert.match(runnerOutput, /^\[Runner · claude-code\/haiku · low\]\nrelatório do Runner$/)
-  await assert.rejects(delegateDef.execute({ member: 'ghost', task: 'x' }, execOf(lead, 'team_delegate', {})), /não pode ser lançado/)
+  assert.match(runnerOutput, /^\[Runner · claude-code\/haiku · low\]\nRunner report$/)
+  await assert.rejects(delegateDef.execute({ member: 'ghost', task: 'x' }, execOf(lead, 'team_delegate', {})), /cannot be launched/)
 })
 
 await test('a worker delegation uses the team workspace when the caller cwd is outside it', async () => {
@@ -431,7 +431,7 @@ await test('a worker delegation uses the team workspace when the caller cwd is o
   const outside = host.makeAgent('outside-lead', { cwd: '/tmp' })
   await host.emit('agent/created', { agent: outside, source: 'startup' })
   const before = host.state.claudeCalls.length
-  await host.state.tools.get('outside-lead').get('team_delegate').execute({ member: 'runner', task: 'Rode' }, execOf(outside, 'team_delegate', {}))
+  await host.state.tools.get('outside-lead').get('team_delegate').execute({ member: 'runner', task: 'Run' }, execOf(outside, 'team_delegate', {}))
   const args = JSON.parse(host.state.claudeCalls[before].call.arguments)
   assert.equal(args.cwd, env.workspace, 'outside the team workspace, the team workspace is the cwd')
 })
@@ -439,54 +439,54 @@ await test('a worker delegation uses the team workspace when the caller cwd is o
 await test('read-only workers pass readOnly: true; the bit instructions compose the task', async () => {
   const delegateDef = host.state.tools.get('root-1').get('team_delegate')
   const before = host.state.claudeCalls.length
-  const output = await delegateDef.execute({ member: 'scout', task: 'Ache o componente X' }, execOf(lead, 'team_delegate', {}))
+  const output = await delegateDef.execute({ member: 'scout', task: 'Find component X' }, execOf(lead, 'team_delegate', {}))
   const args = JSON.parse(host.state.claudeCalls[before].call.arguments)
   assert.equal(args.readOnly, true)
-  assert.match(args.task, /Só leitura e pesquisa\.\n\n---\n\nAche o componente X/)
+  assert.match(args.task, /Read and research only\.\n\n---\n\nFind component X/)
   assert.match(output, /^\[Scout · claude-code\/haiku · low\]/)
 })
 
 await test('a worker pointing at a DSH route runs a one-shot model call', async () => {
   const delegateDef = host.state.tools.get('root-1').get('team_delegate')
   const before = host.state.streams.length
-  const output = await delegateDef.execute({ member: 'analyst', task: 'Analise X' }, execOf(lead, 'team_delegate', {}))
+  const output = await delegateDef.execute({ member: 'analyst', task: 'Analyze X' }, execOf(lead, 'team_delegate', {}))
   assert.equal(host.state.streams.length, before + 1)
   const options = host.state.streams.at(-1)
   assert.equal(options.provider, 'deepseek-account')
   assert.equal(options.model, 'deepseek-flash')
   assert.equal(options.reasoningEffort, 'high')
-  assert.deepEqual(options.messages, [{ role: 'user', content: [{ type: 'text', text: 'Analise o código.\n\n---\n\nAnalise X' }] }])
-  assert.match(output, /^\[Analyst · dsh\/deepseek-account\/deepseek-flash · high\]\nanálise pronta$/)
+  assert.deepEqual(options.messages, [{ role: 'user', content: [{ type: 'text', text: 'Analyze the code.\n\n---\n\nAnalyze X' }] }])
+  assert.match(output, /^\[Analyst · dsh\/deepseek-account\/deepseek-flash · high\]\nanalysis ready$/)
 })
 
 await test('a failed worker invocation becomes a model-visible coded tool error', async () => {
   const delegateDef = host.state.tools.get('root-1').get('team_delegate')
   host.state.claudeSettle = (call) => ({ results: [{ callId: call.id, result: { isError: true, error: { message: 'claude is not logged in', info: { code: 'UNKNOWN_TOOL' } } } }] })
   await assert.rejects(
-    delegateDef.execute({ member: 'runner', task: 'Rode' }, execOf(lead, 'team_delegate', {})),
-    (error) => error.code === 'BIT_DELEGATE_UNAVAILABLE' && /O bit "Runner" falhou/.test(error.message) && /claude is not logged in/.test(error.message),
+    delegateDef.execute({ member: 'runner', task: 'Run' }, execOf(lead, 'team_delegate', {})),
+    (error) => error.code === 'BIT_DELEGATE_UNAVAILABLE' && /The bit "Runner" failed/.test(error.message) && /claude is not logged in/.test(error.message),
   )
-  host.state.claudeSettle = (call) => ({ results: [{ callId: call.id, result: { isError: false, value: 'relatório do Runner' } }] })
+  host.state.claudeSettle = (call) => ({ results: [{ callId: call.id, result: { isError: false, value: 'Runner report' } }] })
 })
 
 let reviewerChild
 await test('delegating to an orchestrator bit keeps the DSH child-agent path with the bit route', async () => {
   const delegateDef = host.state.tools.get('root-1').get('team_delegate')
   const before = host.state.claudeCalls.length
-  const output = await delegateDef.execute({ member: 'reviewer', task: 'Revise a mudança' }, execOf(lead, 'team_delegate', {}))
+  const output = await delegateDef.execute({ member: 'reviewer', task: 'Review the change' }, execOf(lead, 'team_delegate', {}))
   assert.equal(host.state.claudeCalls.length, before, 'an orchestrator bit does not go through claude_delegate')
   const spec = host.state.started.at(-1)
   assert.deepEqual(spec.request.agentOptions, { provider: 'deepseek-account', model: 'deepseek-flash', reasoningEffort: 'high' })
   assert.equal(spec.delivery, 'caller')
   assert.equal(spec.request.maxDepth, 4)
-  assert.match(spec.request.prompt[0].text, /Tarefa delegada por Orquestrador \(time Implementação\):\n\nRevise a mudança/)
-  assert.match(output, /\[Reviewer · completed · deepseek-account\/deepseek-flash · high · sessão [^\]]+\]\nrelatório de/)
+  assert.match(spec.request.prompt[0].text, /Task delegated by Orchestrator \(team Implementation\):\n\nReview the change/)
+  assert.match(output, /\[Reviewer · completed · deepseek-account\/deepseek-flash · high · session [^\]]+\]\nreport from/)
   reviewerChild = host.state.agents.find((agent) => agent.id === spec.childId)
   const text = host.sections.get(spec.childId).text()
-  assert.match(text, /# Reviewer — bit do time Implementação/)
-  assert.match(text, /Revise a etapa\./)
-  assert.match(text, /Você é um bit \*\*orquestrador\*\* desta etapa/)
-  assert.match(text, /Você não lança outros bits: a etapa é sua\./)
+  assert.match(text, /# Reviewer — bit of the team Implementation/)
+  assert.match(text, /Review the step\./)
+  assert.match(text, /You are an \*\*orchestrator\*\* bit of this step/)
+  assert.match(text, /You do not launch other bits: the step is yours\./)
   assert.equal(runtime.bindings.get(spec.childId).memberId, 'reviewer')
   // The reviewer has write access: the v4 rule (a write lead keeps its shell) still holds.
   const deny = host.state.restricts.get(spec.childId).deny
@@ -498,7 +498,7 @@ await test('delegating to an orchestrator bit keeps the DSH child-agent path wit
 await test('the harness guard runs for agent bits (deny git stash) with the pack root', async () => {
   const stash = await host.preExecute(execOf(reviewerChild, 'bash', { command: 'git stash' }))
   assert.equal(stash.kind, 'deny')
-  assert.match(stash.reason, /git stash é proibido/)
+  assert.match(stash.reason, /git stash is forbidden/)
   assert.equal((await host.preExecute(execOf(reviewerChild, 'bash', { command: 'ls' }))).kind, 'allow')
   const write = await host.preExecute(execOf(reviewerChild, 'write', { file_path: path.join(env.workspace, 'a.txt'), content: 'x' }))
   assert.equal(write.kind, 'allow')
@@ -507,23 +507,23 @@ await test('the harness guard runs for agent bits (deny git stash) with the pack
 let validationChild
 await test('delegating to a teamRef member runs the other team lead with its own bit route', async () => {
   const delegateDef = host.state.tools.get('root-1').get('team_delegate')
-  await delegateDef.execute({ member: 'validacao', task: 'Valide o AB 1' }, execOf(lead, 'team_delegate', {}))
+  await delegateDef.execute({ member: 'validacao', task: 'Validate AB 1' }, execOf(lead, 'team_delegate', {}))
   const spec = host.state.started.at(-1)
   assert.deepEqual(spec.request.agentOptions, { provider: 'deepseek-account', model: 'deepseek-flash', reasoningEffort: 'xhigh' })
   const binding = runtime.bindings.get(spec.childId)
   assert.equal(binding.teamId, env.validation.id)
   assert.equal(binding.role, 'lead')
   const text = host.sections.get(spec.childId).text()
-  assert.match(text, /# Time de bits: Validação/)
-  assert.match(text, /Você foi chamado por outro time/)
-  assert.match(text, /Valide o trabalho\./)
+  assert.match(text, /# Team of bits: Validation/)
+  assert.match(text, /You were called by another team/)
+  assert.match(text, /Validate the work\./)
   const tools = host.state.tools.get(spec.childId)
   assert.deepEqual(tools.get('team_delegate').parameters.properties.member.enum, ['haiku-2'])
   assert.equal(tools.get('team_handoff'), undefined, 'child leads cannot hand off')
   // A read-only orchestrator lead only orchestrates.
   const bash = await host.preExecute(execOf(host.state.agents.find((agent) => agent.id === spec.childId), 'bash', { command: 'ls' }))
   assert.equal(bash.kind, 'deny')
-  assert.match(bash.reason, /só orquestra/)
+  assert.match(bash.reason, /only orchestrates/)
   validationChild = host.state.agents.find((agent) => agent.id === spec.childId)
 })
 
@@ -532,7 +532,7 @@ await test('a stale member bit fails with a coded, model-visible error', async (
   const orphanAgent = host.makeAgent('orphan-session', { cwd: env.elsewhere })
   await host.emit('agent/created', { agent: orphanAgent, source: 'startup' })
   const delegateDef = host.state.tools.get('orphan-session').get('team_delegate')
-  await assert.rejects(delegateDef.execute({ member: 'gone', task: 'x' }, execOf(orphanAgent, 'team_delegate', {})), (error) => codedOf(error) === 'TEAM_INVALID' && /não existe mais/.test(error.message))
+  await assert.rejects(delegateDef.execute({ member: 'gone', task: 'x' }, execOf(orphanAgent, 'team_delegate', {})), (error) => codedOf(error) === 'TEAM_INVALID' && /no longer exists/.test(error.message))
 })
 
 await test('skills, applyTo and shell variables follow the team', async () => {
@@ -557,12 +557,12 @@ await test('skills, applyTo and shell variables follow the team', async () => {
 
 await test('team_handoff rebinds the session to the other team lead', async () => {
   const handoff = host.state.tools.get('root-1').get('team_handoff')
-  const output = await handoff.execute({ team: env.validation.id, request: 'valide o AB 1' }, execOf(lead, 'team_handoff', {}))
-  assert.match(output, /Sessão passada ao time «Validação»/)
+  const output = await handoff.execute({ team: env.validation.id, request: 'validate AB 1' }, execOf(lead, 'team_handoff', {}))
+  assert.match(output, /Session passed to the team «Validation»/)
   assert.match(output, /Validator/)
   await sleep(20)
   assert.equal(runtime.bindings.get('root-1').teamId, env.validation.id)
-  assert.match(host.sections.get('root-1').text(), /# Time de bits: Validação/)
+  assert.match(host.sections.get('root-1').text(), /# Team of bits: Validation/)
   assert.ok(host.state.invalidations > 0, 'skills catalog invalidated')
   const diag = runtime.diagnostics()
   const entry = diag.agents.find((agent) => agent.sessionId === 'root-1')
@@ -592,25 +592,25 @@ await test('startMission creates a lead session in the team workspace, selects t
     if (name === 'sessionTitle') return { rename: (_session, text) => renamed.push(text) }
     return undefined
   }
-  const started = await runtime.startMission({ team: 'Implementação', prompt: 'implemente o AB 123' })
+  const started = await runtime.startMission({ team: 'Implementation', prompt: 'implement AB 123' })
   assert.equal(created[0].cwd, env.workspace)
   assert.equal(created[0].sessionId, started.sessionId)
   assert.deepEqual(attached, [started.sessionId])
   // Lead route comes from the lead bit (DeepSeek-V4.1-Flash Max).
   const selection = host.state.selected.find((item) => item.id === started.sessionId)
   assert.deepEqual(selection.selection, { provider: 'deepseek-account', model: 'deepseek-flash', reasoningEffort: 'max' })
-  assert.equal(followups[0].content[0].text, 'implemente o AB 123')
+  assert.equal(followups[0].content[0].text, 'implement AB 123')
   assert.equal(followups[0].role, 'user')
   assert.equal(runtime.bindings.get(started.sessionId).role, 'lead')
-  assert.match(host.sections.get(started.sessionId).text(), /# Time de bits: Implementação/)
-  assert.match(renamed[0], /👥 Implementação: implemente o AB 123/)
+  assert.match(host.sections.get(started.sessionId).text(), /# Team of bits: Implementation/)
+  assert.match(renamed[0], /👥 Implementation: implement AB 123/)
   // Continue: the message reaches the same lead session.
-  const continued = await runtime.continueMission({ sessionId: started.sessionId, prompt: 'responda a PAUSA' })
+  const continued = await runtime.continueMission({ sessionId: started.sessionId, prompt: 'answer the PAUSE' })
   assert.equal(continued.teamId, env.main.id)
-  assert.equal(followups.at(-1).content[0].text, 'responda a PAUSA')
-  await assert.rejects(runtime.startMission({ team: 'nope', prompt: 'x' }), /não encontrado/)
-  await assert.rejects(runtime.startMission({ team: 'Quebrado', prompt: 'x' }), (error) => codedOf(error) === 'TEAM_LEAD_NOT_ORCHESTRATOR' && /precisa ser um bit orquestrador/.test(error.message))
-  await assert.rejects(runtime.startMission({ team: 'Implementação', prompt: '   ' }), (error) => codedOf(error) === 'BAD_REQUEST')
+  assert.equal(followups.at(-1).content[0].text, 'answer the PAUSE')
+  await assert.rejects(runtime.startMission({ team: 'nope', prompt: 'x' }), /not found/)
+  await assert.rejects(runtime.startMission({ team: 'Broken', prompt: 'x' }), (error) => codedOf(error) === 'TEAM_LEAD_NOT_ORCHESTRATOR' && /must be an orchestrator bit/.test(error.message))
+  await assert.rejects(runtime.startMission({ team: 'Implementation', prompt: '   ' }), (error) => codedOf(error) === 'BAD_REQUEST')
 })
 
 await test('the runtime disposes cleanly', async () => {

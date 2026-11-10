@@ -4,7 +4,7 @@
  * Contributes a "Bits" entry to the sidebar's global panel list and a full page
  * in the layout's `main` keyed slot. The page has three tabs: Bits (bit
  * definitions: catalog character, context/instructions, model, effort and the
- * orchestrator flag; workers can also be run ad-hoc with "Executar"), Times
+ * orchestrator flag; workers can also be run ad-hoc with "Run"), Teams
  * (flow teams whose members reference bits) and Projects (teams grouped by
  * project).
  *
@@ -12,8 +12,8 @@
  * requires. Only `react` comes from the shared module table. Every registration
  * lives inside `apply`; the factory itself has no side effects.
  *
- * Locale dictionaries are inline (pt primary, en complete) and registered
- * through `ctx.locale.register`. Styling is one React `<style>` element whose
+ * The English locale dictionary is inline and registered through
+ * `ctx.locale.register`. Styling is one React `<style>` element whose
  * values are the Host theme tokens (`--dsw-alias-*`) with CSS fallbacks.
  */
 window.__ModuleLoader__.load({
@@ -56,97 +56,7 @@ window.__ModuleLoader__.load({
     /* Locale dictionaries                                                */
     /* ------------------------------------------------------------------ */
 
-    /** Brazilian Portuguese — primary copy for this deployment. */
-    const PT = {
-      lang: 'pt',
-      panel: 'Bits',
-      title: 'Bits',
-      subtitle: 'Bits são definições de agente: contexto, modelo e esforço. Use-os em fluxos na aba Times ou execute um pedido avulso com os workers.',
-      newBot: 'Novo bit',
-      editBot: 'Editar bit',
-      create: 'Criar bit',
-      edit: 'Editar',
-      delete: 'Excluir bit',
-      deleteTitle: 'Excluir {name}?',
-      deleteBody: 'O bit será removido da lista. Os times que o referenciam ficam com o membro sem bit até você escolher outro.',
-      deleteFiles: 'Também apagar os arquivos do workspace',
-      deleteConfirm: 'Excluir bit',
-      cancel: 'Cancelar',
-      save: 'Salvar',
-      saving: 'Salvando…',
-      name: 'Nome',
-      namePlaceholder: 'Ex.: Pesquisador',
-      nameRequired: 'Informe um nome para o bit.',
-      nameTooLong: 'O nome deve ter no máximo 60 caracteres.',
-      pickCharacter: 'Escolha um bit',
-      pickCharacterHint: 'Cada bit já vem com uma descrição pronta para a função. Você pode mudar o nome e a descrição depois.',
-      searchCharacters: 'Buscar por função, nome ou habilidade',
-      noCharacters: 'Nenhum bit encontrado para “{query}”.',
-      changeCharacter: 'Trocar bit',
-      chooseCharacter: 'Escolher bit',
-      noCharacter: 'Sem personagem',
-      noCharacterHint: 'Este bit não usa um personagem do catálogo. Escolha um para herdar as instruções e o avatar.',
-      catalogLoading: 'Carregando os bits…',
-      catalogError: 'Não foi possível carregar os bits.',
-      continueWithout: 'Continuar sem personagem',
-      back: 'Voltar',
-      otherGroup: 'Outros',
-      instructions: 'Descrição',
-      instructionsHint: 'Contexto do bit (persona e instruções), enviado em todas as execuções. Edite à vontade (até 20.000 caracteres).',
-      instructionsPlaceholder: 'Descreva a função, o jeito de trabalhar e os limites deste bit…',
-      restoreDefault: 'Restaurar descrição padrão',
-      instructionsTooLong: 'As instruções devem ter no máximo 20.000 caracteres.',
-      noInstructions: 'Sem instruções ainda.',
-      orchestrator: 'Orquestrador',
-      worker: 'Worker',
-      isOrchestrator: 'Orquestrador',
-      isOrchestratorHint: 'Orquestradores coordenam fluxos: rodam como agentes DSH e são os únicos que podem liderar um time. Workers recebem um pedido e devolvem uma resposta única.',
-      model: 'Modelo',
-      modelHint: 'Modelo usado nas execuções. Orquestradores usam rotas de chat do DSH; workers podem usar a assinatura do Claude Code (claude_delegate) ou uma rota DSH.',
-      effort: 'Esforço',
-      effortHint: 'Esforço de raciocínio aplicado ao modelo (varia por modelo).',
-      modelGroupSubscription: 'Assinatura (Claude Code)',
-      modelGroupRoutes: 'Rotas do DSH',
-      modelsLoading: 'Carregando modelos…',
-      modelsError: 'Não foi possível carregar os modelos.',
-      modelMissing: 'O modelo “{id}” não está disponível neste perfil.',
-      modelRequired: 'Escolha um modelo.',
-      modelOrchestratorRequired: 'Orquestradores precisam de uma rota de chat do DSH.',
-      noModels: 'O host não oferece modelos agora.',
-      execute: 'Executar',
-      executeTitle: 'Executar {name}',
-      executeHint: 'Um pedido avulso: o bit recebe o texto e devolve uma resposta única.',
-      runRequest: 'Pedido',
-      runRequestPlaceholder: 'Descreva o pedido com o contexto necessário…',
-      runReadOnly: 'Somente leitura',
-      runReadOnlyHint: 'Sem permissão de escrita no workspace do bit: o worker apenas lê e responde.',
-      runSubmit: 'Executar',
-      runRunning: 'Executando…',
-      runResponse: 'Resposta',
-      runResponseEmpty: 'A resposta aparece aqui.',
-      runClose: 'Fechar',
-      runsInFlows: 'Executa em fluxos (aba Times).',
-      leadInTeams: 'Líder em: {names}',
-      leadInTeamsNone: 'Ainda não lidera nenhum time.',
-      openTeamsTab: 'Abrir Times',
-      loading: 'Carregando bits…',
-      empty: 'Nenhum bit ainda',
-      emptyHint: 'Crie um bit (Scout, Builder, Product Owner, …) para usá-lo em um fluxo ou executar um pedido avulso.',
-      error: 'Não foi possível carregar os bits.',
-      retry: 'Tentar novamente',
-      confirm: 'Confirmar',
-      deleted: 'Bit excluído.',
-      deletedWorkspace: 'Bit excluído e workspace apagado.',
-      saved: 'Alterações salvas.',
-      created: 'Bit criado.',
-      failed: 'Falhou',
-      refresh: 'Atualizar',
-      refreshing: 'Atualizando…',
-      working: 'Processando…',
-      close: 'Fechar',
-    }
-
-    /** English — complete fallback dictionary (same keys as PT). */
+    /** English dictionary (complete fallback when the locale seat is missing). */
     const EN = {
       lang: 'en',
       panel: 'Bits',
@@ -532,17 +442,17 @@ window.__ModuleLoader__.load({
       return typeof text.normalize === 'function' ? text.normalize('NFD').replace(/[\u0300-\u036f]/g, '') : text
     }
 
-    /** Picker summary in the active language (pt or en). */
-    function summaryOf(bit, lang) {
+    /** Picker summary (English). */
+    function summaryOf(bit) {
       if (!bit) return ''
-      return lang === 'en' ? (bit.summary.en || bit.summary.pt) : (bit.summary.pt || bit.summary.en)
+      return bit.summary.en || ''
     }
 
-    /** Group label in the active language. */
-    function groupLabelOf(catalog, groupId, lang, t) {
+    /** Group label (English). */
+    function groupLabelOf(catalog, groupId, t) {
       for (let index = 0; index < catalog.groups.length; index += 1) {
         const group = catalog.groups[index]
-        if (group.id === groupId) return lang === 'en' ? group.label.en : group.label.pt
+        if (group.id === groupId) return group.label.en
       }
       return t('otherGroup')
     }
@@ -706,10 +616,7 @@ window.__ModuleLoader__.load({
           const label = isObject(raw.label) ? raw.label : {}
           groups.push({
             id: id,
-            label: {
-              pt: asString(label.pt) || asString(label.en) || id,
-              en: asString(label.en) || asString(label.pt) || id,
-            },
+            label: { en: asString(label.en) || id },
           })
         })
       }
@@ -727,7 +634,7 @@ window.__ModuleLoader__.load({
             group: asString(raw.group) || null,
             emoji: asString(raw.emoji) || '🤖',
             color: /^#[0-9a-fA-F]{6}$/.test(asString(raw.color)) ? asString(raw.color) : COLOR_PALETTE[0],
-            summary: { pt: asString(summary.pt), en: asString(summary.en) },
+            summary: { en: asString(summary.en) },
             instructions: asString(raw.instructions),
             isOrchestrator: raw.isOrchestrator === true,
             model: asString(raw.model) || DEFAULT_WORKER_MODEL,
@@ -1160,7 +1067,7 @@ window.__ModuleLoader__.load({
       const catalogBit = bit.character && catalog && catalog.byId[bit.character] ? catalog.byId[bit.character] : null
       const avatarBit = catalogBit || {
         id: bit.id, name: bit.name, color: bit.color, emoji: bit.emoji, avatar: '',
-        summary: { pt: '', en: '' }, group: null,
+        summary: { en: '' }, group: null,
       }
       const persona = excerpt(bit.instructions, 240)
       const leadTeams = Array.isArray(props.leadTeams) ? props.leadTeams : []
@@ -1202,8 +1109,8 @@ window.__ModuleLoader__.load({
               })
             ),
             catalogBit
-              ? h('p', { className: 'dsh-bots-role', title: summaryOf(catalogBit, props.lang) || undefined },
-                catalogBit.name + ' · ' + groupLabelOf(catalog, catalogBit.group, props.lang, t))
+              ? h('p', { className: 'dsh-bots-role', title: summaryOf(catalogBit) || undefined },
+                catalogBit.name + ' · ' + groupLabelOf(catalog, catalogBit.group, t))
               : h('p', { className: 'dsh-bots-role' }, t('noCharacter')),
             route
               ? h('div', { className: 'dsh-bots-meta dsh-bit-route' },
@@ -1241,7 +1148,7 @@ window.__ModuleLoader__.load({
     /* ------------------------------------------------------------------ */
 
     /**
-     * "Executar": request textarea, read-only toggle (default on), busy state
+     * "Run": request textarea, read-only toggle (default on), busy state
      * and the response/error panel (V5-CONTRACT.md §6.1/§8).
      */
     function RunBitDialog(props) {
@@ -1389,7 +1296,6 @@ window.__ModuleLoader__.load({
     /** Searchable, grouped gallery of bit characters. */
     function CharacterPicker(props) {
       const t = props.t
-      const lang = props.lang
       const catalog = props.catalog
       const [query, setQuery] = React.useState('')
 
@@ -1405,14 +1311,14 @@ window.__ModuleLoader__.load({
       const needle = foldText(query.trim())
       function matches(bit) {
         if (!needle) return true
-        return [bit.name, bit.id, bit.summary.pt, bit.summary.en].some(function (text) {
+        return [bit.name, bit.id, bit.summary.en].some(function (text) {
           return foldText(text).indexOf(needle) >= 0
         })
       }
       const known = {}
       catalog.groups.forEach(function (group) { known[group.id] = true })
       const sections = catalog.groups.map(function (group) {
-        return { id: group.id, label: lang === 'en' ? group.label.en : group.label.pt, bits: [] }
+        return { id: group.id, label: group.label.en, bits: [] }
       })
       const other = { id: '__other', label: t('otherGroup'), bits: [] }
       catalog.bits.forEach(function (bit) {
@@ -1450,7 +1356,7 @@ window.__ModuleLoader__.load({
             return h('section', { key: section.id, className: 'dsh-bots-picker-section', 'aria-labelledby': headingId },
               h('h3', { className: 'dsh-bots-picker-heading', id: headingId }, section.label),
               h('ul', { className: 'dsh-bots-bit-grid' }, section.bits.map(function (bit) {
-                const summary = summaryOf(bit, lang)
+                const summary = summaryOf(bit)
                 return h('li', { key: bit.id },
                   h('button', {
                     type: 'button',
@@ -1478,7 +1384,6 @@ window.__ModuleLoader__.load({
      */
     function FormDialog(props) {
       const t = props.t
-      const lang = props.lang
       const catalog = props.catalog
       const models = props.models || emptyModels('idle')
       const editing = !!props.bot
@@ -1625,7 +1530,6 @@ window.__ModuleLoader__.load({
         },
           h(CharacterPicker, {
             t: t,
-            lang: lang,
             catalog: catalog,
             selectedId: values.character,
             searchRef: searchRef,
@@ -1694,8 +1598,8 @@ window.__ModuleLoader__.load({
           h(BitAvatar, { bit: bit, size: 88, emoji: values.emoji, color: values.color, eager: true }),
           h('div', { className: 'dsh-bots-bit-hero-text' },
             h('p', { className: 'dsh-bots-bit-hero-role' }, bit ? bit.name : t('noCharacter')),
-            bit ? h('p', { className: 'dsh-bots-hint' }, groupLabelOf(catalog, bit.group, lang, t)) : null,
-            h('p', { className: 'dsh-bots-bit-hero-summary' }, bit ? summaryOf(bit, lang) : t('noCharacterHint')),
+            bit ? h('p', { className: 'dsh-bots-hint' }, groupLabelOf(catalog, bit.group, t)) : null,
+            h('p', { className: 'dsh-bots-bit-hero-summary' }, bit ? summaryOf(bit) : t('noCharacterHint')),
             h(Button, {
               variant: 'outline',
               size: 'sm',
@@ -1894,303 +1798,7 @@ window.__ModuleLoader__.load({
     /* Teams of bits — list, templates and the visual flow editor         */
     /* ================================================================== */
 
-    /** Teams copy (pt primary); merged into the bundle dictionaries. */
-    const TEAM_PT = {
-      tabsLabel: 'Seções',
-      tabBots: 'Bits',
-      tabTeams: 'Times',
-      teamsSubtitle: 'Monte times de bits e desenhe o fluxo de trabalho entre eles: quem faz cada etapa, onde há decisão e para onde o trabalho volta.',
-      newTeam: 'Novo time',
-      importTeam: 'Importar',
-      importTeamHint: 'Importar um time exportado (JSON)',
-      exportTeam: 'Exportar',
-      openFlow: 'Abrir fluxo',
-      duplicateTeam: 'Duplicar',
-      deleteTeam: 'Excluir',
-      deleteTeamTitle: 'Excluir o time {name}?',
-      deleteTeamBody: 'O time, os membros e o fluxo serão removidos. Os bits não são afetados.',
-      teamsLoading: 'Carregando times…',
-      teamsEmpty: 'Nenhum time ainda',
-      teamsEmptyHint: 'Crie um time a partir de um modelo ou do zero e desenhe o fluxo arrastando bits para o quadro.',
-      teamsError: 'Não foi possível carregar os times.',
-      teamCreated: 'Time criado.',
-      teamDeleted: 'Time excluído.',
-      teamSaved: 'Fluxo salvo.',
-      teamImported: 'Time importado.',
-      teamDuplicated: 'Time duplicado.',
-      importInvalid: 'O arquivo não contém um time válido.',
-      copySuffix: '(cópia)',
-      teamStats: '{members} membros · {steps} etapas · {edges} conexões',
-      noDescription: 'Sem descrição.',
-      startFrom: 'Começar de',
-      blankTeam: 'Em branco',
-      blankTeamHint: 'Só um nó de início; adicione bits e etapas.',
-      templatesLoading: 'Carregando modelos…',
-      teamName: 'Nome do time',
-      teamNamePlaceholder: 'Ex.: Squad de pagamentos',
-      teamNameRequired: 'Informe um nome para o time.',
-      teamDescription: 'Descrição',
-      teamDescriptionPlaceholder: 'Para que serve este time e como ele trabalha…',
-      teamWorkspace: 'Repositório ou pasta',
-      teamWorkspaceHint: 'Caminho absoluto onde o time trabalha (informativo).',
-      workspaceInvalid: 'Use um caminho absoluto (ex.: /home/voce/projeto).',
-      createTeam: 'Criar time',
-      creating: 'Criando…',
-      backToTeams: 'Voltar para os times',
-      unsaved: 'Não salvo',
-      allSaved: 'Salvo',
-      undo: 'Desfazer (Ctrl+Z)',
-      redo: 'Refazer (Ctrl+Shift+Z)',
-      zoomIn: 'Aproximar',
-      zoomOut: 'Afastar',
-      zoomFit: 'Ajustar à tela',
-      saveShortcut: 'Salvar (Ctrl+S)',
-      discardTitle: 'Sair sem salvar?',
-      discardBody: 'O fluxo tem alterações não salvas. Se sair agora, elas serão perdidas.',
-      discard: 'Descartar e sair',
-      palette: 'Elementos',
-      paletteHint: 'Arraste para o quadro ou clique para adicionar no centro.',
-      members: 'Membros',
-      addMember: 'Adicionar bit',
-      addMemberTitle: 'Adicionar um bit ao time',
-      addMemberHint: 'O membro referencia um bit já criado na aba Bits. O bit define contexto, modelo, esforço e se é orquestrador.',
-      addMemberPick: 'Bit',
-      addMemberConfirm: 'Adicionar',
-      addMemberNoBits: 'Nenhum bit para adicionar',
-      addMemberNoBitsHint: 'Crie um bit na aba Bits e volte para adicioná-lo ao time.',
-      membersEmpty: 'Nenhum membro ainda. Adicione bits para atribuir as etapas.',
-      memberDragHint: 'Arraste um membro para o quadro para criar uma etapa dele.',
-      memberBit: 'Bit',
-      memberBitHint: 'O bit define contexto, modelo, esforço e a família (orquestrador ou worker).',
-      memberBitMissing: 'Bit não encontrado ({id})',
-      memberRoute: 'Modelo e esforço',
-      memberReadOnlyHint: 'Modelo e esforço são editados no bit (aba Bits).',
-      leadNotOrchestrator: 'O líder do time precisa ser um bit orquestrador.',
-      noOrchestratorMembers: 'Nenhum membro é um bit orquestrador. Adicione um para escolher o líder.',
-      leadInvalid: 'O líder atual não é um bit orquestrador. Escolha outro ou remova o líder.',
-      nodeStart: 'Início',
-      nodeStep: 'Etapa',
-      nodeDecision: 'Decisão',
-      nodePause: 'PAUSA',
-      nodeEnd: 'Fim',
-      nodeGroup: 'Fase',
-      nodeNote: 'Nota',
-      nodeStartDefault: 'Pedido',
-      nodeStepDefault: 'Nova etapa',
-      nodeDecisionDefault: 'Decidir',
-      nodePauseDefault: 'Perguntar ao dev',
-      nodeEndDefault: 'Fim',
-      nodeGroupDefault: 'Nova fase',
-      nodeNoteDefault: 'Anotação',
-      untitled: 'Sem título',
-      edgeFlow: 'Sequência',
-      edgeLoop: 'Retorno / correção',
-      edgeDelegate: 'Delegação (subagente)',
-      teamProps: 'Time',
-      nodeProps: 'Elemento',
-      edgeProps: 'Conexão',
-      memberProps: 'Membro',
-      type: 'Tipo',
-      label: 'Título',
-      detail: 'Detalhes',
-      detailHint: 'O que a etapa faz, skills a ler, critério de pronto.',
-      member: 'Membro',
-      noMember: 'Sem membro',
-      color: 'Cor',
-      outgoing: 'Saídas',
-      incoming: 'Entradas',
-      noConnections: 'Sem conexões. Arraste de uma das bolinhas do elemento até outro.',
-      edgeLabel: 'Rótulo',
-      edgeLabelPlaceholder: 'Ex.: sim, falhou, create-wt',
-      edgeKind: 'Tipo de conexão',
-      edgeFrom: 'De',
-      edgeTo: 'Para',
-      reverse: 'Inverter direção',
-      duplicate: 'Duplicar',
-      remove: 'Excluir',
-      selectedCount: '{n} elementos selecionados',
-      memberRole: 'Papel',
-      memberRolePlaceholder: 'Resumo do papel no time',
-      memberAccess: 'Acesso',
-      accessRead: 'Somente leitura',
-      accessWrite: 'Leitura e escrita',
-      memberLaunches: 'Pode lançar',
-      memberLaunchesNone: 'Não há outros membros.',
-      memberSteps: '{n} etapa(s) no fluxo',
-      removeMember: 'Remover do time',
-      removeMemberTitle: 'Remover {name} do time?',
-      removeMemberBody: '{n} etapa(s) usam este membro e ficarão sem membro.',
-      shortcuts: 'Atalhos',
-      shortcutPan: 'Arrastar o fundo ou rolar: mover o quadro',
-      shortcutZoom: 'Ctrl + roda: zoom',
-      shortcutMarquee: 'Shift + arrastar no fundo: selecionar área',
-      shortcutConnect: 'Arrastar de uma bolinha: conectar',
-      shortcutDelete: 'Delete: excluir seleção',
-      shortcutDuplicate: 'Ctrl + D: duplicar',
-      shortcutUndo: 'Ctrl + Z / Ctrl + Shift + Z: desfazer / refazer',
-      shortcutGroup: 'Arrastar uma fase leva os elementos dentro dela (Alt: só a moldura)',
-      canvasLabel: 'Quadro do fluxo. Use Delete para excluir a seleção e as setas para mover.',
-      emptyCanvas: 'Arraste elementos ou membros para começar.',
-      saveFailed: 'Não foi possível salvar',
-      legendFlow: 'sequência',
-      legendLoop: 'retorno',
-      legendDelegate: 'delegação',
-      togglePalette: 'Mostrar/ocultar elementos e membros',
-      toggleInspector: 'Mostrar/ocultar propriedades',
-      resize: 'Redimensionar',
-      // v3: runnable teams and harness packs
-      nodeTeam: 'Time',
-      nodeTeamDefault: 'Outro time',
-      edgeHandoff: 'Passagem para outro time',
-      legendHandoff: 'passagem',
-      teamNodeTarget: 'Time responsável',
-      teamNodePick: 'Escolha um time',
-      teamNodeNone: 'Nenhum time escolhido',
-      teamNodeMissing: 'Time não encontrado',
-      teamNodeNoOthers: 'Não há outros times. Crie outro time para passar etapas a ele.',
-      teamNodeHint: 'Esta etapa é feita pelo líder do outro time.',
-      leadLabel: 'Líder',
-      leadNone: 'Sem líder',
-      leadHint: 'Recebe os pedidos e orquestra o time. Só bits orquestradores podem ser líderes.',
-      leadBadge: 'Líder',
-      leadOf: 'Líder: {name}',
-      makeLead: 'Tornar líder',
-      memberSkills: 'Ler antes (skills)',
-      memberSkillsHint: 'Skills que o membro lê antes de começar.',
-      memberTeamRef: 'Representa o time',
-      memberTeamRefNone: 'Nenhum (membro comum)',
-      memberTeamRefHint: 'Delegar a este membro executa o líder do outro time.',
-      memberMcp: 'Servidores MCP',
-      memberMcpHint: 'Até 8 servidores do harness montados para o membro.',
-      memberMcpNone: 'O harness não declara servidores MCP.',
-      packSkillsNone: 'O harness não tem skills.',
-      noPackHint: 'Escolha um harness nas propriedades do time para listar as skills e os servidores MCP.',
-      packNeeded: 'Requer um harness no time.',
-      packMissingHint: 'O harness “{id}” não foi encontrado. Importe-o de novo em Harness.',
-      runSection: 'Execução',
-      harnessLabel: 'Harness',
-      harnessNone: 'Nenhum',
-      harnessUnknown: '{id} (não encontrado)',
-      packSummary: 'v{version} · {agents} presets · {skills} skills · {instructions} instruções · patches {applied}/{total}',
-      packsLoading: 'Carregando harness…',
-      packsError: 'Não foi possível carregar os harness.',
-      routeMissing: 'O host ainda não oferece este recurso (atualize o plugin).',
-      bindWorkspace: 'Toda sessão neste workspace é do time',
-      bindWorkspaceHint: 'Sessões abertas dentro da pasta do time (inclusive worktrees) usam o líder deste time. Use em só um time por workspace.',
-      bindWorkspaceNoDir: 'Defina o repositório ou pasta do time para vincular as sessões.',
-      bindWorkspaceConflict: 'O time “{name}” também vincula este workspace.',
-      rulesLabel: 'Regras extras',
-      rulesHint: 'Acrescentadas depois das regras do harness em toda sessão do time.',
-      rulesPlaceholder: 'Ex.: Responda sempre em português e cite o card AB…',
-      teamSkills: 'Skills visíveis',
-      teamSkillsHint: 'Nenhuma marcada = todas as skills do harness.',
-      entriesLabel: 'Pedidos',
-      entriesHint: 'Modelos do “Enviar pedido”. Use {n} para o número do card e {pedido} para o texto livre.',
-      entriesEmpty: 'Nenhum modelo. O envio usa só o pedido livre.',
-      entryLabelPlaceholder: 'Nome (ex.: Implementar card)',
-      entryTemplatePlaceholder: 'Ex.: Implemente o card AB-{n}. {pedido}',
-      addEntry: 'Adicionar pedido',
-      removeEntry: 'Remover pedido',
-      entryInvalid: 'Cada pedido precisa de nome e modelo.',
-      sendRequest: 'Enviar pedido',
-      sendRequestTitle: 'Enviar pedido para {name}',
-      sendTemplate: 'Modelo',
-      sendFree: 'Pedido livre',
-      sendFreeHint: 'Escreva o pedido inteiro abaixo.',
-      sendNumber: 'Número do card (AB)',
-      sendNumberHint: 'Só os dígitos; “AB-123” e “AB#123” também valem.',
-      sendNumberInvalid: 'Use só números (ex.: 123 ou AB-123).',
-      sendNumberRequired: 'Este modelo precisa do número do card.',
-      sendDetails: 'Detalhes/pedido',
-      sendDetailsFree: 'Pedido',
-      sendDetailsExtra: 'Detalhes (opcional, vão ao final)',
-      sendDetailsPlaceholder: 'Descreva o que precisa ser feito…',
-      sendPreview: 'Prévia',
-      sendPreviewEmpty: 'O pedido aparece aqui.',
-      sendSubmit: 'Iniciar fluxo',
-      sendOpening: 'Iniciando…',
-      sendStarted: 'Sessão iniciada',
-      sendStartedHint: 'A sessão do time foi criada e o pedido já foi entregue ao líder.',
-      sendOpenFailed: 'A sessão foi iniciada, mas esta página não conseguiu abri-la.',
-      workspaceBound: 'Workspace vinculado',
-      harnessBadge: 'Harness {id} v{version}',
-      harnessBadgeNoVersion: 'Harness {id}',
-      harnessButton: 'Harness',
-      harnessButtonHint: 'Pacotes de harness (presets, skills, instruções e MCP) que os times podem usar',
-      harnessTitle: 'Pacotes de harness',
-      harnessIntro: 'Um harness é copiado de um repositório (AGENTS.md, .github/agents, skills, instruções, hooks e .mcp.json) para dentro dos Bits. Os times usam o pacote; o repositório não é alterado.',
-      packsEmpty: 'Nenhum harness importado ainda.',
-      packSource: 'Origem',
-      packCounts: '{agents} presets · {skills} skills · {instructions} instruções · {mcp} MCP',
-      packPatches: 'Patches: {applied}/{total} aplicados',
-      packVersionUnknown: 'versão ?',
-      createFromPack: 'Criar time deste harness',
-      teamFromPackCreated: 'Time criado a partir do harness.',
-      importHarness: 'Importar harness',
-      importSourceDir: 'Pasta de origem',
-      importSourceHint: 'Caminho absoluto do repositório que tem o harness.',
-      importId: 'Id do pacote',
-      importIdHint: 'Minúsculas, números, - e _. Reimportar o mesmo id substitui o pacote.',
-      importIdInvalid: 'Use minúsculas, números, - e _ (ex.: dsc).',
-      importName: 'Nome (opcional)',
-      importSubmit: 'Importar',
-      importing: 'Importando…',
-      importDone: 'Harness importado',
-      // v4: projects layer
-      tabProjects: 'Projetos',
-      projectsSubtitle: 'Organize os times por projeto: cada projeto reúne os times que trabalham juntos e um time compartilhado pode atender a mais de um projeto.',
-      projectsLoading: 'Carregando projetos…',
-      projectsError: 'Não foi possível carregar os projetos.',
-      projectsEmpty: 'Nenhum projeto ainda',
-      projectsEmptyHint: 'Crie um projeto para agrupar os times que trabalham juntos.',
-      newProject: 'Novo projeto',
-      projectCreated: 'Projeto criado.',
-      projectSaved: 'Projeto salvo.',
-      projectDeleted: 'Projeto excluído.',
-      projectName: 'Nome do projeto',
-      projectNamePlaceholder: 'Ex.: DSC',
-      projectNameRequired: 'Informe um nome para o projeto.',
-      projectDescription: 'Descrição',
-      projectDescriptionPlaceholder: 'O que este projeto reúne e como os times trabalham nele…',
-      projectEmoji: 'Emoji',
-      projectColor: 'Cor',
-      projectTeamsCount: '{n} time(s)',
-      projectSharedCount: '{n} compartilhado(s)',
-      backToProjects: 'Voltar para os projetos',
-      openProject: 'Abrir',
-      editProject: 'Editar projeto',
-      deleteProject: 'Excluir projeto',
-      deleteProjectTitle: 'Excluir o projeto {name}?',
-      deleteProjectBody: 'O projeto será removido; os times não são excluídos, apenas desvinculados dele.',
-      projectTeamsDetached: '{n} time(s) desvinculado(s).',
-      noProjectTeams: 'Nenhum time neste projeto',
-      noProjectTeamsHint: 'Adicione times que já existem ou crie um time novo dentro do projeto.',
-      addExistingTeams: 'Adicionar times',
-      addTeamsTitle: 'Adicionar times ao projeto',
-      addTeamsHint: 'Marque os times que trabalham neste projeto. Times não compartilhados só podem estar em um projeto.',
-      addTeamsConfirm: 'Aplicar',
-      removeFromProject: 'Remover do projeto',
-      removeFromProjectDone: 'Time removido do projeto.',
-      projectTeamNotShared: 'Não compartilhado, já está no projeto',
-      sharedTeam: 'Time compartilhado',
-      sharedTeamHint: 'Permite usar este time em mais de um projeto.',
-      sharedBadge: 'Compartilhado',
-      sharedSingleProjectHint: 'Um time não compartilhado pode estar em um único projeto; mantivemos o primeiro.',
-      teamProjects: 'Projetos do time',
-      teamProjectsHint: 'Projeto em que o time trabalha. Marque “Time compartilhado” para usar em vários.',
-      noProject: 'Nenhum projeto',
-      projectUnknown: 'Projeto não encontrado',
-      projectNewTeam: 'Novo time',
-      createProject: 'Criar projeto',
-      teamsInProjectsTitle: 'Nenhum time fora de projetos',
-      teamsInProjectsHint: 'Times de projeto aparecem dentro do projeto. Abra Projetos para ver os {n} time(s) deste perfil, ou crie um time sem projeto para ele aparecer aqui.',
-      teamsInProjectsNotice: '{n} time(s) de projeto aparecem na aba Projetos.',
-      openProjectsTab: 'Ver projetos',
-      teamMovedToProject: 'Time salvo: agora ele aparece na aba Projetos.',
-      workspace: 'Workspace',
-    }
-
-    /** Teams copy (en fallback). */
+    /** Teams copy (English), merged into the EN dictionary. */
     const TEAM_EN = {
       tabsLabel: 'Sections',
       tabBots: 'Bits',
@@ -2381,10 +1989,10 @@ window.__ModuleLoader__.load({
       teamSkills: 'Visible skills',
       teamSkillsHint: 'None checked = every harness skill.',
       entriesLabel: 'Requests',
-      entriesHint: 'Templates for “Send request”. Use {n} for the card number and {pedido} for the free text.',
+      entriesHint: 'Templates for “Send request”. Use {n} for the card number and {request} for the free text.',
       entriesEmpty: 'No templates. Sending uses the free request only.',
       entryLabelPlaceholder: 'Name (e.g. Implement card)',
-      entryTemplatePlaceholder: 'E.g. Implement card AB-{n}. {pedido}',
+      entryTemplatePlaceholder: 'E.g. Implement card AB-{n}. {request}',
       addEntry: 'Add request',
       removeEntry: 'Remove request',
       entryInvalid: 'Every request needs a name and a template.',
@@ -2486,7 +2094,6 @@ window.__ModuleLoader__.load({
       workspace: 'Workspace',
     }
 
-    Object.assign(PT, TEAM_PT)
     Object.assign(EN, TEAM_EN)
 
     const TEAM_STYLES = `
@@ -2945,7 +2552,7 @@ window.__ModuleLoader__.load({
         color: bit.color,
         emoji: bit.emoji,
         avatar: '',
-        summary: { pt: '', en: '' },
+        summary: { en: '' },
         group: null,
       }
     }
@@ -3074,7 +2681,7 @@ window.__ModuleLoader__.load({
       const lead = asString(raw.lead)
       return {
         id: asString(raw.id),
-        name: asString(raw.name) || asString(raw.id) || 'Time',
+        name: asString(raw.name) || asString(raw.id) || 'Team',
         description: asString(raw.description),
         emoji: asString(raw.emoji) || '👥',
         color: isHexColor(raw.color) ? raw.color : TYPE_COLOR.group,
@@ -3183,8 +2790,8 @@ window.__ModuleLoader__.load({
 
     /**
      * A team that is not shared (`shared: false`) belongs to exactly one project, so
-     * it is exclusive to it: it lists inside that project and no longer in the Times
-     * tab. Shared teams stay in the Times tab as the reusable library (§12.4).
+     * it is exclusive to it: it lists inside that project and no longer in the Teams
+     * tab. Shared teams stay in the Teams tab as the reusable library (§12.4).
      */
     function teamIsProjectExclusive(team) {
       return isObject(team) && team.shared === false && Array.isArray(team.projectIds) && team.projectIds.length > 0
@@ -3284,7 +2891,7 @@ window.__ModuleLoader__.load({
       return { digits: match[1], valid: true, pending: !match[1] }
     }
 
-    /** Final request text: template filled with `{n}`/`{pedido}` (free text appended). */
+    /** Final request text: template filled with `{n}`/`{request}` (free text appended). */
     function buildRequestPrompt(entry, digits, details) {
       const extra = asString(details).trim()
       let text
@@ -3292,8 +2899,8 @@ window.__ModuleLoader__.load({
         text = extra
       } else {
         const template = asString(entry.template)
-        text = template.split('{n}').join(digits).split('{pedido}').join(extra).trim()
-        if (template.indexOf('{pedido}') < 0 && extra) text = text + '\n\n' + extra
+        text = template.split('{n}').join(digits).split('{request}').join(extra).trim()
+        if (template.indexOf('{request}') < 0 && extra) text = text + '\n\n' + extra
       }
       return text || ''
     }
@@ -3546,12 +3153,12 @@ window.__ModuleLoader__.load({
       })
     }
 
-    function memberFromBit(bit, members, catalog, lang) {
+    function memberFromBit(bit, members, catalog) {
       const character = bitCharacter(bit, catalog)
       return {
         id: memberSlug(bit.name, members),
         bitId: bit.id,
-        role: character ? summaryOf(character, lang).slice(0, 200) : excerpt(bit.instructions, 200),
+        role: character ? summaryOf(character).slice(0, 200) : excerpt(bit.instructions, 200),
         access: 'write',
         launches: [],
         teamRef: null,
@@ -3866,7 +3473,7 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * "Enviar pedido": pick a template, fill `{n}`/`{pedido}`, preview, then start
+     * "Send request": pick a template, fill `{n}`/`{request}`, preview, then start
      * the mission through `POST /api/bots.teams.run` (V5-CONTRACT.md §5.4/§8).
      */
     function SendRequestDialog(props) {
@@ -3883,7 +3490,7 @@ window.__ModuleLoader__.load({
       const detailsRef = React.useRef(null)
       const entry = choice === 'free' ? null : entries.find(function (item) { return item.id === choice }) || null
       const needsNumber = !!entry && entry.template.indexOf('{n}') >= 0
-      const usesDetails = !entry || entry.template.indexOf('{pedido}') >= 0
+      const usesDetails = !entry || entry.template.indexOf('{request}') >= 0
       const card = parseCardNumber(number)
       const prompt = buildRequestPrompt(entry, card.digits, details)
       const numberMissing = needsNumber && !card.digits
@@ -4095,7 +3702,7 @@ window.__ModuleLoader__.load({
           h(Field, { label: t('importSourceDir'), htmlFor: 'dsh-harness-source', hint: t('importSourceHint'), error: sourceBad ? t('workspaceInvalid') : null },
             h('input', {
               id: 'dsh-harness-source', ref: sourceRef, className: 'dsh-bots-input', value: sourceDir, maxLength: 1024,
-              placeholder: '/home/…/repositorio', spellCheck: false, autoComplete: 'off',
+              placeholder: '/home/…/repository', spellCheck: false, autoComplete: 'off',
               style: { fontFamily: 'var(--dsh-bots-mono)' }, 'aria-invalid': sourceBad ? 'true' : undefined,
               onChange: function (event) { changeSource(event.target.value) },
             })),
@@ -4125,7 +3732,7 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * "Novo time": a blank team, or a template instantiated through
+     * "New team": a blank team, or a template instantiated through
      * `POST /api/bots.teams.fromTemplate` (which creates fresh bits, §5.2).
      */
     function NewTeamDialog(props) {
@@ -4246,7 +3853,6 @@ window.__ModuleLoader__.load({
 
     function TeamsView(props) {
       const t = props.t
-      const lang = props.lang
       const catalog = props.catalog
       const showToast = props.showToast
       const [data, setData] = React.useState({ phase: 'loading', teams: [], error: null })
@@ -4337,7 +3943,7 @@ window.__ModuleLoader__.load({
       }
 
       /**
-       * "Enviar pedido": the host starts the mission and returns the created
+       * "Send request": the host starts the mission and returns the created
        * session; open it when the page can, otherwise the dialog shows its id.
        */
       async function sendRequest(team, prompt) {
@@ -4441,7 +4047,7 @@ window.__ModuleLoader__.load({
       }
 
       function exportTeam(team) {
-        const slug = foldText(team.name).replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'time'
+        const slug = foldText(team.name).replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'team'
         try {
           const payload = teamPayload(team)
           // Project ids are profile-local; the export keeps `shared` only (§12.1).
@@ -4488,7 +4094,6 @@ window.__ModuleLoader__.load({
         return h(TeamEditor, {
           key: openTeam.id,
           t: t,
-          lang: lang,
           catalog: catalog,
           onRetryCatalog: props.onRetryCatalog,
           team: openTeam,
@@ -4504,7 +4109,7 @@ window.__ModuleLoader__.load({
         })
       }
 
-      // An unshared team belongs to its project, so the Times tab lists only the
+      // An unshared team belongs to its project, so the Teams tab lists only the
       // teams that are not exclusive to one (shared teams and project-less
       // teams). Hidden ones stay reachable through the Projects tab (§12.4).
       const listedTeams = data.teams.filter(function (team) { return !teamIsProjectExclusive(team) })
@@ -4727,7 +4332,7 @@ window.__ModuleLoader__.load({
       )
     }
 
-    /** "Adicionar times": checkbox picker over every team; only changed memberships are patched. */
+    /** "Add teams": checkbox picker over every team; only changed memberships are patched. */
     function ProjectTeamsDialog(props) {
       const t = props.t
       const project = props.project
@@ -4787,7 +4392,6 @@ window.__ModuleLoader__.load({
     /** Projects tab: list of projects and the project detail with its teams (§12.4). */
     function ProjectsView(props) {
       const t = props.t
-      const lang = props.lang
       const catalog = props.catalog
       const showToast = props.showToast
       const [data, setData] = React.useState({ phase: 'loading', projects: [], teams: [], error: null })
@@ -5003,7 +4607,7 @@ window.__ModuleLoader__.load({
       }
 
       function exportTeam(team) {
-        const slug = foldText(team.name).replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'time'
+        const slug = foldText(team.name).replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'team'
         try {
           const payload = teamPayload(team)
           delete payload.projectIds
@@ -5039,7 +4643,6 @@ window.__ModuleLoader__.load({
         return h(TeamEditor, {
           key: openTeam.id,
           t: t,
-          lang: lang,
           catalog: catalog,
           onRetryCatalog: props.onRetryCatalog,
           team: openTeam,
@@ -5236,10 +4839,9 @@ window.__ModuleLoader__.load({
 
     function TeamEditor(props) {
       const t = props.t
-      const lang = props.lang
       const catalog = props.catalog
       const showToast = props.showToast
-      // "Voltar" returns to the tab the editor was opened from (Times by default, Projects inside a project).
+      // "Back" returns to the tab the editor was opened from (Teams by default, Projects inside a project).
       const backLabel = asString(props.backLabel) || t('backToTeams')
       const history = useFlowHistory(draftOf(props.team))
       const draft = history.draft
@@ -5823,7 +5425,7 @@ window.__ModuleLoader__.load({
       /* ----- members ----- */
 
       function addMemberFromBit(bit) {
-        const member = memberFromBit(bit, draftRef.current.members, catalog, lang)
+        const member = memberFromBit(bit, draftRef.current.members, catalog)
         history.commit(function (previous) { return Object.assign({}, previous, { members: previous.members.concat([member]) }) })
         setDialog(null)
         select({ nodes: [], edge: null, member: member.id })
@@ -5836,7 +5438,7 @@ window.__ModuleLoader__.load({
         if (!member || !bit) return
         const character = bitCharacter(bit, catalog)
         const patch = { bitId: bit.id }
-        if (!member.role) patch.role = character ? summaryOf(character, lang).slice(0, 200) : excerpt(bit.instructions, 200)
+        if (!member.role) patch.role = character ? summaryOf(character).slice(0, 200) : excerpt(bit.instructions, 200)
         history.commit(function (previous) { return patchMember(previous, memberId, patch) })
       }
 
@@ -6127,7 +5729,7 @@ window.__ModuleLoader__.load({
       if (liveSelection.member) {
         inspector = h(MemberInspector, {
           key: 'member-' + liveSelection.member,
-          t: t, lang: lang, catalog: catalog,
+          t: t, catalog: catalog,
           member: membersById[liveSelection.member],
           members: draft.members,
           uses: stepCounts[liveSelection.member] || 0,
@@ -6222,7 +5824,6 @@ window.__ModuleLoader__.load({
         dialogNode = h(AddMemberDialog, {
           key: 'addMember',
           t: t,
-          lang: lang,
           catalog: catalog,
           bits: available,
           phase: bitsState.phase,
@@ -6316,7 +5917,7 @@ window.__ModuleLoader__.load({
           h(Field, { label: t('teamDescription'), htmlFor: 'dsh-team-prop-description' },
             h('textarea', { id: 'dsh-team-prop-description', className: 'dsh-bots-textarea dsh-team-textarea-sm', value: draft.description, maxLength: 2000, placeholder: t('teamDescriptionPlaceholder'), onChange: function (event) { set('description', event.target.value) } })),
           h(Field, { label: t('teamWorkspace'), htmlFor: 'dsh-team-prop-workspace', hint: t('teamWorkspaceHint'), error: workspaceBad ? t('workspaceInvalid') : null },
-            h('input', { id: 'dsh-team-prop-workspace', className: 'dsh-bots-input', style: { fontFamily: 'var(--dsh-bots-mono)' }, value: workspace, maxLength: 1024, placeholder: '/home/…/projeto', spellCheck: false, onChange: function (event) { set('workspaceDir', event.target.value) } })),
+            h('input', { id: 'dsh-team-prop-workspace', className: 'dsh-bots-input', style: { fontFamily: 'var(--dsh-bots-mono)' }, value: workspace, maxLength: 1024, placeholder: '/home/…/project', spellCheck: false, onChange: function (event) { set('workspaceDir', event.target.value) } })),
           h('p', { className: 'dsh-team-kv' }, tf(t, 'teamStats', stats))),
         // v4: shared flag + project assignment live in the team properties (§12.4).
         h('section', { className: 'dsh-team-section' },
@@ -6684,12 +6285,11 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * "Adicionar bit": pick one existing bit (grouped by catalog group) to add
+     * "Add bit": pick one existing bit (grouped by catalog group) to add
      * as a team member. Bits are created on the Bits tab (V5-CONTRACT.md §8).
      */
     function AddMemberDialog(props) {
       const t = props.t
-      const lang = props.lang
       const catalog = props.catalog
       const bits = Array.isArray(props.bits) ? props.bits : []
       const [choice, setChoice] = React.useState(bits.length > 0 ? bits[0].id : '')
@@ -6709,7 +6309,7 @@ window.__ModuleLoader__.load({
       }
       catalog.groups.forEach(function (group) {
         const section = sectionFor(group.id)
-        section.label = lang === 'en' ? group.label.en : group.label.pt
+        section.label = group.label.en
       })
       const other = sectionFor('__other')
       other.label = t('otherGroup')
@@ -6760,7 +6360,7 @@ window.__ModuleLoader__.load({
               h('div', { className: 'dsh-bots-bit-hero-text' },
                 h('p', { className: 'dsh-bots-bit-hero-role' }, chosen.name),
                 h('p', { className: 'dsh-bots-hint' }, chosenCharacter
-                  ? chosenCharacter.name + ' · ' + groupLabelOf(catalog, chosenCharacter.group, lang, t)
+                  ? chosenCharacter.name + ' · ' + groupLabelOf(catalog, chosenCharacter.group, t)
                   : t('noCharacter')),
                 h('div', { className: 'dsh-team-badges' },
                   h(Badge, {
@@ -6822,7 +6422,7 @@ window.__ModuleLoader__.load({
       }
       catalog.groups.forEach(function (group) {
         const section = bitGroupFor(group.id)
-        section.label = props.lang === 'en' ? group.label.en : group.label.pt
+        section.label = group.label.en
       })
       const otherBits = bitGroupFor('__other')
       otherBits.label = t('otherGroup')
@@ -6871,7 +6471,7 @@ window.__ModuleLoader__.load({
           h(BitAvatar, { bit: avatarBitOf(bit, catalog), size: 64, emoji: bit ? bit.emoji : '🤖', color: bit ? bit.color : TYPE_COLOR.end }),
           h('div', { className: 'dsh-bots-bit-hero-text' },
             h('p', { className: 'dsh-bots-bit-hero-role' }, bit ? bit.name : (member.bitId || t('memberBitMissing'))),
-            character ? h('p', { className: 'dsh-bots-hint' }, character.name + ' · ' + groupLabelOf(catalog, character.group, props.lang, t)) : null,
+            character ? h('p', { className: 'dsh-bots-hint' }, character.name + ' · ' + groupLabelOf(catalog, character.group, t)) : null,
             h('div', { className: 'dsh-team-badges' },
               h(Badge, {
                 dot: false,
@@ -6940,7 +6540,7 @@ window.__ModuleLoader__.load({
         return { phase: 'loading', bits: [], byId: {}, error: null }
       })
       const [models, setModels] = React.useState(function () { return emptyModels('loading') })
-      // Teams are only read for the orchestrator cards ("Líder em: …").
+      // Teams are only read for the orchestrator cards ("Lead in: …").
       const [teams, setTeams] = React.useState([])
       const [dialog, setDialog] = React.useState(null)
       const [toast, setToast] = React.useState(null)
@@ -6951,7 +6551,6 @@ window.__ModuleLoader__.load({
         setTabState(next)
         storeTab(next)
       }, [])
-      const lang = t('lang') === 'en' ? 'en' : 'pt'
 
       const aliveRef = React.useRef(true)
       const loadedRef = React.useRef(false)
@@ -7182,7 +6781,6 @@ window.__ModuleLoader__.load({
                 bit: bit,
                 models: models,
                 catalog: catalog,
-                lang: lang,
                 t: t,
                 leadTeams: bit.isOrchestrator === true ? teamsLedBy(bit) : [],
                 onRun: openRun,
@@ -7201,7 +6799,6 @@ window.__ModuleLoader__.load({
           key: 'form',
           t: t,
           bot: dialog.bot,
-          lang: lang,
           catalog: catalog,
           models: models,
           onRetryCatalog: loadCatalog,
@@ -7241,7 +6838,6 @@ window.__ModuleLoader__.load({
           h('style', { key: 'dsh-bots-styles' }, STYLES + TEAM_STYLES),
           h(TeamsView, {
             t: t,
-            lang: lang,
             catalog: catalog,
             onRetryCatalog: loadCatalog,
             showToast: showToast,
@@ -7257,7 +6853,6 @@ window.__ModuleLoader__.load({
           h('style', { key: 'dsh-bots-styles' }, STYLES + TEAM_STYLES),
           h(ProjectsView, {
             t: t,
-            lang: lang,
             catalog: catalog,
             onRetryCatalog: loadCatalog,
             showToast: showToast,
@@ -7340,7 +6935,7 @@ window.__ModuleLoader__.load({
     function apply(ctx) {
       if (!ctx || !ctx.locale || !ctx.slots) return
       ctx.effect(function () {
-        return ctx.locale.register(NS, { en: EN, pt: PT, 'pt-BR': PT })
+        return ctx.locale.register(NS, { en: EN })
       }, 'dsh-bots: dictionaries')
       const t = ctx.locale.bind(NS)
       let layout = null

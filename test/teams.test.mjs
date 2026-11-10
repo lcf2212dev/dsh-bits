@@ -173,7 +173,7 @@ function sampleTeam(ids = {}) {
     name: 'DSC',
     description: 'Time do design system',
     members: [
-      member('builder', ids.builder ?? BUILDER, { role: 'Implementa', launches: ['scout'] }),
+      member('builder', ids.builder ?? BUILDER, { role: 'Implements', launches: ['scout'] }),
       member('scout', ids.scout ?? SCOUT, { access: 'read' }),
     ],
     flow: {
@@ -217,7 +217,7 @@ await test('normalizeTeam applies defaults in create mode', () => {
   assert.deepEqual(full.members[0], {
     id: 'builder',
     bitId: BUILDER,
-    role: 'Implementa',
+    role: 'Implements',
     access: 'write',
     launches: ['scout'],
     skills: [],
@@ -339,9 +339,9 @@ await test('normalizeTeam validates runtime fields (lead, harness, skills, entry
       lead: 'lead',
       harness: 'dsc',
       bindWorkspace: true,
-      rules: 'Regra',
+      rules: 'Rule',
       skills: ['tdd', 'tdd', 'implement-card'],
-      entry: [{ id: 'impl', label: 'Implementar', template: 'implemente o AB {n}' }],
+      entry: [{ id: 'impl', label: 'Implement', template: 'implement AB {n}' }],
       members: [member('lead', LEAD, { skills: ['subagent-routing'] }), member('val', RUNNER, { teamRef: 'abcdef0123', mcp: ['playwright', 'playwright'] })],
       flow: {
         nodes: [{ id: 't', type: 'team', teamRef: '0123456789' }, { id: 's', type: 'start' }],
@@ -364,6 +364,10 @@ await test('normalizeTeam validates runtime fields (lead, harness, skills, entry
   expectInvalid(() => normalizeTeam(base({ lead: 'ghost' }), { bits: bitLookup(bits) }), /^lead: unknown member "ghost"/)
   expectInvalid(() => normalizeTeam(base({ harness: 'Bad Pack' })), /^harness:/)
   expectInvalid(() => normalizeTeam(base({ skills: ['Bad Skill'] })), /^skills\[0\]:/)
+  assert.deepEqual(
+    normalizeTeam(base({ entry: [{ id: 'a', label: 'A', template: 'implement {request}' }] }), { bits: bitLookup(bits) }).entry,
+    [{ id: 'a', label: 'A', template: 'implement {request}' }],
+  )
   expectInvalid(() => normalizeTeam(base({ entry: [{ id: 'a', label: 'A', template: '  ' }] })), /^entry\[0\]\.template:/)
   expectInvalid(() => normalizeTeam(base({ members: [member('x', RUNNER, { teamRef: 'nope' })] })), /^members\[0\]\.teamRef:/)
   const partial = normalizeTeam({ lead: null, harness: '', bindWorkspace: true }, { partial: true })
@@ -527,7 +531,7 @@ await test('list/get return deep copies', async () => {
   copy.members[0].role = 'mutated'
   copy.flow.nodes.length = 0
   teams.list()[0].name = 'mutated'
-  assert.equal(teams.get(team.id).members[0].role, 'Implementa')
+  assert.equal(teams.get(team.id).members[0].role, 'Implements')
   assert.equal(teams.get(team.id).flow.nodes.length, 3)
   assert.equal(teams.get(team.id).name, 'DSC')
   assert.equal(teams.get('nope'), undefined)
@@ -719,6 +723,7 @@ await test('store enforces the 200 team limit', async () => {
 // v4 → v5 migration (V5-CONTRACT §3.2)
 // ---------------------------------------------------------------------------
 
+
 const COORDINATOR_INSTRUCTIONS = 'You orchestrate the team.'
 
 function v4Member(id, character, name, fields = {}) {
@@ -739,17 +744,17 @@ function v4Member(id, character, name, fields = {}) {
 function v4Team(overrides = {}) {
   return {
     id: 'aaaaaaaaaa',
-    name: 'Time A',
-    description: 'Primeiro time',
+    name: 'Team A',
+    description: 'First team',
     emoji: '🛠️',
     color: '#7c3aed',
-    workspaceDir: '/tmp/time-a',
+    workspaceDir: '/tmp/team-a',
     lead: 'coordinator',
     harness: 'dsc',
     bindWorkspace: true,
-    rules: 'Regras do time',
+    rules: 'Team rules',
     skills: ['tdd'],
-    entry: [{ id: 'impl', label: 'Implementar', template: 'implemente {pedido}' }],
+    entry: [{ id: 'impl', label: 'Implement', template: 'implement {request}' }],
     shared: true,
     projectIds: ['1111111111', '2222222222'],
     createdAt: '2026-01-01T00:00:00.000Z',
@@ -773,7 +778,7 @@ function v4Team(overrides = {}) {
 function v4TeamB() {
   return {
     id: 'bbbbbbbbbb',
-    name: 'Time B',
+    name: 'Team B',
     lead: 'coordinator',
     createdAt: '2026-02-01T00:00:00.000Z',
     updatedAt: '2026-02-01T00:00:00.000Z',
@@ -828,9 +833,9 @@ await test('migration: v4 members become deduplicated bits and the file is backe
   assert.equal(teamA.lead, 'coordinator')
   assert.equal(teamA.harness, 'dsc')
   assert.equal(teamA.bindWorkspace, true)
-  assert.equal(teamA.rules, 'Regras do time')
+  assert.equal(teamA.rules, 'Team rules')
   assert.deepEqual(teamA.skills, ['tdd'])
-  assert.deepEqual(teamA.entry, [{ id: 'impl', label: 'Implementar', template: 'implemente {pedido}' }])
+  assert.deepEqual(teamA.entry, [{ id: 'impl', label: 'Implement', template: 'implement {request}' }])
   assert.equal(teamA.shared, true)
   assert.deepEqual(teamA.projectIds, ['1111111111', '2222222222'])
   assert.equal(teamA.createdAt, '2026-01-01T00:00:00.000Z')
@@ -1206,23 +1211,23 @@ await test('routes validate project ids when a project store is available', asyn
 function sampleTemplate(overrides = {}) {
   return {
     id: 'eng',
-    name: 'Engenharia (template)',
-    description: 'Time de teste',
+    name: 'Engineering (template)',
+    description: 'Test team',
     emoji: '🛠️',
     bits: [
-      { key: 'coordinator', name: 'Coordinator', character: 'bit-coordinator', instructions: 'Orquestre.', isOrchestrator: true, model: 'deepseek-account/deepseek-flash', effort: 'max' },
-      { key: 'builder', name: 'Builder', character: 'bit-builder', instructions: 'Implemente.' },
+      { key: 'coordinator', name: 'Coordinator', character: 'bit-coordinator', instructions: 'Orchestrate.', isOrchestrator: true, model: 'deepseek-account/deepseek-flash', effort: 'max' },
+      { key: 'builder', name: 'Builder', character: 'bit-builder', instructions: 'Implement.' },
     ],
     team: {
-      name: 'Engenharia',
+      name: 'Engineering',
       description: 'x',
       emoji: '👥',
       color: '#2563eb',
       workspaceDir: null,
       lead: 'coordinator',
       members: [
-        { id: 'coordinator', bitKey: 'coordinator', role: 'Orquestra', access: 'read', launches: ['builder'] },
-        { id: 'builder', bitKey: 'builder', role: 'Implementa', access: 'write', launches: [] },
+        { id: 'coordinator', bitKey: 'coordinator', role: 'Orchestrates', access: 'read', launches: ['builder'] },
+        { id: 'builder', bitKey: 'builder', role: 'Implements', access: 'write', launches: [] },
       ],
       flow: {
         nodes: [{ id: 'n1', type: 'start' }, { id: 'n2', type: 'step', memberId: 'builder' }],
@@ -1266,7 +1271,7 @@ await test('loadTeamTemplates loads the new format and skips invalid templates',
   const templates = loadTeamTemplates(dir, (message) => logs.push(message))
   assert.equal(templates.length, 1)
   assert.equal(templates[0].id, 'eng')
-  assert.equal(templates[0].name, 'Engenharia (template)')
+  assert.equal(templates[0].name, 'Engineering (template)')
   assert.equal(templates[0].bits.length, 2)
   assert.deepEqual(templates[0].bits.map((bit) => bit.key), ['coordinator', 'builder'])
   assert.equal(templates[0].team.lead, 'coordinator')
@@ -1322,7 +1327,7 @@ await test('fromTemplate creates fresh bits and the team referencing them', asyn
   const created = await app.call('/api/bots.teams.fromTemplate', { templateId: 'eng' })
   assert.equal(created.ok, true, JSON.stringify(created))
   assert.equal(created.bits.length, 2)
-  assert.equal(created.team.name, 'Engenharia')
+  assert.equal(created.team.name, 'Engineering')
   assert.equal(created.team.lead, 'coordinator')
   assert.deepEqual(
     created.team.members.map((item) => [item.id, item.bitId]),
@@ -1330,13 +1335,13 @@ await test('fromTemplate creates fresh bits and the team referencing them', asyn
   )
   // Catalog defaults for the character + template overrides.
   assert.equal(created.bits[0].name, 'Coordinator')
-  assert.equal(created.bits[0].instructions, 'Orquestre.')
+  assert.equal(created.bits[0].instructions, 'Orchestrate.')
   assert.equal(created.bits[0].model, 'deepseek-account/deepseek-flash')
   assert.equal(created.bits[0].effort, 'max')
   assert.equal(created.bits[0].isOrchestrator, true)
   assert.equal(created.bits[0].emoji, '🎯')
   assert.equal(created.bits[0].color, '#123456')
-  assert.equal(created.bits[1].instructions, 'Implemente.')
+  assert.equal(created.bits[1].instructions, 'Implement.')
   assert.equal(app.teams.list().length, 1)
   assert.equal(app.bits.records.length, 2)
 

@@ -1,7 +1,7 @@
 {
   "id": "engineering",
-  "name": "Engenharia (Claude Code)",
-  "description": "Time de desenvolvimento com os workers do Claude Code (~/.claude/agents): coordenador, scout, researcher, architect, tester, builder, debugger, reviewer, writer, runner e CI triager, em um fluxo TDD com revisão e entrega.",
+  "name": "Engineering (Claude Code)",
+  "description": "Development team with the Claude Code workers (~/.claude/agents): coordinator, scout, researcher, architect, tester, builder, debugger, reviewer, writer, runner and CI triager, in a TDD flow with review and delivery.",
   "emoji": "🛠️",
   "bits": [
     {
@@ -75,8 +75,8 @@
     }
   ],
   "team": {
-    "name": "Engenharia",
-    "description": "Time de desenvolvimento com os workers do Claude Code: entender, planejar, construir com TDD, revisar e entregar.",
+    "name": "Engineering",
+    "description": "Development team with the Claude Code workers: understand, plan, build with TDD, review and deliver.",
     "emoji": "🛠️",
     "color": "#7c3aed",
     "workspaceDir": null,
@@ -84,7 +84,7 @@
       {
         "id": "coordinator",
         "bitKey": "coordinator",
-        "role": "Sessão principal: conversa, decide e delega a cada worker",
+        "role": "Main session: talks, decides and delegates to each worker",
         "access": "read",
         "launches": [
           "scout",
@@ -102,70 +102,70 @@
       {
         "id": "scout",
         "bitKey": "scout",
-        "role": "Localiza arquivos, símbolos e usos (somente leitura)",
+        "role": "Locates files, symbols and usages (read-only)",
         "access": "read",
         "launches": []
       },
       {
         "id": "researcher",
         "bitKey": "researcher",
-        "role": "Docs externas, APIs, changelogs (somente leitura + web)",
+        "role": "External docs, APIs, changelogs (read-only + web)",
         "access": "read",
         "launches": []
       },
       {
         "id": "architect",
         "bitKey": "architect",
-        "role": "Plano e trade-offs baseados no código real",
+        "role": "Plan and trade-offs grounded in the real code",
         "access": "read",
         "launches": []
       },
       {
         "id": "tester",
         "bitKey": "tester",
-        "role": "Escreve testes e entrega o vermelho",
+        "role": "Writes tests and delivers the red",
         "access": "write",
         "launches": []
       },
       {
         "id": "builder",
         "bitKey": "builder",
-        "role": "Implementa o que já foi especificado",
+        "role": "Implements what has already been specified",
         "access": "write",
         "launches": []
       },
       {
         "id": "debugger",
         "bitKey": "debugger",
-        "role": "Causa raiz de bugs não óbvios",
+        "role": "Root cause of non-obvious bugs",
         "access": "write",
         "launches": []
       },
       {
         "id": "reviewer",
         "bitKey": "reviewer",
-        "role": "Revisão adversarial (somente leitura)",
+        "role": "Adversarial review (read-only)",
         "access": "read",
         "launches": []
       },
       {
         "id": "writer",
         "bitKey": "writer",
-        "role": "Docs, CHANGELOG, PR e commit",
+        "role": "Docs, CHANGELOG, PR and commit",
         "access": "write",
         "launches": []
       },
       {
         "id": "runner",
         "bitKey": "runner",
-        "role": "Execução mecânica de comandos já decididos",
+        "role": "Mechanical execution of already-decided commands",
         "access": "write",
         "launches": []
       },
       {
         "id": "ci-triager",
         "bitKey": "ci-triager",
-        "role": "Triagem de falhas de CI (somente leitura)",
+        "role": "CI failure triage (read-only)",
         "access": "read",
         "launches": []
       }
@@ -179,7 +179,7 @@
           "y": 0,
           "w": 280,
           "h": 684,
-          "label": "1. Entender",
+          "label": "1. Understand",
           "detail": "",
           "color": "#0891b2"
         },
@@ -188,7 +188,7 @@
           "type": "start",
           "x": 48,
           "y": 74,
-          "label": "Pedido do usuário",
+          "label": "User request",
           "detail": ""
         },
         {
@@ -196,7 +196,7 @@
           "type": "step",
           "x": 22,
           "y": 166,
-          "label": "Triar o pedido e planejar a delegação",
+          "label": "Triage the request and plan the delegation",
           "detail": "",
           "memberId": "coordinator"
         },
@@ -205,7 +205,7 @@
           "type": "step",
           "x": 22,
           "y": 270,
-          "label": "Localizar arquivos e usos",
+          "label": "Locate files and usages",
           "detail": "",
           "memberId": "scout"
         },
@@ -214,8 +214,8 @@
           "type": "step",
           "x": 22,
           "y": 374,
-          "label": "Pesquisar docs e APIs externas",
-          "detail": "Só quando a tarefa depende de biblioteca, API ou versão externa.",
+          "label": "Research external docs and APIs",
+          "detail": "Only when the task depends on an external library, API or version.",
           "memberId": "researcher"
         },
         {
@@ -225,7 +225,7 @@
           "y": 0,
           "w": 280,
           "h": 684,
-          "label": "2. Planejar",
+          "label": "2. Plan",
           "detail": "",
           "color": "#7c3aed"
         },
@@ -234,7 +234,7 @@
           "type": "step",
           "x": 342,
           "y": 62,
-          "label": "Plano, arquivos e riscos",
+          "label": "Plan, files and risks",
           "detail": "",
           "memberId": "architect"
         },
@@ -243,7 +243,7 @@
           "type": "decision",
           "x": 352,
           "y": 172,
-          "label": "Mudança grande ou arriscada?",
+          "label": "Large or risky change?",
           "detail": ""
         },
         {
@@ -251,7 +251,7 @@
           "type": "pause",
           "x": 352,
           "y": 276,
-          "label": "Aprovação do plano",
+          "label": "Plan approval",
           "detail": ""
         },
         {
@@ -261,7 +261,7 @@
           "y": 0,
           "w": 280,
           "h": 684,
-          "label": "3. Construir (TDD)",
+          "label": "3. Build (TDD)",
           "detail": "",
           "color": "#ca8a04"
         },
@@ -270,7 +270,7 @@
           "type": "step",
           "x": 662,
           "y": 62,
-          "label": "Teste que falha pelo motivo certo",
+          "label": "Test that fails for the right reason",
           "detail": "",
           "memberId": "tester"
         },
@@ -279,7 +279,7 @@
           "type": "step",
           "x": 662,
           "y": 166,
-          "label": "Implementar até o verde",
+          "label": "Implement until green",
           "detail": "",
           "memberId": "builder"
         },
@@ -288,7 +288,7 @@
           "type": "decision",
           "x": 672,
           "y": 276,
-          "label": "Lint e testes verdes?",
+          "label": "Lint and tests green?",
           "detail": ""
         },
         {
@@ -296,7 +296,7 @@
           "type": "step",
           "x": 662,
           "y": 374,
-          "label": "Causa raiz da falha",
+          "label": "Root cause of the failure",
           "detail": "",
           "memberId": "debugger"
         },
@@ -307,7 +307,7 @@
           "y": 0,
           "w": 280,
           "h": 684,
-          "label": "4. Revisar e entregar",
+          "label": "4. Review and deliver",
           "detail": "",
           "color": "#059669"
         },
@@ -316,7 +316,7 @@
           "type": "step",
           "x": 982,
           "y": 62,
-          "label": "Revisão adversarial do diff",
+          "label": "Adversarial review of the diff",
           "detail": "",
           "memberId": "reviewer"
         },
@@ -325,7 +325,7 @@
           "type": "decision",
           "x": 992,
           "y": 172,
-          "label": "Aprovado?",
+          "label": "Approved?",
           "detail": ""
         },
         {
@@ -333,7 +333,7 @@
           "type": "step",
           "x": 982,
           "y": 270,
-          "label": "Docs, CHANGELOG e texto do PR",
+          "label": "Docs, CHANGELOG and PR text",
           "detail": "",
           "memberId": "writer"
         },
@@ -342,7 +342,7 @@
           "type": "step",
           "x": 982,
           "y": 374,
-          "label": "Commit, push e PR (se pedido)",
+          "label": "Commit, push and PR (if requested)",
           "detail": "",
           "memberId": "runner"
         },
@@ -351,7 +351,7 @@
           "type": "decision",
           "x": 992,
           "y": 484,
-          "label": "CI verde?",
+          "label": "CI green?",
           "detail": ""
         },
         {
@@ -359,7 +359,7 @@
           "type": "step",
           "x": 982,
           "y": 582,
-          "label": "Triagem do CI vermelho",
+          "label": "Triage the red CI",
           "detail": "",
           "memberId": "ci-triager"
         },
@@ -368,7 +368,7 @@
           "type": "end",
           "x": 1008,
           "y": 716,
-          "label": "Entregue",
+          "label": "Delivered",
           "detail": ""
         }
       ],
@@ -405,7 +405,7 @@
           "id": "e5",
           "from": "locate",
           "to": "plan",
-          "label": "tarefa interna",
+          "label": "internal task",
           "kind": "flow"
         },
         {
@@ -419,28 +419,28 @@
           "id": "e7",
           "from": "needs-ok",
           "to": "approve",
-          "label": "sim",
+          "label": "yes",
           "kind": "flow"
         },
         {
           "id": "e8",
           "from": "needs-ok",
           "to": "red",
-          "label": "não",
+          "label": "no",
           "kind": "flow"
         },
         {
           "id": "e9",
           "from": "approve",
           "to": "red",
-          "label": "aprovado",
+          "label": "approved",
           "kind": "flow"
         },
         {
           "id": "e10",
           "from": "approve",
           "to": "plan",
-          "label": "ajustar",
+          "label": "adjust",
           "kind": "loop"
         },
         {
@@ -461,21 +461,21 @@
           "id": "e13",
           "from": "green-ok",
           "to": "debug",
-          "label": "falha não óbvia",
+          "label": "non-obvious failure",
           "kind": "flow"
         },
         {
           "id": "e14",
           "from": "debug",
           "to": "green",
-          "label": "correção",
+          "label": "fix",
           "kind": "loop"
         },
         {
           "id": "e15",
           "from": "green-ok",
           "to": "review",
-          "label": "sim",
+          "label": "yes",
           "kind": "flow"
         },
         {
@@ -489,14 +489,14 @@
           "id": "e17",
           "from": "verdict",
           "to": "green",
-          "label": "achados",
+          "label": "findings",
           "kind": "loop"
         },
         {
           "id": "e18",
           "from": "verdict",
           "to": "docs",
-          "label": "sim",
+          "label": "yes",
           "kind": "flow"
         },
         {
@@ -517,21 +517,21 @@
           "id": "e21",
           "from": "ci",
           "to": "ci-triage",
-          "label": "vermelho",
+          "label": "red",
           "kind": "flow"
         },
         {
           "id": "e22",
           "from": "ci-triage",
           "to": "debug",
-          "label": "causa não óbvia",
+          "label": "non-obvious cause",
           "kind": "loop"
         },
         {
           "id": "e-done",
           "from": "ci",
           "to": "done",
-          "label": "verde",
+          "label": "green",
           "kind": "flow"
         }
       ]

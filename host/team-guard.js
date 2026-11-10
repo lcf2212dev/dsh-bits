@@ -113,7 +113,7 @@ export function runGuard({ guardPath, packDir, event, readOnly = false, timeoutM
       }
       const decision = parsed && (parsed.permissionDecision || (parsed.hookSpecificOutput && parsed.hookSpecificOutput.permissionDecision))
       if (code === 2 || decision === 'deny') {
-        const reason = (parsed && (parsed.permissionDecisionReason || (parsed.hookSpecificOutput && parsed.hookSpecificOutput.permissionDecisionReason))) || stderr.trim() || 'Negado pelo guarda do harness.'
+        const reason = (parsed && (parsed.permissionDecisionReason || (parsed.hookSpecificOutput && parsed.hookSpecificOutput.permissionDecisionReason))) || stderr.trim() || 'Denied by the harness guard.'
         finish({ decision: 'deny', reason, error: null })
         return
       }

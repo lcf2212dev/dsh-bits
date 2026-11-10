@@ -11,7 +11,7 @@
  * Every step is also checked through /api/bots.projects and /api/bots.teams.
  * Screenshots go to --out (default test/screenshots/).
  *
- * Usage: node test/visual-projects.mjs [--theme dark|light] [--lang pt|en] [--out dir]
+ * Usage: node test/visual-projects.mjs [--theme dark|light] [--lang en] [--out dir]
  */
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
@@ -40,9 +40,6 @@ const option = (name, fallback) => {
 const THEME = option('theme', 'dark')
 const WIDTH = Number(option('width', '1280'))
 const HEIGHT = Number(option('height', '860'))
-
-const PT = option('lang', 'pt') !== 'en'
-const txt = (pt, en) => (PT ? pt : en)
 
 let tempHome
 let host
@@ -87,7 +84,7 @@ async function installProfile() {
     dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', '@dsh-burn-plugins/dsh-bots'] } },
   }, null, 2))
   // Pin the UI language so screenshots are deterministic.
-  await fs.writeFile(path.join(dir, 'cordis.patch.yml'), `- id: locale\n  name: '@deepseek-ai/dsh-client-locale'\n  config:\n    preference: ${option('lang', 'pt')}\n`)
+  await fs.writeFile(path.join(dir, 'cordis.patch.yml'), `- id: locale\n  name: '@deepseek-ai/dsh-client-locale'\n  config:\n    preference: ${option('lang', 'en')}\n`)
   const installed = await run(RUNTIME_NODE, [RUNTIME_PNPM, 'install', '--silent'], { cwd: dir, env: { ...process.env, DSH_HOME: tempHome } })
   assert.equal(installed.code, 0, installed.out)
 }
@@ -302,15 +299,15 @@ async function createTeamViaApi(name, description) {
       emoji: '🤖',
       color: '#2563eb',
       members: [],
-      flow: { nodes: [{ id: 'start', type: 'start', x: 0, y: 0, label: 'Pedido' }], edges: [] },
+      flow: { nodes: [{ id: 'start', type: 'start', x: 0, y: 0, label: 'Request' }], edges: [] },
     },
   })
   return team
 }
 
-/** Open a project from the list by clicking its Abrir button. */
+/** Open a project from the list by clicking its Open button. */
 async function openProjectByCard(cdp, name) {
-  await clickCardAction(cdp, name, txt('Abrir', 'Open'))
+  await clickCardAction(cdp, name, 'Open')
   await waitFor(cdp, `document.querySelector('.dsh-project-name') && new RegExp(${JSON.stringify(name)}).test(document.querySelector('.dsh-project-name').textContent)`, `project detail ${name}`)
 }
 
@@ -326,9 +323,9 @@ async function main() {
 
   // Seed teams through the API; every project mutation below goes through the UI.
   console.log('2/8 seed teams')
-  const alpha = await createTeamViaApi('Alpha', 'Time do design system')
-  const beta = await createTeamViaApi('Beta', 'Time da plataforma')
-  const gama = await createTeamViaApi('Gama', 'Time de revisão')
+  const alpha = await createTeamViaApi('Alpha', 'Design system team')
+  const beta = await createTeamViaApi('Beta', 'Platform team')
+  const gama = await createTeamViaApi('Gama', 'Review team')
   assert.deepEqual((await listProjects()).length, 0, 'fresh profile has no projects')
 
   console.log('3/8 chrome')
@@ -355,46 +352,46 @@ async function main() {
   for (let round = 0; round < 4; round += 1) {
     await evaluate(cdp, `(() => {
       const outside = (el) => !el.closest('.dsh-bots-root')
-      const next = [...document.querySelectorAll('button')].filter(outside).find((el) => /^(Continuar|Continue)$/.test(el.textContent.trim()))
-        ?? [...document.querySelectorAll('[role="dialog"] button[aria-label], [aria-modal="true"] button[aria-label]')].filter(outside).find((el) => /fechar|close/i.test(el.getAttribute('aria-label')))
+      const next = [...document.querySelectorAll('button')].filter(outside).find((el) => /^Continue$/.test(el.textContent.trim()))
+        ?? [...document.querySelectorAll('[role="dialog"] button[aria-label], [aria-modal="true"] button[aria-label]')].filter(outside).find((el) => /close/i.test(el.getAttribute('aria-label')))
       if (next) next.click()
     })()`)
     await sleep(400)
   }
 
   console.log('4/8 projects tab: empty state + create project through the UI')
-  await clickTab(cdp, txt('Projetos|Projects', 'Projects|Projetos'))
-  await waitFor(cdp, `document.querySelector('.dsh-bots-tabs') && /Projetos|Projects/.test(document.querySelector('.dsh-bots-tabs').textContent)`, 'projects tab selected')
-  await waitFor(cdp, `(() => { const body = document.querySelector('.dsh-bots-body'); return Boolean(body && new RegExp(${JSON.stringify(txt('Nenhum projeto ainda', 'No projects yet'))}).test(body.textContent)) })()`, 'projects empty state')
+  await clickTab(cdp, 'Projects')
+  await waitFor(cdp, `document.querySelector('.dsh-bots-tabs') && /Projects/.test(document.querySelector('.dsh-bots-tabs').textContent)`, 'projects tab selected')
+  await waitFor(cdp, `(() => { const body = document.querySelector('.dsh-bots-body'); return Boolean(body && new RegExp(${JSON.stringify('No projects yet')}).test(body.textContent)) })()`, 'projects empty state')
   const tabLabels = await evaluate(cdp, `[...document.querySelectorAll('.dsh-bots-tab')].map((el) => el.textContent.trim())`)
-  assert.deepEqual(tabLabels, PT ? ['Bits', 'Times', 'Projetos'] : ['Bits', 'Teams', 'Projects'], 'tab order Bits | Times | Projetos')
+  assert.deepEqual(tabLabels, ['Bits', 'Teams', 'Projects'], 'tab order Bits | Teams | Projects')
   await screenshot(cdp, 'projects-1-empty')
 
-  await clickToolbar(cdp, txt('Novo projeto', 'New project'))
+  await clickToolbar(cdp, 'New project')
   await waitFor(cdp, `document.querySelector('#dsh-project-name')`, 'project dialog')
   await typeInto(cdp, '#dsh-project-name', 'DSC')
-  await typeInto(cdp, '#dsh-project-description', 'Design system React Native da CAIXA')
+  await typeInto(cdp, '#dsh-project-description', 'CAIXA React Native design system')
   await evaluate(cdp, `document.querySelectorAll('#dsh-project-color .dsh-bots-swatch')[1].click()`)
-  await clickDialogFooter(cdp, txt('Criar projeto', 'Create project'))
+  await clickDialogFooter(cdp, 'Create project')
   await waitFor(cdp, `!document.querySelector('.dsh-bots-root [role="dialog"]')`, 'project dialog closed')
   await waitFor(cdp, `[...document.querySelectorAll('.dsh-bots-card')].some((el) => /DSC/.test(el.textContent))`, 'project card')
-  await waitFor(cdp, `new RegExp(${JSON.stringify(txt('Projeto criado', 'Project created'))}).test(document.querySelector('.dsh-bots-toast')?.textContent || '')`, 'project created toast')
+  await waitFor(cdp, `new RegExp(${JSON.stringify('Project created')}).test(document.querySelector('.dsh-bots-toast')?.textContent || '')`, 'project created toast')
   const dsc = (await listProjects()).find((project) => project.name === 'DSC')
   assert.ok(dsc, 'project persisted')
-  assert.equal(dsc.description, 'Design system React Native da CAIXA', 'project description persisted')
+  assert.equal(dsc.description, 'CAIXA React Native design system', 'project description persisted')
   assert.match(dsc.id, /^[0-9a-f]{10}$/, 'project id is 10-hex')
 
   console.log('5/8 project detail: add teams, create a team inside the project')
   await openProjectByCard(cdp, 'DSC')
-  await waitFor(cdp, `new RegExp(${JSON.stringify(txt('Nenhum time neste projeto', 'No teams in this project'))}).test(document.querySelector('.dsh-bots-body')?.textContent || '')`, 'empty project detail')
+  await waitFor(cdp, `new RegExp(${JSON.stringify('No teams in this project')}).test(document.querySelector('.dsh-bots-body')?.textContent || '')`, 'empty project detail')
   await screenshot(cdp, 'projects-2-detail-empty')
 
-  await clickToolbar(cdp, txt('Adicionar times', 'Add teams'))
+  await clickToolbar(cdp, 'Add teams')
   await waitFor(cdp, `document.querySelector('.dsh-project-picker')`, 'add-teams picker')
   await toggleCheckbox(cdp, '.dsh-project-picker', 'Alpha')
   await toggleCheckbox(cdp, '.dsh-project-picker', 'Beta')
   await screenshot(cdp, 'projects-3-add-teams')
-  await clickDialogFooter(cdp, txt('Aplicar', 'Apply'))
+  await clickDialogFooter(cdp, 'Apply')
   await waitFor(cdp, `!document.querySelector('.dsh-bots-root [role="dialog"]')`, 'picker closed')
   await waitFor(cdp, `document.querySelectorAll('.dsh-bots-card').length === 2`, 'two teams in the project')
   let teams = await listTeams()
@@ -402,31 +399,31 @@ async function main() {
   assert.deepEqual(teams.find((team) => team.name === 'Beta').projectIds, [dsc.id], 'Beta assigned to DSC')
   assert.deepEqual(teams.find((team) => team.name === 'Gama').projectIds, [], 'Gama untouched')
 
-  await clickToolbar(cdp, txt('Novo time', 'New team'))
+  await clickToolbar(cdp, 'New team')
   await waitFor(cdp, `document.querySelector('#dsh-team-name')`, 'new-team dialog in project')
-  await typeInto(cdp, '#dsh-team-name', 'Time do projeto')
-  await clickDialogFooter(cdp, txt('Criar time', 'Create team'))
+  await typeInto(cdp, '#dsh-team-name', 'Project team')
+  await clickDialogFooter(cdp, 'Create team')
   await waitFor(cdp, `!document.querySelector('.dsh-bots-root [role="dialog"]')`, 'new-team dialog closed')
-  await waitFor(cdp, `document.querySelectorAll('.dsh-bots-card').length === 3 && [...document.querySelectorAll('.dsh-bots-card')].some((el) => /Time do projeto/.test(el.textContent))`, 'created team card')
-  const projectTeam = (await listTeams()).find((team) => team.name === 'Time do projeto')
+  await waitFor(cdp, `document.querySelectorAll('.dsh-bots-card').length === 3 && [...document.querySelectorAll('.dsh-bots-card')].some((el) => /Project team/.test(el.textContent))`, 'created team card')
+  const projectTeam = (await listTeams()).find((team) => team.name === 'Project team')
   assert.ok(projectTeam, 'team created inside the project')
   assert.deepEqual(projectTeam.projectIds, [dsc.id], 'preset projectId applied on create')
   assert.equal(projectTeam.shared, false, 'new project team is not shared')
   await screenshot(cdp, 'projects-detail')
 
   console.log('6/8 team editor: shared toggle + project assignment')
-  await clickCardAction(cdp, 'Alpha', txt('Abrir fluxo', 'Open flow'))
+  await clickCardAction(cdp, 'Alpha', 'Open flow')
   await waitFor(cdp, `document.querySelector('.dsh-flow-canvas') && document.querySelector('#dsh-team-prop-shared input[type="checkbox"]')`, 'team editor properties panel')
   assert.equal(await evaluate(cdp, `document.querySelector('#dsh-team-prop-shared input[type="checkbox"]').checked`), false, 'team starts not shared')
   assert.equal(await evaluate(cdp, `document.querySelector('#dsh-team-prop-project').value`), dsc.id, 'single project select shows the assigned project')
   await screenshot(cdp, 'projects-4-editor-project')
-  await toggleCheckbox(cdp, '#dsh-team-prop-shared', txt('Time compartilhado', 'Shared team'))
+  await toggleCheckbox(cdp, '#dsh-team-prop-shared', 'Shared team')
   await waitFor(cdp, `document.querySelector('#dsh-team-prop-projects') && !document.querySelector('#dsh-team-prop-project')`, 'shared team project checklist')
   const checkedNow = await evaluate(cdp, `[...document.querySelectorAll('#dsh-team-prop-projects .dsh-bots-check')].filter((el) => el.querySelector('input').checked).map((el) => el.textContent)`)
   assert.ok(checkedNow.some((text) => /DSC/.test(text)), `DSC checked in the shared checklist: ${JSON.stringify(checkedNow)}`)
   await evaluate(cdp, `document.querySelector('.dsh-flow-canvas').focus()`)
   await key(cdp, 's', 'KeyS', 83, CTRL)
-  await waitFor(cdp, `new RegExp(${JSON.stringify(txt('Salvo', 'Saved'))}).test(document.querySelector('.dsh-team-bar .dsh-bots-badge')?.textContent || '')`, 'saved badge')
+  await waitFor(cdp, `new RegExp(${JSON.stringify('Saved')}).test(document.querySelector('.dsh-team-bar .dsh-bots-badge')?.textContent || '')`, 'saved badge')
   teams = await listTeams()
   const alphaShared = teams.find((team) => team.id === alpha.id)
   assert.equal(alphaShared.shared, true, 'shared flag saved')
@@ -436,9 +433,9 @@ async function main() {
   await waitFor(cdp, `document.querySelector('.dsh-project-name')`, 'back to project detail')
 
   // Remove a team from the project: the team itself is untouched.
-  await clickCardAction(cdp, 'Beta', txt('Remover do projeto', 'Remove from project'))
+  await clickCardAction(cdp, 'Beta', 'Remove from project')
   await waitFor(cdp, `document.querySelectorAll('.dsh-bots-card').length === 2 && ![...document.querySelectorAll('.dsh-bots-card')].some((el) => /Beta/.test(el.textContent))`, 'Beta removed from the detail')
-  await waitFor(cdp, `new RegExp(${JSON.stringify(txt('Time removido do projeto', 'Team removed from the project'))}).test(document.querySelector('.dsh-bots-toast')?.textContent || '')`, 'detach toast')
+  await waitFor(cdp, `new RegExp(${JSON.stringify('Team removed from the project')}).test(document.querySelector('.dsh-bots-toast')?.textContent || '')`, 'detach toast')
   teams = await listTeams()
   assert.ok(teams.find((team) => team.id === beta.id), 'detached team is not deleted')
   assert.deepEqual(teams.find((team) => team.id === beta.id).projectIds, [], 'detached team lost the project id')
@@ -446,86 +443,86 @@ async function main() {
   console.log('7/8 second project: non-shared team cannot be added twice')
   await evaluate(cdp, `document.querySelector('.dsh-project-head [aria-label]').click()`)
   await waitFor(cdp, `(() => { const body = document.querySelector('.dsh-bots-body'); return Boolean(body && document.querySelectorAll('.dsh-bots-card').length === 1 && /DSC/.test(body.textContent)) })()`, 'back to projects list')
-  await clickToolbar(cdp, txt('Novo projeto', 'New project'))
+  await clickToolbar(cdp, 'New project')
   await waitFor(cdp, `document.querySelector('#dsh-project-name')`, 'second project dialog')
-  await typeInto(cdp, '#dsh-project-name', 'Prefeitura')
-  await typeInto(cdp, '#dsh-project-description', 'Sistemas da prefeitura')
-  await clickDialogFooter(cdp, txt('Criar projeto', 'Create project'))
+  await typeInto(cdp, '#dsh-project-name', 'City Hall')
+  await typeInto(cdp, '#dsh-project-description', 'City Hall systems')
+  await clickDialogFooter(cdp, 'Create project')
   await waitFor(cdp, `!document.querySelector('.dsh-bots-root [role="dialog"]') && document.querySelectorAll('.dsh-bots-card').length === 2`, 'two project cards')
   await screenshot(cdp, 'projects-list')
-  const prefeitura = (await listProjects()).find((project) => project.name === 'Prefeitura')
-  assert.ok(prefeitura, 'second project persisted')
-  await openProjectByCard(cdp, 'Prefeitura')
+  const cityHall = (await listProjects()).find((project) => project.name === 'City Hall')
+  assert.ok(cityHall, 'second project persisted')
+  await openProjectByCard(cdp, 'City Hall')
 
-  await clickToolbar(cdp, txt('Adicionar times', 'Add teams'))
+  await clickToolbar(cdp, 'Add teams')
   await waitFor(cdp, `document.querySelector('.dsh-project-picker')`, 'second add-teams picker')
   const picker = await evaluate(cdp, `[...document.querySelectorAll('.dsh-project-picker .dsh-bots-check')].map((label) => ({
     text: label.textContent,
     checked: label.querySelector('input').checked,
     disabled: label.querySelector('input').disabled,
   }))`)
-  const blocked = picker.find((item) => /Time do projeto/.test(item.text))
+  const blocked = picker.find((item) => /Project team/.test(item.text))
   assert.ok(blocked, `non-shared team listed: ${JSON.stringify(picker)}`)
   assert.equal(blocked.disabled, true, 'non-shared team already in another project is disabled')
-  assert.ok(/DSC/.test(blocked.text) && /Não compartilhado|Not shared/.test(blocked.text), `blocked hint names the other project: ${blocked.text}`)
+  assert.ok(/DSC/.test(blocked.text) && /Not shared/.test(blocked.text), `blocked hint names the other project: ${blocked.text}`)
   assert.equal(picker.find((item) => /Alpha/.test(item.text)).disabled, false, 'shared team can be added to another project')
   assert.equal(picker.find((item) => /Gama/.test(item.text)).disabled, false, 'free non-shared team stays selectable')
   await toggleCheckbox(cdp, '.dsh-project-picker', 'Alpha')
   await toggleCheckbox(cdp, '.dsh-project-picker', 'Gama')
   await screenshot(cdp, 'projects-7-add-teams-blocked')
-  await clickDialogFooter(cdp, txt('Aplicar', 'Apply'))
+  await clickDialogFooter(cdp, 'Apply')
   await waitFor(cdp, `!document.querySelector('.dsh-bots-root [role="dialog"]') && document.querySelectorAll('.dsh-bots-card').length === 2`, 'teams added to the second project')
   teams = await listTeams()
   const alphaBoth = teams.find((team) => team.id === alpha.id)
-  assert.deepEqual(alphaBoth.projectIds, [dsc.id, prefeitura.id], 'shared team belongs to both projects')
-  assert.deepEqual(teams.find((team) => team.id === gama.id).projectIds, [prefeitura.id], 'free non-shared team moved into the project')
+  assert.deepEqual(alphaBoth.projectIds, [dsc.id, cityHall.id], 'shared team belongs to both projects')
+  assert.deepEqual(teams.find((team) => team.id === gama.id).projectIds, [cityHall.id], 'free non-shared team moved into the project')
 
   // Edit the project through the UI.
-  await clickToolbar(cdp, txt('Editar projeto', 'Edit project'))
+  await clickToolbar(cdp, 'Edit project')
   await waitFor(cdp, `document.querySelector('#dsh-project-description')`, 'edit project dialog')
-  await clearAndType(cdp, '#dsh-project-description', 'Sistemas da prefeitura de Fortaleza')
-  await clickDialogFooter(cdp, txt('Salvar', 'Save'))
+  await clearAndType(cdp, '#dsh-project-description', 'Fortaleza city hall systems')
+  await clickDialogFooter(cdp, 'Save')
   await waitFor(cdp, `!document.querySelector('.dsh-bots-root [role="dialog"]')`, 'edit dialog closed')
-  await waitFor(cdp, `new RegExp(${JSON.stringify(txt('Projeto salvo', 'Project saved'))}).test(document.querySelector('.dsh-bots-toast')?.textContent || '')`, 'project saved toast')
-  assert.equal((await listProjects()).find((project) => project.id === prefeitura.id).description, 'Sistemas da prefeitura de Fortaleza', 'project update persisted')
+  await waitFor(cdp, `new RegExp(${JSON.stringify('Project saved')}).test(document.querySelector('.dsh-bots-toast')?.textContent || '')`, 'project saved toast')
+  assert.equal((await listProjects()).find((project) => project.id === cityHall.id).description, 'Fortaleza city hall systems', 'project update persisted')
 
   // The Teams tab keeps the shared team (and project-less ones) and hides the
   // unshared project teams, which are exclusive to their project (§12.4).
-  await clickTab(cdp, txt('Times|Teams', 'Teams|Times'))
+  await clickTab(cdp, 'Teams')
   await waitFor(cdp, `document.querySelectorAll('.dsh-bots-card').length === 2`, 'teams list without the unshared project teams')
   const teamsTabText = await evaluate(cdp, `document.querySelector('.dsh-bots-body')?.textContent || ''`)
   assert.ok(/Alpha/.test(teamsTabText) && /Beta/.test(teamsTabText), `shared + project-less teams stay listed: ${teamsTabText.slice(0, 300)}`)
-  assert.ok(!/Gama/.test(teamsTabText) && !/Time do projeto/.test(teamsTabText), `unshared project teams are hidden: ${teamsTabText.slice(0, 300)}`)
-  assert.ok(new RegExp(txt('2 time\\(s\\) de projeto', '2 project team\\(s\\)')).test(teamsTabText), `projects notice counted: ${teamsTabText.slice(0, 300)}`)
-  await waitFor(cdp, `[...document.querySelectorAll('.dsh-bots-card')].some((el) => /Alpha/.test(el.textContent) && new RegExp(${JSON.stringify(txt('Compartilhado', 'Shared'))}).test(el.textContent) && /DSC/.test(el.textContent) && /Prefeitura/.test(el.textContent))`, 'shared + project badges on the team card')
+  assert.ok(!/Gama/.test(teamsTabText) && !/Project team/.test(teamsTabText), `unshared project teams are hidden: ${teamsTabText.slice(0, 300)}`)
+  assert.ok(new RegExp('2 project team\\(s\\)').test(teamsTabText), `projects notice counted: ${teamsTabText.slice(0, 300)}`)
+  await waitFor(cdp, `[...document.querySelectorAll('.dsh-bots-card')].some((el) => /Alpha/.test(el.textContent) && new RegExp(${JSON.stringify('Shared')}).test(el.textContent) && /DSC/.test(el.textContent) && /City Hall/.test(el.textContent))`, 'shared + project badges on the team card')
   await screenshot(cdp, 'teams-1-badges')
   // duplicate() copies `shared` and `projectIds`.
-  await clickCardAction(cdp, 'Alpha', txt('Duplicar', 'Duplicate'))
-  await waitFor(cdp, `new RegExp(${JSON.stringify(txt('Time duplicado', 'Team duplicated'))}).test(document.querySelector('.dsh-bots-toast')?.textContent || '')`, 'duplicate toast')
+  await clickCardAction(cdp, 'Alpha', 'Duplicate')
+  await waitFor(cdp, `new RegExp(${JSON.stringify('Team duplicated')}).test(document.querySelector('.dsh-bots-toast')?.textContent || '')`, 'duplicate toast')
   teams = await listTeams()
-  const copy = teams.find((team) => team.name === 'Alpha (cópia)' || team.name === 'Alpha (copy)')
+  const copy = teams.find((team) => team.name === 'Alpha (copy)')
   assert.ok(copy, 'duplicated team created')
   assert.equal(copy.shared, true, 'duplicate copies shared')
   assert.deepEqual(copy.projectIds, alphaBoth.projectIds, 'duplicate copies projectIds')
   await api('/api/bots.teams.delete', { id: copy.id })
 
   console.log('8/8 unsharing truncates to the first project + delete project detaches teams')
-  await clickTab(cdp, txt('Projetos|Projects', 'Projects|Projetos'))
+  await clickTab(cdp, 'Projects')
   await waitFor(cdp, `document.querySelectorAll('.dsh-bots-card').length === 2`, 'projects list after tab switch')
   await openProjectByCard(cdp, 'DSC')
   await waitFor(cdp, `document.querySelectorAll('.dsh-bots-card').length === 2`, 'DSC detail after reload')
-  await clickCardAction(cdp, 'Alpha', txt('Abrir fluxo', 'Open flow'))
+  await clickCardAction(cdp, 'Alpha', 'Open flow')
   await waitFor(cdp, `document.querySelector('#dsh-team-prop-shared input[type="checkbox"]')`, 'team editor reopened')
   assert.equal(await evaluate(cdp, `document.querySelector('#dsh-team-prop-shared input[type="checkbox"]').checked`), true, 'team is still shared')
   assert.equal(await evaluate(cdp, `[...document.querySelectorAll('#dsh-team-prop-projects .dsh-bots-check')].filter((el) => el.querySelector('input').checked).length`), 2, 'two projects checked')
-  await toggleCheckbox(cdp, '#dsh-team-prop-shared', txt('Time compartilhado', 'Shared team'))
+  await toggleCheckbox(cdp, '#dsh-team-prop-shared', 'Shared team')
   await waitFor(cdp, `document.querySelector('#dsh-team-prop-project')`, 'single project select after unsharing')
   assert.equal(await evaluate(cdp, `document.querySelector('#dsh-team-prop-project').value`), dsc.id, 'unsharing keeps the first project')
-  assert.ok(await evaluate(cdp, `new RegExp(${JSON.stringify(txt('mantivemos o primeiro', 'kept the first one'))}).test(document.querySelector('.dsh-team-inspector').textContent || '')`), 'truncation hint shown')
+  assert.ok(await evaluate(cdp, `new RegExp(${JSON.stringify('kept the first one')}).test(document.querySelector('.dsh-team-inspector').textContent || '')`), 'truncation hint shown')
   await screenshot(cdp, 'projects-8-editor-single')
   await evaluate(cdp, `document.querySelector('.dsh-flow-canvas').focus()`)
   await key(cdp, 's', 'KeyS', 83, CTRL)
-  await waitFor(cdp, `new RegExp(${JSON.stringify(txt('Salvo', 'Saved'))}).test(document.querySelector('.dsh-team-bar .dsh-bots-badge')?.textContent || '')`, 'saved after unsharing')
+  await waitFor(cdp, `new RegExp(${JSON.stringify('Saved')}).test(document.querySelector('.dsh-team-bar .dsh-bots-badge')?.textContent || '')`, 'saved after unsharing')
   teams = await listTeams()
   const alphaSingle = teams.find((team) => team.id === alpha.id)
   assert.equal(alphaSingle.shared, false, 'unshared saved')
@@ -533,50 +530,50 @@ async function main() {
   await evaluate(cdp, `document.querySelector('.dsh-team-bar [aria-label]').click()`)
   await waitFor(cdp, `document.querySelector('.dsh-project-name')`, 'back to DSC detail')
 
-  await clickToolbar(cdp, txt('Excluir projeto', 'Delete project'))
-  await waitFor(cdp, `(() => { const dialog = document.querySelector('.dsh-bots-root [role="dialog"]'); return Boolean(dialog && /DSC/.test(dialog.textContent) && new RegExp(${JSON.stringify(txt('não são excluídos|apenas desvinculados', 'not deleted|only detached'))}).test(dialog.textContent)) })()`, 'delete project confirm')
+  await clickToolbar(cdp, 'Delete project')
+  await waitFor(cdp, `(() => { const dialog = document.querySelector('.dsh-bots-root [role="dialog"]'); return Boolean(dialog && /DSC/.test(dialog.textContent) && new RegExp(${JSON.stringify('not deleted|only detached')}).test(dialog.textContent)) })()`, 'delete project confirm')
   await screenshot(cdp, 'projects-9-delete')
-  await clickDialogFooter(cdp, txt('Excluir projeto', 'Delete project'))
+  await clickDialogFooter(cdp, 'Delete project')
   await waitFor(cdp, `!document.querySelector('.dsh-bots-root [role="dialog"]') && !document.querySelector('.dsh-project-name')`, 'back to the projects list')
-  await waitFor(cdp, `new RegExp(${JSON.stringify(txt('Projeto excluído', 'Project deleted'))}).test(document.querySelector('.dsh-bots-toast')?.textContent || '')`, 'project deleted toast')
+  await waitFor(cdp, `new RegExp(${JSON.stringify('Project deleted')}).test(document.querySelector('.dsh-bots-toast')?.textContent || '')`, 'project deleted toast')
   const toastText = await evaluate(cdp, `document.querySelector('.dsh-bots-toast')?.textContent || ''`)
-  assert.ok(new RegExp(txt('2 time\\(s\\) desvinculado\\(s\\)', '2 team\\(s\\) detached')).test(toastText), `detached teams reported: ${toastText}`)
+  assert.ok(new RegExp('2 team\\(s\\) detached').test(toastText), `detached teams reported: ${toastText}`)
   await sleep(300)
   const projectsAfter = await listProjects()
-  assert.deepEqual(projectsAfter.map((project) => project.name), ['Prefeitura'], 'only the second project remains')
+  assert.deepEqual(projectsAfter.map((project) => project.name), ['City Hall'], 'only the second project remains')
   teams = await listTeams()
-  for (const name of ['Alpha', 'Beta', 'Gama', 'Time do projeto']) {
+  for (const name of ['Alpha', 'Beta', 'Gama', 'Project team']) {
     assert.ok(teams.some((team) => team.name === name), `${name} still exists after deleting the project`)
   }
   assert.deepEqual(teams.find((team) => team.id === alpha.id).projectIds, [], 'deleting the project detached Alpha')
   assert.deepEqual(teams.find((team) => team.id === projectTeam.id).projectIds, [], 'deleting the project detached the project team')
-  assert.deepEqual(teams.find((team) => team.id === gama.id).projectIds, [prefeitura.id], 'the other project membership is untouched')
+  assert.deepEqual(teams.find((team) => team.id === gama.id).projectIds, [cityHall.id], 'the other project membership is untouched')
   await screenshot(cdp, 'projects-10-after-delete')
 
-  // Detached teams come back to the Teams tab; the one still inside Prefeitura
+  // Detached teams come back to the Teams tab; the one still inside City Hall
   // stays exclusive to it.
-  await clickTab(cdp, txt('Times|Teams', 'Teams|Times'))
+  await clickTab(cdp, 'Teams')
   await waitFor(cdp, `document.querySelectorAll('.dsh-bots-card').length === 3`, 'detached teams back in the Teams tab')
   const teamsAfterDelete = await evaluate(cdp, `document.querySelector('.dsh-bots-body')?.textContent || ''`)
-  assert.ok(/Alpha/.test(teamsAfterDelete) && /Beta/.test(teamsAfterDelete) && /Time do projeto/.test(teamsAfterDelete), `detached teams listed again: ${teamsAfterDelete.slice(0, 300)}`)
-  assert.ok(!/Gama/.test(teamsAfterDelete), `team still in Prefeitura hidden: ${teamsAfterDelete.slice(0, 300)}`)
-  assert.ok(new RegExp(txt('1 time\\(s\\) de projeto', '1 project team\\(s\\)')).test(teamsAfterDelete), `notice follows the remaining project team: ${teamsAfterDelete.slice(0, 300)}`)
+  assert.ok(/Alpha/.test(teamsAfterDelete) && /Beta/.test(teamsAfterDelete) && /Project team/.test(teamsAfterDelete), `detached teams listed again: ${teamsAfterDelete.slice(0, 300)}`)
+  assert.ok(!/Gama/.test(teamsAfterDelete), `team still in City Hall hidden: ${teamsAfterDelete.slice(0, 300)}`)
+  assert.ok(new RegExp('1 project team\\(s\\)').test(teamsAfterDelete), `notice follows the remaining project team: ${teamsAfterDelete.slice(0, 300)}`)
   await screenshot(cdp, 'teams-2-detached')
 
   // Every team inside one project: the Teams tab shows the projects empty state
   // and its button switches to the Projects tab.
   for (const team of [alpha, beta, projectTeam]) {
-    await api('/api/bots.teams.update', { id: team.id, patch: { projectIds: [prefeitura.id] } })
+    await api('/api/bots.teams.update', { id: team.id, patch: { projectIds: [cityHall.id] } })
   }
   // Leave and re-enter the tab so the Teams view reloads the teams it just lost.
-  await clickTab(cdp, txt('Projetos|Projects', 'Projects|Projetos'))
-  await clickTab(cdp, txt('Times|Teams', 'Teams|Times'))
-  await waitFor(cdp, `(() => { const body = document.querySelector('.dsh-bots-body'); return Boolean(body && document.querySelectorAll('.dsh-bots-card').length === 0 && new RegExp(${JSON.stringify(txt('Nenhum time fora de projetos', 'No teams outside projects'))}).test(body.textContent)) })()`, 'Teams empty state when every team is in a project')
+  await clickTab(cdp, 'Projects')
+  await clickTab(cdp, 'Teams')
+  await waitFor(cdp, `(() => { const body = document.querySelector('.dsh-bots-body'); return Boolean(body && document.querySelectorAll('.dsh-bots-card').length === 0 && new RegExp(${JSON.stringify('No teams outside projects')}).test(body.textContent)) })()`, 'Teams empty state when every team is in a project')
   const emptyText = await evaluate(cdp, `document.querySelector('.dsh-bots-body')?.textContent || ''`)
-  assert.ok(new RegExp(txt('4 time\\(s\\) deste perfil', '4 team\\(s\\) of this profile')).test(emptyText), `hint counts every project team: ${emptyText.slice(0, 320)}`)
+  assert.ok(new RegExp('4 team\\(s\\) of this profile').test(emptyText), `hint counts every project team: ${emptyText.slice(0, 320)}`)
   await screenshot(cdp, 'teams-3-all-in-projects')
   const switchedTab = await evaluate(cdp, `(() => {
-    const button = [...document.querySelectorAll('.dsh-bots-state button')].find((el) => new RegExp(${JSON.stringify(txt('Ver projetos', 'View projects'))}).test(el.textContent || ''))
+    const button = [...document.querySelectorAll('.dsh-bots-state button')].find((el) => new RegExp(${JSON.stringify('View projects')}).test(el.textContent || ''))
     if (!button) return false
     button.click()
     return true

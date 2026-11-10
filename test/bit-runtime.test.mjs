@@ -96,7 +96,7 @@ function fakeLlm(options = {}) {
       calls.stream.push(options)
       if (typeof stream === 'function') return stream(options)
       return (async function* () {
-        yield { type: 'text-delta', index: 0, text: 'olá' }
+        yield { type: 'text-delta', index: 0, text: 'hello' }
         yield { type: 'finish', reason: { kind: 'success' } }
       })()
     },
@@ -110,7 +110,7 @@ function fakeTools() {
     state,
     async execute(input) {
       state.calls.push(input)
-      const settle = state.settle || ((call) => ({ results: [{ callId: call.id, result: { isError: false, value: 'resposta do Claude' } }] }))
+      const settle = state.settle || ((call) => ({ results: [{ callId: call.id, result: { isError: false, value: 'Claude response' } }] }))
       return settle(input.calls[0], input)
     },
   }
@@ -125,7 +125,7 @@ function subscriptionBit(extra = {}) {
     id: 'bit-1',
     name: 'Builder',
     isOrchestrator: false,
-    instructions: 'Você constrói com testes primeiro.',
+    instructions: 'You build with tests first.',
     model: 'subscription/sonnet',
     effort: 'high',
     workspaceDir: '/tmp/bit-workspace',
@@ -147,7 +147,7 @@ await test('model catalog: subscription aliases + profile routes with efforts, c
   assert.equal(list.length, 4)
   const subscription = list.filter((option) => option.group === 'subscription')
   assert.deepEqual(subscription.map((option) => option.id), ['subscription/opus', 'subscription/sonnet', 'subscription/haiku'])
-  assert.equal(subscription[1].label, 'Claude Sonnet 5.5 (assinatura)')
+  assert.equal(subscription[1].label, 'Claude Sonnet 5.5 (subscription)')
   assert.equal(subscription[0].backend, 'claude-code')
   assert.equal(subscription[0].alias, 'opus')
   assert.deepEqual(subscription[0].efforts, FULL_EFFORTS)
@@ -206,7 +206,7 @@ await test('resolve: stored ids, legacy aliases, bare labels, efforts and coded 
   await assert.rejects(models.resolve({ model: 'nope/nope', name: 'X' }), (error) => codedOf(error) === 'BIT_MODEL_INVALID')
   // No profile routes at all: the DSH family is reported as unavailable.
   const offline = createModelCatalog(fakeCtx({ llm: fakeLlm({ failListProviders: true }) }))
-  await assert.rejects(offline.resolve({ model: 'deepseek-account/deepseek-flash' }), (error) => codedOf(error) === 'BIT_MODEL_INVALID' && /nenhuma rota de chat/.test(error.message))
+  await assert.rejects(offline.resolve({ model: 'deepseek-account/deepseek-flash' }), (error) => codedOf(error) === 'BIT_MODEL_INVALID' && /no DSH chat route/.test(error.message))
 })
 
 await test('effortFor maps the v4 aliases and reports undefined without efforts', async () => {
@@ -227,8 +227,8 @@ await test('routeFor: orchestrators need a DSH route; missing model defaults to 
   // No stored model: the contract default.
   const fallback = await models.routeFor({ isOrchestrator: true, name: 'Lead', model: '', effort: '' })
   assert.deepEqual(fallback, { provider: 'deepseek-account', model: 'deepseek-flash', reasoningEffort: 'max' })
-  await assert.rejects(models.routeFor({ isOrchestrator: true, name: 'Lead', model: 'subscription/opus' }), (error) => codedOf(error) === 'BIT_MODEL_INVALID' && /assinatura/.test(error.message))
-  await assert.rejects(models.routeFor({ isOrchestrator: false, name: 'Worker', model: 'deepseek-account/deepseek-flash' }), (error) => codedOf(error) === 'BIT_MODEL_INVALID' && /não é orquestrador/.test(error.message))
+  await assert.rejects(models.routeFor({ isOrchestrator: true, name: 'Lead', model: 'subscription/opus' }), (error) => codedOf(error) === 'BIT_MODEL_INVALID' && /subscription model/.test(error.message))
+  await assert.rejects(models.routeFor({ isOrchestrator: false, name: 'Worker', model: 'deepseek-account/deepseek-flash' }), (error) => codedOf(error) === 'BIT_MODEL_INVALID' && /not an orchestrator/.test(error.message))
   // An effort the route rejects is dropped; an invalid route becomes coded.
   const picky = createModelCatalog(fakeCtx({
     llm: fakeLlm({
@@ -240,17 +240,17 @@ await test('routeFor: orchestrators need a DSH route; missing model defaults to 
   }))
   assert.deepEqual(await picky.routeFor({ isOrchestrator: true, model: 'deepseek-account/deepseek-flash', effort: 'max' }), { provider: 'deepseek-account', model: 'deepseek-flash' })
   const invalid = createModelCatalog(fakeCtx({ llm: fakeLlm({ resolveCallConfig: async () => { throw new Error('route refused') } }) }))
-  await assert.rejects(invalid.routeFor({ isOrchestrator: true, model: 'deepseek-account/deepseek-flash', effort: 'max' }), (error) => codedOf(error) === 'BIT_MODEL_INVALID' && /não foi aceita/.test(error.message))
+  await assert.rejects(invalid.routeFor({ isOrchestrator: true, model: 'deepseek-account/deepseek-flash', effort: 'max' }), (error) => codedOf(error) === 'BIT_MODEL_INVALID' && /was not accepted/.test(error.message))
 })
 
 /* ----------------------------- prompt composition ----------------------------- */
 
 await test('prompt composition: instructions + separator + request, report when there are none', async () => {
-  const bit = { instructions: 'Você é o Builder.', name: 'Builder' }
-  assert.equal(composePrompt(bit, 'Implemente X'), 'Você é o Builder.\n\n---\n\nImplemente X')
-  assert.equal(composePrompt(bit, '  Implemente X  '), 'Você é o Builder.\n\n---\n\nImplemente X')
-  assert.equal(composePrompt({ instructions: '' }, 'Só o pedido'), 'Só o pedido\n\n---\n\nAo final, responda com um relatório objetivo do que foi feito: resultado, arquivos alterados e pendências.')
-  assert.equal(composePrompt({ instructions: '   ' }, 'Tarefa'), composePrompt({ instructions: '' }, 'Tarefa'))
+  const bit = { instructions: 'You are the Builder.', name: 'Builder' }
+  assert.equal(composePrompt(bit, 'Implement X'), 'You are the Builder.\n\n---\n\nImplement X')
+  assert.equal(composePrompt(bit, '  Implement X  '), 'You are the Builder.\n\n---\n\nImplement X')
+  assert.equal(composePrompt({ instructions: '' }, 'Just the request'), 'Just the request\n\n---\n\nAt the end, respond with an objective report of what was done: outcome, files changed and pending items.')
+  assert.equal(composePrompt({ instructions: '   ' }, 'Task'), composePrompt({ instructions: '' }, 'Task'))
 })
 
 /* ------------------------------ subscription ------------------------------ */
@@ -260,8 +260,8 @@ await test('runBit (subscription): calls claude_delegate with prompt/model/effor
   const tools = fakeTools()
   const runtime = createBitRuntime(fakeCtx({ llm, tools }), { models: createModelCatalog(fakeCtx({ llm })) })
   const bit = subscriptionBit({ workspaceDir: workspace })
-  const result = await runtime.runBit({ bit, request: 'Implemente a feature' })
-  assert.equal(result.response, 'resposta do Claude')
+  const result = await runtime.runBit({ bit, request: 'Implement the feature' })
+  assert.equal(result.response, 'Claude response')
   assert.equal(result.meta.backend, 'claude-code')
   assert.equal(result.meta.model, 'subscription/sonnet')
   assert.equal(result.meta.effort, 'high')
@@ -271,18 +271,18 @@ await test('runBit (subscription): calls claude_delegate with prompt/model/effor
   assert.equal(call.name, 'claude_delegate')
   const args = JSON.parse(call.arguments)
   assert.deepEqual(args, {
-    task: 'Você constrói com testes primeiro.\n\n---\n\nImplemente a feature',
+    task: 'You build with tests first.\n\n---\n\nImplement the feature',
     model: 'sonnet',
     effort: 'high',
     cwd: workspace,
     readOnly: true, // ad-hoc runs are read-only by default
   })
   // An explicit readOnly: false reaches the tool.
-  await runtime.runBit({ bit, request: 'Implemente', readOnly: false })
+  await runtime.runBit({ bit, request: 'Implement', readOnly: false })
   assert.equal(JSON.parse(tools.state.calls[1].calls[0].arguments).readOnly, false)
   // The tool call carries a unique id and the request abort signal.
   const signal = new AbortController().signal
-  await runtime.runBit({ bit, request: 'Implemente', signal })
+  await runtime.runBit({ bit, request: 'Implement', signal })
   assert.equal(tools.state.calls[2].signal, signal)
   assert.match(call.id, /^claude-delegate-/)
 })
@@ -290,12 +290,12 @@ await test('runBit (subscription): calls claude_delegate with prompt/model/effor
 await test('runBit refuses orchestrators, validates the request and the cwd', async () => {
   const models = createModelCatalog(fakeCtx())
   const runtime = createBitRuntime(fakeCtx(), { models })
-  await assert.rejects(runtime.runBit({ bit: subscriptionBit({ isOrchestrator: true }), request: 'x' }), (error) => codedOf(error) === 'BIT_IS_ORCHESTRATOR' && /fluxos/.test(error.message))
+  await assert.rejects(runtime.runBit({ bit: subscriptionBit({ isOrchestrator: true }), request: 'x' }), (error) => codedOf(error) === 'BIT_IS_ORCHESTRATOR' && /flows/.test(error.message))
   await assert.rejects(runtime.runBit({ bit: subscriptionBit(), request: '   ' }), (error) => codedOf(error) === 'BOT_INVALID' && /request/.test(error.message))
   await assert.rejects(runtime.runBit({ bit: subscriptionBit(), request: 'x'.repeat(20001) }), (error) => codedOf(error) === 'BOT_INVALID')
   const bit = subscriptionBit({ workspaceDir: workspace })
   await assert.rejects(runtime.runBit({ bit, request: 'x', cwd: path.join(workspace, '..', 'outside') }), (error) => codedOf(error) === 'BOT_INVALID' && /workspace/.test(error.message))
-  await assert.rejects(runtime.runBit({ bit, request: 'x', cwd: 'relative/dir' }), (error) => codedOf(error) === 'BOT_INVALID' && /absoluto/.test(error.message))
+  await assert.rejects(runtime.runBit({ bit, request: 'x', cwd: 'relative/dir' }), (error) => codedOf(error) === 'BOT_INVALID' && /absolute/.test(error.message))
   // A cwd inside the workspace is accepted and reaches the tool.
   const tools = fakeTools()
   const insideRuntime = createBitRuntime(fakeCtx({ tools }), { models })
@@ -313,7 +313,7 @@ await test('delegate unavailable/failed maps to BIT_DELEGATE_UNAVAILABLE with ac
   })
   const runtime = createBitRuntime(fakeCtx({ tools }), { models })
   await assert.rejects(runtime.runBit({ bit: subscriptionBit({ workspaceDir: workspace }), request: 'x' }), (error) => codedOf(error) === 'BIT_DELEGATE_UNAVAILABLE'
-    && /@local\/dsh-claude-delegate/.test(error.message)
+    && /@dsh-burn-plugins\/dsh-claude-delegate/.test(error.message)
     && /claude/.test(error.message)
     && /UNKNOWN_TOOL/.test(error.message))
   // The pipeline itself throws.
@@ -326,20 +326,20 @@ await test('delegate unavailable/failed maps to BIT_DELEGATE_UNAVAILABLE with ac
 
 /* --------------------------------- dsh --------------------------------- */
 
-const dshBit = { id: 'bit-dsh', name: 'Analyst', isOrchestrator: false, instructions: 'Analise o código.', model: 'deepseek-account/deepseek-flash', effort: 'high', workspaceDir: workspace }
+const dshBit = { id: 'bit-dsh', name: 'Analyst', isOrchestrator: false, instructions: 'Analyze the code.', model: 'deepseek-account/deepseek-flash', effort: 'high', workspaceDir: workspace }
 
 await test('runBit (dsh): one-shot llm.stream, text-delta concatenation and metadata', async () => {
   const llm = fakeLlm({
     stream: () => (async function* () {
-      yield { type: 'text-delta', index: 0, text: 'Primeira ' }
-      yield { type: 'text-delta', index: 0, text: 'resposta.' }
+      yield { type: 'text-delta', index: 0, text: 'First ' }
+      yield { type: 'text-delta', index: 0, text: 'response.' }
       yield { type: 'finish', reason: { kind: 'success' } }
     })(),
   })
   const tools = fakeTools()
   const runtime = createBitRuntime(fakeCtx({ llm, tools }), { models: createModelCatalog(fakeCtx({ llm })) })
-  const result = await runtime.runBit({ bit: dshBit, request: 'Analise a função X' })
-  assert.equal(result.response, 'Primeira resposta.')
+  const result = await runtime.runBit({ bit: dshBit, request: 'Analyze the function X' })
+  assert.equal(result.response, 'First response.')
   assert.deepEqual({ backend: result.meta.backend, model: result.meta.model, effort: result.meta.effort }, { backend: 'dsh', model: 'deepseek-account/deepseek-flash', effort: 'high' })
   assert.equal(llm.counts.stream, 1)
   assert.equal(tools.state.calls.length, 0, 'no tools on the DSH path')
@@ -347,7 +347,7 @@ await test('runBit (dsh): one-shot llm.stream, text-delta concatenation and meta
   assert.equal(options.provider, 'deepseek-account')
   assert.equal(options.model, 'deepseek-flash')
   assert.equal(options.reasoningEffort, 'high')
-  assert.deepEqual(options.messages, [{ role: 'user', content: [{ type: 'text', text: 'Analise o código.\n\n---\n\nAnalise a função X' }] }])
+  assert.deepEqual(options.messages, [{ role: 'user', content: [{ type: 'text', text: 'Analyze the code.\n\n---\n\nAnalyze the function X' }] }])
 })
 
 await test('runBit (dsh): the runtime finish vocabulary is understood (stop success, failures coded)', async () => {
@@ -375,7 +375,7 @@ await test('runBit (dsh): a failed finish chunk or a throwing stream maps to BIT
   const failedFinish = createBitRuntime(fakeCtx({
     llm: fakeLlm({
       stream: () => (async function* () {
-        yield { type: 'text-delta', index: 0, text: 'parcial' }
+        yield { type: 'text-delta', index: 0, text: 'partial' }
         yield { type: 'finish', reason: { kind: 'error', failure: { message: 'provider timeout', code: 'TIMEOUT' } } }
       })(),
     }),
@@ -400,11 +400,11 @@ await test('invokeWorker: one-shot with readOnly/cwd from the team and the same 
   const tools = fakeTools()
   const runtime = createBitRuntime(fakeCtx({ llm, tools }), { models: createModelCatalog(fakeCtx({ llm })) })
   const teamCwd = await tempDir('dsh-bits-br-team-')
-  const result = await runtime.invokeWorker({ bit: subscriptionBit(), task: 'Rode os testes', cwd: teamCwd, readOnly: true })
-  assert.equal(result.text, 'resposta do Claude')
+  const result = await runtime.invokeWorker({ bit: subscriptionBit(), task: 'Run the tests', cwd: teamCwd, readOnly: true })
+  assert.equal(result.text, 'Claude response')
   assert.equal(result.meta.model, 'subscription/sonnet')
   const args = JSON.parse(tools.state.calls[0].calls[0].arguments)
-  assert.equal(args.task, 'Você constrói com testes primeiro.\n\n---\n\nRode os testes')
+  assert.equal(args.task, 'You build with tests first.\n\n---\n\nRun the tests')
   assert.equal(args.cwd, teamCwd)
   assert.equal(args.readOnly, true)
   // A worker bit never goes through the child-agent path.

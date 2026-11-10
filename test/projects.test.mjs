@@ -126,7 +126,7 @@ async function expectRejects(promise, code, pattern) {
 
 const sampleProject = (extra = {}) => ({
   name: 'DSC',
-  description: 'Design system React Native da CAIXA',
+  description: 'CAIXA React Native design system',
   ...extra,
 })
 
@@ -170,7 +170,7 @@ await test('normalizeProject applies defaults in create mode', () => {
   })
   assert.deepEqual(normalizeProject(sampleProject({ emoji: '🚀', color: '#FF0000' })), {
     name: 'DSC',
-    description: 'Design system React Native da CAIXA',
+    description: 'CAIXA React Native design system',
     emoji: '🚀',
     color: '#ff0000',
   })
@@ -208,7 +208,7 @@ await test('normalizeProject validates fields', () => {
 await test('normalizeProject partial mode returns only present fields', () => {
   assert.deepEqual(normalizeProject({ description: 'x', id: 'ignored' }, { partial: true }), { description: 'x' })
   assert.deepEqual(normalizeProject({ color: null }, { partial: true }), { color: '#2563eb' })
-  assert.deepEqual(normalizeProject({ name: '  Novo  ', emoji: '📦' }, { partial: true }), { name: 'Novo', emoji: '📦' })
+  assert.deepEqual(normalizeProject({ name: '  New  ', emoji: '📦' }, { partial: true }), { name: 'New', emoji: '📦' })
   expectProjectInvalid(() => normalizeProject({ name: '' }, { partial: true }), /^name:/)
   expectProjectInvalid(() => normalizeProject({ color: 'red' }, { partial: true }), /^color:/)
   expectProjectInvalid(() => normalizeProject('nope', { partial: true }), /^patch: must be an object/)
@@ -246,7 +246,7 @@ await test('list/get return deep copies', async () => {
   copy.name = 'mutated'
   store.list()[0].description = 'mutated'
   assert.equal(store.get(project.id).name, 'DSC')
-  assert.equal(store.get(project.id).description, 'Design system React Native da CAIXA')
+  assert.equal(store.get(project.id).description, 'CAIXA React Native design system')
   assert.equal(store.get('nope'), undefined)
   assert.equal(store.get(null), undefined)
 })
@@ -256,7 +256,7 @@ await test('update patches the record and checks the merged result', async () =>
   const project = await store.create(sampleProject())
   await new Promise((resolve) => setTimeout(resolve, 5))
   const updated = await store.update(project.id, {
-    name: '  Prefeitura  ',
+    name: '  City Hall  ',
     emoji: '🏛️',
     color: '#10B981',
     id: 'ffffffffff',
@@ -264,7 +264,7 @@ await test('update patches the record and checks the merged result', async () =>
     bogus: 1,
   })
   assert.equal(updated.id, project.id)
-  assert.equal(updated.name, 'Prefeitura')
+  assert.equal(updated.name, 'City Hall')
   assert.equal(updated.emoji, '🏛️')
   assert.equal(updated.color, '#10b981')
   assert.equal(updated.description, project.description)
@@ -276,7 +276,7 @@ await test('update patches the record and checks the merged result', async () =>
   await expectRejects(store.update(project.id, { name: '' }), 'PROJECT_INVALID', /^name:/)
   await expectRejects(store.update(project.id, null), 'PROJECT_INVALID')
   await expectRejects(store.update('0000000000', { name: 'x' }), 'PROJECT_NOT_FOUND', /was not found/)
-  assert.equal(store.get(project.id).name, 'Prefeitura', 'failed updates leave the record untouched')
+  assert.equal(store.get(project.id).name, 'City Hall', 'failed updates leave the record untouched')
 })
 
 await test('remove deletes and returns the record', async () => {
@@ -440,10 +440,10 @@ await test('project routes CRUD flow', async () => {
 
   const updated = await app.call('/api/bots.projects.update', {
     id,
-    patch: { name: 'Novo', emoji: '🏗️', id: 'ffffffffff', createdAt: 'x', updatedAt: 'y', bogus: 1 },
+    patch: { name: 'New', emoji: '🏗️', id: 'ffffffffff', createdAt: 'x', updatedAt: 'y', bogus: 1 },
   })
   assert.equal(updated.ok, true, JSON.stringify(updated))
-  assert.equal(updated.project.name, 'Novo')
+  assert.equal(updated.project.name, 'New')
   assert.equal(updated.project.emoji, '🏗️')
   assert.equal(updated.project.id, id)
   const invalid = await app.call('/api/bots.projects.update', { id, patch: { name: '' } })
@@ -477,7 +477,7 @@ await test('project routes reject malformed bodies with BAD_REQUEST', async () =
 await test('delete detaches the project from every team and reports detachedTeams', async () => {
   const app = await setupProjectRoutes()
   const p1 = (await app.call('/api/bots.projects.create', { project: { name: 'DSC' } })).project
-  const p2 = (await app.call('/api/bots.projects.create', { project: { name: 'Prefeitura' } })).project
+  const p2 = (await app.call('/api/bots.projects.create', { project: { name: 'City Hall' } })).project
   const single = await app.teams.create({ name: 'Single', projectIds: [p1.id] })
   const shared = await app.teams.create({ name: 'Shared', shared: true, projectIds: [p1.id, p2.id] })
   const unrelated = await app.teams.create({ name: 'Unrelated' })
@@ -725,7 +725,7 @@ async function setupHarnessRoutes() {
     packDir,
     createdAt: '2026-01-01T00:00:00.000Z',
     agents: [
-      { name: 'runner', description: 'Executa', model: '', effort: '', readOnly: false, launches: [], skills: [], instructions: 'Rode.' },
+      { name: 'runner', description: 'Runs', model: '', effort: '', readOnly: false, launches: [], skills: [], instructions: 'Run.' },
     ],
     skills: [],
     instructions: [],

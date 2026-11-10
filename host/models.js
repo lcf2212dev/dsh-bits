@@ -35,9 +35,9 @@ export const EFFORT_ALIASES = {
 
 /** Subscription aliases and their display labels. */
 export const SUBSCRIPTION_MODELS = [
-  { alias: 'opus', label: 'Claude Opus 5.5 (assinatura)' },
-  { alias: 'sonnet', label: 'Claude Sonnet 5.5 (assinatura)' },
-  { alias: 'haiku', label: 'Claude Haiku 5.5 (assinatura)' },
+  { alias: 'opus', label: 'Claude Opus 5.5 (subscription)' },
+  { alias: 'sonnet', label: 'Claude Sonnet 5.5 (subscription)' },
+  { alias: 'haiku', label: 'Claude Haiku 5.5 (subscription)' },
 ]
 
 /** Default orchestrator route (DeepSeek-V4.1-Flash Max). */
@@ -60,7 +60,7 @@ function messageOf(error) {
 
 function nameOf(bit) {
   const name = bit && typeof bit.name === 'string' ? bit.name.trim() : ''
-  return name !== '' ? name : (bit && typeof bit.id === 'string' ? bit.id : 'sem nome')
+  return name !== '' ? name : (bit && typeof bit.id === 'string' ? bit.id : 'unnamed')
 }
 
 function modelStringOf(bit) {
@@ -283,7 +283,7 @@ export function createModelCatalog(ctx) {
    */
   async function resolve(bit) {
     const model = modelStringOf(bit)
-    if (model === '') throw codedError('BIT_MODEL_MISSING', `O bit "${nameOf(bit)}" não tem modelo definido.`)
+    if (model === '') throw codedError('BIT_MODEL_MISSING', `Bit "${nameOf(bit)}" has no model defined.`)
     const alias = subscriptionAlias(model)
     if (alias) {
       const effort = effortFor(subscriptionOptions().find((option) => option.alias === alias), bit && bit.effort)
@@ -295,8 +295,8 @@ export function createModelCatalog(ctx) {
     if (!match) {
       const providers = [...new Set(options.map((option) => option.provider))]
       throw codedError('BIT_MODEL_INVALID', providers.length > 0
-        ? `O modelo "${model}" do bit "${nameOf(bit)}" não existe neste perfil (provedores: ${providers.join(', ')}).`
-        : `O modelo "${model}" do bit "${nameOf(bit)}" não existe neste perfil (nenhuma rota de chat do DSH registrada).`)
+        ? `The model "${model}" of bit "${nameOf(bit)}" does not exist in this profile (providers: ${providers.join(', ')}).`
+        : `The model "${model}" of bit "${nameOf(bit)}" does not exist in this profile (no DSH chat route registered).`)
     }
     const effort = effortFor(match, bit && bit.effort)
     return { backend: 'dsh', provider: match.provider, model: match.model, ...effort !== undefined ? { effort } : {} }
@@ -315,7 +315,7 @@ export function createModelCatalog(ctx) {
    */
   async function routeFor(bit) {
     if (!bit || bit.isOrchestrator !== true) {
-      throw codedError('BIT_MODEL_INVALID', `O bit "${nameOf(bit)}" não é orquestrador: só orquestradores rodam como agente do DSH.`)
+      throw codedError('BIT_MODEL_INVALID', `Bit "${nameOf(bit)}" is not an orchestrator: only orchestrators run as DSH agents.`)
     }
     const stored = modelStringOf(bit)
     const fallback = stored === ''
@@ -325,7 +325,7 @@ export function createModelCatalog(ctx) {
       effort: fallback ? (String((bit && bit.effort) || '').trim() || DEFAULT_ORCHESTRATOR_EFFORT) : bit.effort,
     })
     if (resolved.backend !== 'dsh') {
-      throw codedError('BIT_MODEL_INVALID', `O orquestrador "${nameOf(bit)}" precisa de uma rota de chat do DSH; "${stored}" é um modelo de assinatura (só workers).`)
+      throw codedError('BIT_MODEL_INVALID', `The orchestrator "${nameOf(bit)}" needs a DSH chat route; "${stored}" is a subscription model (workers only).`)
     }
     const route = { provider: resolved.provider, model: resolved.model }
     if (resolved.effort !== undefined) route.reasoningEffort = resolved.effort
@@ -345,7 +345,7 @@ export function createModelCatalog(ctx) {
             // fall through to the coded error below
           }
         }
-        throw codedError('BIT_MODEL_INVALID', `A rota "${resolved.provider}/${resolved.model}" do orquestrador "${nameOf(bit)}" não foi aceita por este perfil: ${messageOf(error)}`)
+        throw codedError('BIT_MODEL_INVALID', `The route "${resolved.provider}/${resolved.model}" of the orchestrator "${nameOf(bit)}" was not accepted by this profile: ${messageOf(error)}`)
       }
     }
     return route

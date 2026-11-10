@@ -461,7 +461,7 @@ function withRunTimeout(promise, timeoutMs, controller) {
 /**
  * POST /api/bots.run — ad-hoc worker invocation (request → response).
  *
- * Orchestrator bits are refused: they run inside flows (Times tab), not ad-hoc.
+ * Orchestrator bits are refused: they run inside flows (Teams tab), not ad-hoc.
  *
  * @param {Record<string, any>} deps
  * @param {Request} request
@@ -475,7 +475,7 @@ async function handleRun(deps, request) {
   const bit = deps.bits.get(id);
   if (!isPlainObject(bit)) throw codedError('BOT_NOT_FOUND', `Bit "${id}" was not found`);
   if (bit.isOrchestrator === true) {
-    throw codedError('BIT_IS_ORCHESTRATOR', 'Orquestradores executam em fluxos');
+    throw codedError('BIT_IS_ORCHESTRATOR', 'Orchestrators run inside flows');
   }
   const runtime = requireRuntime(deps);
   const timeoutMs =

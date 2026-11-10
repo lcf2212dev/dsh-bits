@@ -8,7 +8,7 @@
  * node, connect two nodes, add from the palette, delete, undo and save. v5
  * additionally exercises teams of bits: a team created from a template through
  * the UI (fresh bits + `bitId` members), the member bit picker with the
- * read-only route, the orchestrator-only lead rule, and "Enviar pedido" through
+ * read-only route, the orchestrator-only lead rule, and "Send request" through
  * `POST /api/bots.teams.run` (mocked at the fetch layer; the flow runtime is
  * covered by the host suites). Screenshots go to --out (default
  * test/screenshots/).
@@ -86,7 +86,7 @@ async function installProfile() {
     dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', '@dsh-burn-plugins/dsh-bots'] } },
   }, null, 2))
   // Pin the UI language so screenshots are deterministic.
-  await fs.writeFile(path.join(dir, 'cordis.patch.yml'), `- id: locale\n  name: '@deepseek-ai/dsh-client-locale'\n  config:\n    preference: ${option('lang', 'pt')}\n`)
+  await fs.writeFile(path.join(dir, 'cordis.patch.yml'), `- id: locale\n  name: '@deepseek-ai/dsh-client-locale'\n  config:\n    preference: ${option('lang', 'en')}\n`)
   const installed = await run(RUNTIME_NODE, [RUNTIME_PNPM, 'install', '--silent'], { cwd: dir, env: { ...process.env, DSH_HOME: tempHome } })
   assert.equal(installed.code, 0, installed.out)
 }
@@ -248,14 +248,14 @@ let harnessDir = null
 /** Minimal harness (not a git checkout): 1 preset, 2 skills, 1 MCP server, version 7, no patch anchors. */
 async function writeFakeHarness(dir) {
   const files = {
-    'AGENTS.md': '# Regras do repositório\n\nSempre rode os testes.\n',
+    'AGENTS.md': '# Repository rules\n\nAlways run the tests.\n',
     '.github/harness.json': JSON.stringify({ versao: 7 }) + '\n',
     '.github/agents/builder.agent.md': [
-      '---', 'name: builder', 'description: Implementa a partir dos testes vermelhos', 'model: Claude Sonnet 5.5 (copilot)', 'reasoning-effort: medium', '---',
-      '**Skills:** leia antes a [`tdd`](../skills/tdd/SKILL.md).', '', 'Você implementa o mínimo para os testes passarem.', '',
+      '---', 'name: builder', 'description: Implements from the red tests', 'model: Claude Sonnet 5.5 (copilot)', 'reasoning-effort: medium', '---',
+      '**Skills:** read [`tdd`](../skills/tdd/SKILL.md) first.', '', 'You implement the minimum to make the tests pass.', '',
     ].join('\n'),
-    '.github/skills/tdd/SKILL.md': '---\nname: tdd\ndescription: Ciclo vermelho, verde, refatorar\n---\n\n# TDD\n',
-    '.github/skills/review/SKILL.md': '---\nname: review\ndescription: Revisão adversarial do diff\n---\n\n# Review\n',
+    '.github/skills/tdd/SKILL.md': '---\nname: tdd\ndescription: Red, green, refactor cycle\n---\n\n# TDD\n',
+    '.github/skills/review/SKILL.md': '---\nname: review\ndescription: Adversarial diff review\n---\n\n# Review\n',
     '.mcp.json': JSON.stringify({ mcpServers: { figma: { command: 'node', args: ['.github/scripts/figma.mjs'] } } }) + '\n',
   }
   for (const [rel, text] of Object.entries(files)) {
@@ -302,15 +302,15 @@ async function main() {
   const repoDir = path.join(tempHome, 'repo')
   await fs.mkdir(repoDir, { recursive: true })
   const requestEntries = [
-    { id: 'pimpl', label: 'Implementar card', template: 'Implemente o card AB-{n}. {pedido}' },
-    { id: 'pfree', label: 'Revisar PR', template: 'Revise o PR aberto: {pedido}' },
+    { id: 'pimpl', label: 'Implement card', template: 'Implement card AB-{n}. {request}' },
+    { id: 'pfree', label: 'Review PR', template: 'Review the open PR: {request}' },
   ]
   const runnable = await api('/api/bots.teams.update', { id: team.id, patch: { workspaceDir: repoDir, lead: leadMember.id, entry: requestEntries } })
   assert.equal(runnable.team.lead, leadMember.id, 'host stores the lead')
 
   // A second team binds the same workspace: the card shows the bound badge.
   const { bit: platformLeadBit } = await api('/api/bots.create', {
-    name: 'Líder da plataforma',
+    name: 'Platform lead',
     character: 'bit-coordinator',
     isOrchestrator: true,
     model: 'deepseek-account/deepseek-flash',
@@ -318,15 +318,15 @@ async function main() {
   })
   const { team: platform } = await api('/api/bots.teams.create', {
     team: {
-      name: 'Plataforma', emoji: '🛰️', color: '#0891b2', workspaceDir: repoDir, bindWorkspace: true, lead: 'lead',
-      members: [{ id: 'lead', bitId: platformLeadBit.id, role: 'Líder da plataforma', access: 'read' }],
-      flow: { nodes: [{ id: 'start', type: 'start', x: 0, y: 0, label: 'Pedido' }], edges: [] },
+      name: 'Platform', emoji: '🛰️', color: '#0891b2', workspaceDir: repoDir, bindWorkspace: true, lead: 'lead',
+      members: [{ id: 'lead', bitId: platformLeadBit.id, role: 'Platform lead', access: 'read' }],
+      flow: { nodes: [{ id: 'start', type: 'start', x: 0, y: 0, label: 'Request' }], edges: [] },
     },
   })
   assert.equal(platform.bindWorkspace, true, 'host stores bindWorkspace')
 
   // A worker bit used by the UI member-picker test.
-  const { bit: workerBit } = await api('/api/bots.create', { name: 'Builder visual', character: 'bit-builder' })
+  const { bit: workerBit } = await api('/api/bots.create', { name: 'Visual Builder', character: 'bit-builder' })
   assert.equal(workerBit.isOrchestrator, false)
   const bitsBeforeUiCreate = (await listBits()).length
 
@@ -366,13 +366,13 @@ async function main() {
   for (let round = 0; round < 4; round += 1) {
     await evaluate(cdp, `(() => {
       const outside = (el) => !el.closest('.dsh-bots-root')
-      const next = [...document.querySelectorAll('button')].filter(outside).find((el) => /^(Continuar|Continue)$/.test(el.textContent.trim()))
-        ?? [...document.querySelectorAll('[role="dialog"] button[aria-label], [aria-modal="true"] button[aria-label]')].filter(outside).find((el) => /fechar|close/i.test(el.getAttribute('aria-label')))
+      const next = [...document.querySelectorAll('button')].filter(outside).find((el) => /^Continue$/.test(el.textContent.trim()))
+        ?? [...document.querySelectorAll('[role="dialog"] button[aria-label], [aria-modal="true"] button[aria-label]')].filter(outside).find((el) => /close/i.test(el.getAttribute('aria-label')))
       if (next) next.click()
     })()`)
     await sleep(400)
   }
-  await evaluate(cdp, `[...document.querySelectorAll('.dsh-bots-tab')].find((el) => /Times|Teams/.test(el.textContent)).click()`)
+  await evaluate(cdp, `[...document.querySelectorAll('.dsh-bots-tab')].find((el) => /Teams/.test(el.textContent)).click()`)
   await waitFor(cdp, `document.querySelectorAll('.dsh-bots-card').length >= 2`, 'team cards')
   await sleep(600)
   await screenshot(cdp, 'teams-1-list')
@@ -381,26 +381,26 @@ async function main() {
   const engCard = `document.querySelector('.dsh-bots-card[data-team-id="${team.id}"]')`
   const platformCard = `document.querySelector('.dsh-bots-card[data-team-id="${platform.id}"]')`
   const engCardText = await evaluate(cdp, `${engCard}.textContent`)
-  assert.ok(new RegExp('Líder: ' + leadBit.name).test(engCardText), `lead bit name on the first card: ${engCardText.slice(0, 240)}`)
+  assert.ok(new RegExp('Lead: ' + leadBit.name).test(engCardText), `lead bit name on the first card: ${engCardText.slice(0, 240)}`)
   const platformCardText = await evaluate(cdp, `${platformCard}.textContent`)
-  assert.ok(/Workspace vinculado/.test(platformCardText), 'bound-workspace badge on the second card')
+  assert.ok(/Workspace bound/.test(platformCardText), 'bound-workspace badge on the second card')
 
   console.log('5/6 template, harness, send request')
   // v5: create a team from a template through the UI (fresh bits created server-side).
-  await clickButtonByText(cdp, '.dsh-bots-toolbar', 'Novo time')
+  await clickButtonByText(cdp, '.dsh-bots-toolbar', 'New team')
   await waitFor(cdp, `document.querySelector('[data-template-id="engineering"]')`, 'template choices')
   await evaluate(cdp, `document.querySelector('[data-template-id="engineering"]').click()`)
   await sleep(200)
   await evaluate(cdp, `(() => {
     const input = document.querySelector('#dsh-team-name')
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
-    setter.call(input, 'Engenharia UI')
+    setter.call(input, 'UI Engineering')
     input.dispatchEvent(new Event('input', { bubbles: true }))
   })()`)
-  await clickButtonByText(cdp, '.dsh-bots-root [role="dialog"] .dsh-bots-dialog-footer', 'Criar time')
+  await clickButtonByText(cdp, '.dsh-bots-root [role="dialog"] .dsh-bots-dialog-footer', 'Create team')
   // fromTemplate opens the created team in the editor.
   await waitFor(cdp, `document.querySelector('.dsh-team-editor')`, 'editor from template', 30000)
-  const uiTeam = (await listTeams()).find((item) => item.name === 'Engenharia UI')
+  const uiTeam = (await listTeams()).find((item) => item.name === 'UI Engineering')
   assert.ok(uiTeam, 'team created from a template through the UI')
   assert.ok(uiTeam.members.length > 0 && uiTeam.members.every((member) => member.bitId), 'UI instantiation created bitId members')
   assert.ok(uiTeam.lead && uiTeam.members.some((member) => member.id === uiTeam.lead), 'UI instantiation kept the lead')
@@ -413,7 +413,7 @@ async function main() {
   // Harness dialog opens even when the Host lacks /api/bots.harness.
   await clickButtonByText(cdp, '.dsh-bots-toolbar', 'Harness')
   await waitFor(cdp, `document.querySelector('.dsh-bots-root [role="dialog"] #dsh-harness-source')`, 'harness dialog')
-  await waitFor(cdp, `!/Carregando harness|Loading harness/.test(document.querySelector('.dsh-bots-root [role="dialog"]').textContent)`, 'harness list settled')
+  await waitFor(cdp, `!/Loading harness/.test(document.querySelector('.dsh-bots-root [role="dialog"]').textContent)`, 'harness list settled')
   if (harnessRoutes) {
     await evaluate(cdp, `document.querySelector('#dsh-harness-source').focus()`)
     await cdp.send('Input.insertText', { text: harnessDir })
@@ -429,7 +429,7 @@ async function main() {
   }
   await screenshot(cdp, 'teams-1b-harness')
   if (harnessRoutes) {
-    await evaluate(cdp, `[...document.querySelectorAll('.dsh-team-pack button')].find((el) => /Criar time|Create team/.test(el.textContent)).click()`)
+    await evaluate(cdp, `[...document.querySelectorAll('.dsh-team-pack button')].find((el) => /Create team/.test(el.textContent)).click()`)
     // fromPack creates the bits then opens the new team in the editor.
     await waitFor(cdp, `document.querySelector('.dsh-team-editor')`, 'editor from the harness pack', 30000)
     assert.equal((await listTeams()).length, 4, 'team created from the harness pack')
@@ -437,7 +437,7 @@ async function main() {
     await waitFor(cdp, `document.querySelectorAll('.dsh-bots-card').length === 4`, 'four team cards')
     // The engineering team carries the pack too (badge + editor checklists).
     await api('/api/bots.teams.update', { id: team.id, patch: { harness: PACK_ID } })
-    await evaluate(cdp, `document.querySelector('.dsh-bots-toolbar [aria-label="Atualizar"]').click()`)
+    await evaluate(cdp, `document.querySelector('.dsh-bots-toolbar [aria-label="Refresh"]').click()`)
     await waitFor(cdp, `${engCard} && /Harness ${PACK_ID} v7/.test(${engCard}.textContent)`, 'harness badge on the card')
     await screenshot(cdp, 'teams-1d-list-harness')
   } else {
@@ -445,7 +445,7 @@ async function main() {
     await waitFor(cdp, `!document.querySelector('.dsh-bots-root [role="dialog"]')`, 'harness dialog closed')
   }
 
-  // "Enviar pedido": the client must call POST /api/bots.teams.run with the
+  // "Send request": the client must call POST /api/bots.teams.run with the
   // composed prompt. Mock the route at the fetch layer so this stays focused on
   // the UI wiring (the mission runtime is covered by the host suites).
   await evaluate(cdp, `window.__teamRunCalls = []; (() => {
@@ -455,7 +455,7 @@ async function main() {
       if (url.indexOf('/api/bots.teams.run') >= 0) {
         window.__teamRunCalls.push({ url: url, body: init && init.body })
         return Promise.resolve(new Response(JSON.stringify({
-          ok: true, sessionId: 'visual-session', teamId: 'x', teamName: 'Engenharia', cwd: '/tmp', workspaceId: null,
+          ok: true, sessionId: 'visual-session', teamId: 'x', teamName: 'Engineering', cwd: '/tmp', workspaceId: null,
         }), { status: 200, headers: { 'content-type': 'application/json' } }))
       }
       return window.__originalFetch.apply(this, arguments)
@@ -469,11 +469,11 @@ async function main() {
   await cdp.send('Input.insertText', { text: 'AB-482' })
   await sleep(150)
   await evaluate(cdp, `document.querySelector('#dsh-send-details').focus()`)
-  await cdp.send('Input.insertText', { text: 'Corrigir o alinhamento do botão.' })
+  await cdp.send('Input.insertText', { text: 'Fix the button alignment.' })
   await waitFor(cdp, `/482/.test(document.querySelector('#dsh-send-preview').textContent)`, 'preview with the AB number')
   const preview = await evaluate(cdp, `document.querySelector('#dsh-send-preview').textContent`)
   assert.equal(await evaluate(cdp, `document.querySelector('#dsh-send-number').value`), '482', 'AB-482 normalised to digits')
-  assert.ok(preview.includes('AB-482') && preview.includes('Corrigir o alinhamento'), `template filled: ${preview}`)
+  assert.ok(preview.includes('AB-482') && preview.includes('Fix the button alignment'), `template filled: ${preview}`)
   assert.ok(!preview.startsWith('[Time:'), `no draft/handoff prefix in v5: ${preview}`)
   assert.equal(await evaluate(cdp, `${sendButton}.disabled`), false, 'submit enabled once the number is set')
   await screenshot(cdp, 'teams-1c-send')
@@ -483,12 +483,12 @@ async function main() {
   assert.equal(runCalls.length, 1, 'one teams.run call')
   const runBody = JSON.parse(runCalls[0].body)
   assert.equal(runBody.id, team.id)
-  assert.ok(runBody.prompt.includes('AB-482') && runBody.prompt.includes('Corrigir o alinhamento'), `prompt sent: ${runBody.prompt}`)
+  assert.ok(runBody.prompt.includes('AB-482') && runBody.prompt.includes('Fix the button alignment'), `prompt sent: ${runBody.prompt}`)
   await evaluate(cdp, `document.querySelector('.dsh-bots-root [role="dialog"] .dsh-bots-dialog-footer button').click()`)
   await waitFor(cdp, `!document.querySelector('.dsh-bots-root [role="dialog"]')`, 'send dialog closed')
 
   console.log('6/6 editor + flow interactions')
-  await clickButtonByText(cdp, `[data-team-id="${team.id}"]`, 'Abrir fluxo')
+  await clickButtonByText(cdp, `[data-team-id="${team.id}"]`, 'Open flow')
   await waitFor(cdp, `document.querySelectorAll('.dsh-flow-node').length > 5`, 'flow nodes')
   await waitFor(cdp, `[...document.querySelectorAll('.dsh-flow-node img')].every((img) => img.complete && img.naturalWidth > 0)`, 'node avatars')
   const total = await nodeCount(cdp)
@@ -500,13 +500,13 @@ async function main() {
   // Move: drag "red" 80 px right / 40 px down.
   const before = team.flow.nodes.find((node) => node.id === 'red')
   assert.ok(await evaluate(cdp, `parseFloat(document.querySelector('.dsh-team-zoom').textContent)`) >= 60, 'initial zoom is legible')
-  await evaluate(cdp, `document.querySelector('[aria-label^="Mostrar/ocultar elementos"]').click()`)
+  await evaluate(cdp, `document.querySelector('[aria-label^="Show/hide elements"]').click()`)
   await sleep(150)
   assert.equal(await evaluate(cdp, `!!document.querySelector('.dsh-team-side')`), false, 'palette hidden')
-  await evaluate(cdp, `document.querySelector('[aria-label^="Mostrar/ocultar elementos"]').click()`)
+  await evaluate(cdp, `document.querySelector('[aria-label^="Show/hide elements"]').click()`)
   await sleep(150)
   assert.equal(await evaluate(cdp, `!!document.querySelector('.dsh-team-side')`), true, 'palette restored')
-  await evaluate(cdp, `document.querySelector('[aria-label="Ajustar à tela"]').click()`)
+  await evaluate(cdp, `document.querySelector('[aria-label="Fit to screen"]').click()`)
   await sleep(200)
   const zoom = await evaluate(cdp, `parseFloat(document.querySelector('.dsh-team-zoom').textContent) / 100`)
   const red = await rectOf(cdp, '[data-flow-node="red"]')
@@ -522,14 +522,14 @@ async function main() {
   assert.equal(await evaluate(cdp, `document.querySelectorAll('.dsh-flow-edge').length`), edgesBefore + 1, 'new edge drawn')
   await waitFor(cdp, `document.querySelector('#dsh-edge-label')`, 'edge inspector')
   await evaluate(cdp, `document.querySelector('#dsh-edge-label').focus()`)
-  await cdp.send('Input.insertText', { text: 'atalho' })
+  await cdp.send('Input.insertText', { text: 'shortcut' })
   await sleep(150)
 
   // Add from the palette (click = add at the centre) and name it.
   const nodesBefore = await nodeCount(cdp)
-  await evaluate(cdp, `[...document.querySelectorAll('.dsh-team-palette-item')].find((el) => /Decisão|Decision/.test(el.textContent)).click()`)
+  await evaluate(cdp, `[...document.querySelectorAll('.dsh-team-palette-item')].find((el) => /Decision/.test(el.textContent)).click()`)
   await waitFor(cdp, `document.activeElement && document.activeElement.id === 'dsh-node-label'`, 'label focused for new node')
-  await cdp.send('Input.insertText', { text: 'Precisa de segurança?' })
+  await cdp.send('Input.insertText', { text: 'Needs security?' })
   await sleep(150)
   assert.equal(await nodeCount(cdp), nodesBefore + 1, 'palette node added')
 
@@ -547,26 +547,26 @@ async function main() {
   // Save (Ctrl+S) and check the record.
   await click(cdp, await rectOf(cdp, '.dsh-flow-legend'))
   await key(cdp, 's', 'KeyS', 83, CTRL)
-  await waitFor(cdp, `/Salvo|Saved/.test(document.querySelector('.dsh-team-bar .dsh-bots-badge').textContent)`, 'saved badge')
+  await waitFor(cdp, `/Saved/.test(document.querySelector('.dsh-team-bar .dsh-bots-badge').textContent)`, 'saved badge')
   let { teams } = await api('/api/bots.teams')
   let saved = teams.find((entryTeam) => entryTeam.id === team.id)
   const moved = saved.flow.nodes.find((node) => node.id === 'red')
   assert.ok(Math.abs(moved.x - before.x - 80 / zoom) <= 16 && Math.abs(moved.y - before.y - 40 / zoom) <= 16, `moved by the drag (${before.x},${before.y} -> ${moved.x},${moved.y}, zoom ${zoom})`)
-  assert.ok(saved.flow.edges.some((edge) => edge.from === 'locate' && edge.to === 'review' && edge.label === 'atalho'), 'connected + labelled edge saved')
-  assert.ok(saved.flow.nodes.some((node) => node.type === 'decision' && node.label === 'Precisa de segurança?'), 'palette node saved')
+  assert.ok(saved.flow.edges.some((edge) => edge.from === 'locate' && edge.to === 'review' && edge.label === 'shortcut'), 'connected + labelled edge saved')
+  assert.ok(saved.flow.nodes.some((node) => node.type === 'decision' && node.label === 'Needs security?'), 'palette node saved')
   assert.ok(!saved.flow.nodes.some((node) => node.id === 'research'), 'deleted node saved')
 
   // v5: add a member by picking an existing bit (grouped picker).
   const membersBefore = await evaluate(cdp, `document.querySelectorAll('.dsh-team-member').length`)
-  await clickButtonByText(cdp, '.dsh-team-side', 'Adicionar bit')
+  await clickButtonByText(cdp, '.dsh-team-side', 'Add bit')
   await waitFor(cdp, `document.querySelector('#dsh-add-member-bit')`, 'add-member bit picker')
   assert.ok(await evaluate(cdp, `document.querySelectorAll('#dsh-add-member-bit optgroup').length > 0`), 'bit picker groups by catalog group')
   await setSelect(cdp, '#dsh-add-member-bit', workerBit.id)
-  await clickButtonByText(cdp, '.dsh-bots-root [role="dialog"] .dsh-bots-dialog-footer', 'Adicionar')
+  await clickButtonByText(cdp, '.dsh-bots-root [role="dialog"] .dsh-bots-dialog-footer', 'Add')
   await waitFor(cdp, `document.querySelectorAll('.dsh-team-member').length === ${membersBefore + 1}`, 'member added from a bit')
   // The editor selects the new member: the inspector opens on it directly.
   await waitFor(cdp, `document.querySelector('#dsh-member-bit') && document.querySelector('#dsh-member-bit').value === ${JSON.stringify(workerBit.id)}`, 'member inspector of the new bit')
-  assert.ok(await evaluate(cdp, `[...document.querySelectorAll('.dsh-team-member')].some((el) => /Builder visual/.test(el.textContent))`), 'new member shown in the side list')
+  assert.ok(await evaluate(cdp, `[...document.querySelectorAll('.dsh-team-member')].some((el) => /Visual Builder/.test(el.textContent))`), 'new member shown in the side list')
   await evaluate(cdp, `document.querySelector('.dsh-team-inspector').scrollTop = 0`)
   const memberView = await evaluate(cdp, `({
     bit: document.querySelector('#dsh-member-bit').value,
@@ -577,19 +577,19 @@ async function main() {
     hasInstructionsInput: !!document.querySelector('#dsh-member-instructions'),
     hasRole: !!document.querySelector('#dsh-member-role'),
     hasAccess: !!document.querySelector('#dsh-member-access'),
-    makeLeadDisabled: (() => { const b = [...document.querySelectorAll('.dsh-team-lead-row button')].find((el) => /Tornar líder|Make lead/.test(el.textContent)); return b ? b.disabled : null })(),
+    makeLeadDisabled: (() => { const b = [...document.querySelectorAll('.dsh-team-lead-row button')].find((el) => /Make lead/.test(el.textContent)); return b ? b.disabled : null })(),
     leadHint: document.querySelector('.dsh-team-lead-row').textContent,
     trim: document.querySelector('.dsh-team-inspector').scrollTop === 0,
   })`)
   assert.equal(memberView.bit, workerBit.id, 'member references the picked bit')
-  assert.ok(/Worker/.test(memberView.route) && /Claude Sonnet 5\.5 \(assinatura\)/.test(memberView.route) && /high/.test(memberView.route), `read-only route in the member hero: ${memberView.route}`)
+  assert.ok(/Worker/.test(memberView.route) && /Claude Sonnet 5\.5 \(subscription\)/.test(memberView.route) && /high/.test(memberView.route), `read-only route in the member hero: ${memberView.route}`)
   assert.equal(memberView.hasModelInput, false, 'no member model input')
   assert.equal(memberView.hasProviderInput, false, 'no member provider input')
   assert.equal(memberView.hasNameInput, false, 'no member name input')
   assert.equal(memberView.hasInstructionsInput, false, 'no member instructions input')
   assert.ok(memberView.hasRole && memberView.hasAccess, 'role and access stay editable')
   assert.equal(memberView.makeLeadDisabled, true, 'a worker bit cannot become lead')
-  assert.ok(/precisa ser um bit orquestrador|must be an orchestrator bit/.test(memberView.leadHint), `lead rule hint: ${memberView.leadHint}`)
+  assert.ok(/must be an orchestrator bit/.test(memberView.leadHint), `lead rule hint: ${memberView.leadHint}`)
   await screenshot(cdp, 'teams-4-member-v5')
 
   // Lead rule in the team inspector: only orchestrator members are offered.
@@ -614,7 +614,7 @@ async function main() {
   // Team node round-trip (unchanged) + save the new member.
   await evaluate(cdp, `document.querySelector('.dsh-flow-canvas').focus()`)
   await key(cdp, 's', 'KeyS', 83, CTRL)
-  await waitFor(cdp, `/Salvo|Saved/.test(document.querySelector('.dsh-team-bar .dsh-bots-badge').textContent)`, 'saved badge (v5)')
+  await waitFor(cdp, `/Saved/.test(document.querySelector('.dsh-team-bar .dsh-bots-badge').textContent)`, 'saved badge (v5)')
   teams = await listTeams()
   saved = teams.find((entryTeam) => entryTeam.id === team.id)
   assert.ok(saved.members.some((member) => member.bitId === workerBit.id), 'new member bitId saved')
@@ -622,7 +622,7 @@ async function main() {
   assert.equal(saved.workspaceDir, repoDir, 'workspace kept')
   assert.deepEqual(saved.entry, requestEntries, 'request templates kept')
   if (harnessRoutes) assert.equal(saved.harness, PACK_ID, 'harness kept')
-  assert.ok(saved.flow.nodes.some((node) => node.type === 'decision' && node.label === 'Precisa de segurança?'), 'palette node round-trips')
+  assert.ok(saved.flow.nodes.some((node) => node.type === 'decision' && node.label === 'Needs security?'), 'palette node round-trips')
   assert.ok(!saved.flow.nodes.some((node) => node.id === 'research'), 'deleted node stays deleted')
 
   console.log('ok - teams v5: fromTemplate in the UI, fresh bitId members, orchestrator-only lead, teams.run wiring')

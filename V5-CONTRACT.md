@@ -22,8 +22,8 @@ this file conflicts with it, **this file wins**.
   (profile LLM providers/models + efforts) plus the subscription models of the delegate
   plugin.
 - Bits no longer open sessions from the Bits page. The Bits page creates/edits bits and has
-  **Executar** (ad-hoc worker invocation: request → response). Orchestrators execute inside
-  a flow (Times tab → execute the flow), not ad-hoc.
+  **Run** (ad-hoc worker invocation: request → response). Orchestrators execute inside
+  a flow (Teams tab → execute the flow), not ad-hoc.
 - Teams/flows keep their editor, projects layer and harness packs. Runtime changes: the
   lead is an orchestrator bit on the DeepSeek route; workers are invoked one-shot; members
   of a team **reference bits by id**.
@@ -39,8 +39,8 @@ Two model families:
 
 1. **Subscription (Claude Code, via `claude_delegate`)**
    - Stored as `subscription/<alias>` with `alias ∈ {opus, sonnet, haiku}`.
-   - Display labels: `Claude Opus 5.5 (assinatura)`, `Claude Sonnet 5.5 (assinatura)`,
-     `Claude Haiku 5.5 (assinatura)`.
+   - Display labels: `Claude Opus 5.5 (subscription)`, `Claude Sonnet 5.5 (subscription)`,
+     `Claude Haiku 5.5 (subscription)`.
    - Efforts: `low | medium | high | xhigh | max`.
    - Runs with the worker's cwd and Claude Code tools; read-only workers pass
      `readOnly: true` (see §6).
@@ -98,7 +98,7 @@ Persisted in `<botsRoot>/bits.json` (atomic write, tmp+rename, 0600). `botsRoot`
       "character": "bit-builder",
       "emoji": "🛠️",
       "color": "#7c3aed",
-      "instructions": "Contexto do bit (persona/briefing)...",
+      "instructions": "Bit context (persona/briefing)...",
       "isOrchestrator": false,
       "model": "subscription/sonnet",
       "effort": "high",
@@ -253,7 +253,7 @@ Members change to **references to bits**:
   {
     "id": "builder",
     "bitId": "3f9a1c2b7e",
-    "role": "Implementa a partir dos testes vermelhos",
+    "role": "Implements from the red tests",
     "access": "write",
     "launches": ["scout"],
     "teamRef": null,
@@ -286,7 +286,7 @@ New format: template bits plus members that reference them by a local key.
 ```json
 {
   "id": "engineering",
-  "name": "Engenharia (Claude Code)",
+  "name": "Engineering (Claude Code)",
   "description": "...",
   "emoji": "🛠️",
   "bits": [
@@ -312,7 +312,7 @@ New format: template bits plus members that reference them by a local key.
   `{ team, bits }`. A one-time template instantiation always creates fresh bits.
 - Existing `GET /api/bots.teams.templates` returns templates as loaded, including `bits`.
 - Rewrite `bits/teams/engineering.json` to the new format, preserving its current members
-  (roles, access, launches), flow, name/description and the lead role ("Orquestrador" /
+  (roles, access, launches), flow, name/description and the lead role ("Orchestrator" /
   coordinator). Worker bits get their roles from the current member `role`; the lead bit
   keeps its current lead instructions.
 
@@ -323,7 +323,7 @@ Returns `{ bits, team }` instead of a team with embedded members:
   `instructions` = preset instructions, `isOrchestrator: false`, model/effort = catalog
   defaults for the character (fallback `subscription/sonnet` / preset effort when it is a
   valid CLI effort, else `high`).
-- Lead bit: `name: "Orquestrador"`, `character: "bit-coordinator"` (or null when missing),
+- Lead bit: `name: "Orchestrator"`, `character: "bit-coordinator"` (or null when missing),
   `isOrchestrator: true`, `model: "deepseek-account/deepseek-flash"`, `effort: "max"`,
   instructions = the current lead text.
 - The helper returns `{ bits, team }` where the team members still carry the
@@ -373,7 +373,7 @@ export function createBitRuntime(ctx, { bits, catalog, models, log })
     report instruction if the bit has no instructions. Metadata returned:
     `{ backend, model, effort, durationMs, usage? }`.
 - **`runBit`** is the ad-hoc path (`POST /api/bots.run`): refuses orchestrator bits with
-  `BIT_IS_ORCHESTRATOR` ("orquestradores executam em fluxos"). `request` is 1..20000 chars.
+  `BIT_IS_ORCHESTRATOR` ("orchestrators run in flows"). `request` is 1..20000 chars.
   Worker cwd = `bit.workspaceDir`; the route may pass a different cwd only if it is inside
   the bit workspace. `readOnly` defaults to true for ad-hoc runs (UI toggle can send false).
 - **`invokeWorker`** is the team-delegation path used by `team-runtime`: cwd = the caller
@@ -406,7 +406,7 @@ export function createBitRuntime(ctx, { bits, catalog, models, log })
   (the task must be self-contained; they run in the flow workspace; they return a text
   report) and that orchestrator members run as child agents; the flow text and harness rules
   stay. The persona of the lead/member comes from the referenced bit's `instructions`.
-- `team-guard.js`: tool policies for agent bindings stay; wording changes from "membro" to
+- `team-guard.js`: tool policies for agent bindings stay; wording changes from "member" to
   "bit" where user-visible. `access: read` for orchestrator members still denies writes;
   for workers it is enforced through `readOnly: true` in the delegate call.
 - `host/team-bindings.js`, project layer: unchanged.
@@ -452,40 +452,40 @@ guard (e.g. 15 min) and return `BIT_RUN_TIMEOUT` if exceeded.
 
 ## 8. Client (client.js)
 
-Keep the single-file React-via-module-loader style. Tabs: **Bits**, **Times**, **Projetos**.
+Keep the single-file React-via-module-loader style. Tabs: **Bits**, **Teams**, **Projects**.
 
 Bits tab:
-- Cards: avatar, name, character name, group, badges `Orquestrador`/`Worker` and
+- Cards: avatar, name, character name, group, badges `Orchestrator`/`Worker` and
   `<model label> · <effort>`; no VM badge/status.
 - New bit: catalog gallery unchanged, but the form now shows `isOrchestrator` (toggle),
-  `Modelo` (select from `/api/bots.models`) and `Esforço` (select), pre-filled from the
-  chosen catalog bit; "Restaurar descrição padrão" stays.
+  `Model` (select from `/api/bots.models`) and `Effort` (select), pre-filled from the
+  chosen catalog bit; "Restore default description" stays.
 - Editor validates: orchestrator → only `routes` models (dsh); toggling isOrchestrator
   snaps the model to a valid default of the new family when the current one is invalid.
-- Bit detail: no "Conversar", no VM controls. Workers get **Executar**: a dialog with a
-  request textarea, a "somente leitura" toggle (default on), run button with busy state,
-  response panel (and error). Orchestrators show "Executa em fluxos (aba Times)" plus the
+- Bit detail: no "Chat", no VM controls. Workers get **Run**: a dialog with a
+  request textarea, a "read-only" toggle (default on), run button with busy state,
+  response panel (and error). Orchestrators show "Executes in flows (Teams tab)" plus the
   teams where the bit is the lead, if any.
 - Remove every VM string/section/poll (`/api/bots.images`, `/api/bots.vm`, docker hints),
   the notify-test bell, and chat buttons.
 
-Times tab:
+Teams tab:
 - Member editor: pick the bit (select from `/api/bots.list`, grouped by catalog group),
   then edit `role`, `access`, `launches`, `teamRef`, `mcp`, `skills`; the bit's model/effort/
-  isOrchestrator shown read-only (link "editar bit" if easy). Remove model/provider/effort/
+  isOrchestrator shown read-only (link "edit bit" if easy). Remove model/provider/effort/
   character/instructions inputs from members.
 - Lead selector lists only members whose bit is an orchestrator; if the current lead is not
   one, show the error inline.
 - Templates: creating a team from a template calls `POST /api/bots.teams.fromTemplate`.
-- "Enviar pedido" / run: use `POST /api/bots.teams.run` (auto-started mission) instead of
+- "Send request" / run: use `POST /api/bots.teams.run` (auto-started mission) instead of
   pre-filling a session draft; show a busy state and the created session when it returns
   (open it if the UI allows, like the previous flow).
 - Flow editor itself (nodes, edges, groups, drag, undo, save) is unchanged.
 
 Projects tab: unchanged except team cards may show the lead bit name.
 
-Locale: update `client.js`'s embedded pt/en dictionaries (it has both) and
-`locale/{pt,en}.json` metadata (title/description = Bits/flows).
+Locale: update `client.js`'s single embedded English dictionary (`EN`, which absorbs the
+team strings from `TEAM_EN`) and the `locale/en.json` metadata (title/description = Bits/flows).
 
 ---
 

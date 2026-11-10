@@ -1,273 +1,273 @@
-# Bits — workers que recebem uma requisição e devolvem uma resposta
+# Bits — workers that receive a request and return a response
 
-Um pacote (bundle) para a interface Web do **DeepSeek Harness** que adiciona a página
-**Bits**: definições de trabalhadores de IA com contexto próprio, um modelo e um esforço de
-raciocínio, que **executam em fluxos** (os times) e devolvem uma resposta a quem pediu.
+A package (bundle) for the **DeepSeek Harness** Web interface that adds the **Bits** page:
+definitions of AI workers with their own context, a model and a reasoning effort, that **run
+in flows** (the teams) and return a response to whoever asked.
 
-Um bit não é mais um agente pessoal e não usa máquina virtual. Ele é uma definição:
+A bit is no longer a personal agent and does not use a virtual machine. It is a definition:
 
-- **Contexto/instruções** — o papel, o método, os limites e o formato do relatório;
-- **`isOrchestrator`** — se é um orquestrador de fluxo ou um worker;
-- **Modelo e esforço** — escolhidos entre os modelos disponíveis num chat normal, podendo
-  ser trocados a qualquer momento no editor.
+- **Context/instructions** — the role, the method, the limits and the report format;
+- **`isOrchestrator`** — whether it is a flow orchestrator or a worker;
+- **Model and effort** — chosen among the models available in a normal chat, and can be
+  switched at any time in the editor.
 
-> Interface em português (fallback inglês), código em inglês. Feito para o perfil
-> `desktop` desta instalação, mas funciona em qualquer perfil com a interface Web.
+> Interface in English, code in English. Built for the `desktop` profile of this
+> installation, but it works in any profile with the Web interface.
 
 ---
 
-## Como um bit executa
+## How a bit runs
 
-O modo de execução vem de `isOrchestrator`:
+The execution mode comes from `isOrchestrator`:
 
-| | **Orquestrador** (`isOrchestrator: true`) | **Worker** (`isOrchestrator: false`) |
+| | **Orchestrator** (`isOrchestrator: true`) | **Worker** (`isOrchestrator: false`) |
 |---|---|---|
-| O que faz | Conduz um **fluxo de time**: entende o pedido, decide a ordem, delega etapas e devolve o relatório final. | Recebe **uma requisição** (uma etapa do fluxo) e devolve **uma resposta**. |
-| Onde roda | Agente do DeepSeek Harness, num modelo de rota do chat (padrão **DeepSeek-V4.1-Flash**, esforço **Max**). | Invocação única: por padrão no **Claude Code da sua assinatura**, via a tool `claude_delegate` do plugin **`@dsh-burn-plugins/dsh-claude-delegate`** (o "plugin que criamos"); ou uma chamada única de modelo, se o bit for apontado para uma rota do chat. |
-| Ferramentas | Tem as ferramentas do Harness e delega aos membros do time. | No modo assinatura, roda com as ferramentas do Claude Code na pasta do fluxo (ler/editar/executar). No modo rota do chat, devolve texto (sem ferramentas). |
-| Memória | Sessão do fluxo (durável). | Nenhuma entre chamadas: o que o bit "lembra" é o `task`/contexto que o orquestrador envia. |
+| What it does | Runs a **team flow**: understands the request, decides the order, delegates steps and returns the final report. | Receives **one request** (one flow step) and returns **one response**. |
+| Where it runs | DeepSeek Harness agent, on a chat-route model (default **DeepSeek-V4.1-Flash**, effort **Max**). | One-shot invocation: by default in the **Claude Code of your subscription**, via the `claude_delegate` tool of the **`@dsh-burn-plugins/dsh-claude-delegate`** plugin (the "plugin we created"); or a single model call, if the bit is pointed at a chat route. |
+| Tools | Has the Harness tools and delegates to the team members. | In subscription mode, runs with the Claude Code tools in the flow directory (read/edit/execute). In chat-route mode, returns text (no tools). |
+| Memory | Flow session (durable). | None between calls: what the bit "remembers" is the `task`/context the orchestrator sends. |
 
-A regra econômica: **orquestrar é barato e acontece na rota do DeepSeek; trabalhar usa a
-assinatura**. Você continua podendo trocar o modelo e o esforço de qualquer bit — o editor
-lista os modelos do seu chat (provedores/contas do perfil) e os da assinatura.
+The economic rule: **orchestrating is cheap and happens on the DeepSeek route; working uses
+the subscription**. You can still change the model and effort of any bit — the editor lists
+your chat models (profile providers/accounts) and the subscription ones.
 
-## O que cada bit tem
+## What each bit has
 
-| Recurso | Como funciona |
+| Resource | How it works |
 |---|---|
-| **Contexto** | Nome, emoji, cor e instruções permanentes: o papel, o método, o que nunca fazer e o formato do relatório. |
-| **Classificação** | Orquestrador ou worker (`isOrchestrator`), com o padrão vindo do personagem escolhido no catálogo. |
-| **Modelo/Esforço** | Modelo e esforço de raciocínio, editáveis; padrões por personagem no catálogo. |
-| **Área de trabalho** | Diretório próprio (`$DSH_HOME/bots/<id>/workspace`), usado como diretório de trabalho quando o bit é executado avulso. Nos fluxos, o diretório é o do time. |
-| **Executar** | Workers podem ser executados avulsos na página: você escreve uma requisição (com opção **somente leitura**) e vê a resposta. Orquestradores executam dentro de um fluxo. |
+| **Context** | Name, emoji, color and permanent instructions: the role, the method, what never to do and the report format. |
+| **Classification** | Orchestrator or worker (`isOrchestrator`), with the default coming from the character chosen in the catalog. |
+| **Model/Effort** | Model and reasoning effort, editable; defaults per character in the catalog. |
+| **Workspace** | Its own directory (`$DSH_HOME/bots/<id>/workspace`), used as the working directory when the bit is run standalone. In flows, the directory is the team's. |
+| **Run** | Workers can be run standalone on the page: you write a request (with a **read-only** option) and see the response. Orchestrators run inside a flow. |
 
-## Bits: os personagens
+## Bits: the characters
 
-Todo bit nasce de um **bit do catálogo**, um dos 52 personagens ilustrados
-(`bits/catalog.json` + `bits/avatars/*.webp`). Ao clicar em **Novo bit**, a página abre a
-galeria (com busca por função, nome ou habilidade, sem diferenciar acentos). O formulário já
-vem com nome, descrição, **orquestrador/worker**, **modelo** e **esforço** sugeridos para
-aquele papel; tudo pode ser alterado. **Restaurar descrição padrão** volta ao texto original.
+Every bit is born from a **catalog bit**, one of the 52 illustrated characters
+(`bits/catalog.json` + `bits/avatars/*.webp`). When you click **New bit**, the page opens the
+gallery (with search by function, name or skill, accent-insensitive). The form already comes
+with name, description, **orchestrator/worker**, **model** and **effort** suggested for that
+role; everything can be changed. **Restore default description** goes back to the original
+text.
 
-| Grupo | Bits |
+| Group | Bits |
 |---|---|
-| Geral | Bit (mascote, worker genérico) |
-| Gestão e produto | Manager, Product Owner, Coordinator, Sub-coordinator (orquestradores), Systems Analyst, Product Analyst, User Researcher |
-| Workers (tarefas) | Scout, Researcher, Architect, Builder, Runner, Reviewer, Debugger, CI Triager, Writer |
-| Qualidade e testes | QA, Web Tester, Android Tester, iOS Tester |
-| Engenharia | Frontend, Backend, Android, iOS, Flutter, React Native, Cloud, SRE, Deployer, Integration, Performance, Database, Data Engineer, Data Scientist, LLM, Cybersecurity |
+| General | Bit (mascot, generic worker) |
+| Management & product | Manager, Product Owner, Coordinator, Sub-coordinator (orchestrators), Systems Analyst, Product Analyst, User Researcher |
+| Workers (tasks) | Scout, Researcher, Architect, Builder, Runner, Reviewer, Debugger, CI Triager, Writer |
+| Quality & testing | QA, Web Tester, Android Tester, iOS Tester |
+| Engineering | Frontend, Backend, Android, iOS, Flutter, React Native, Cloud, SRE, Deployer, Integration, Performance, Database, Data Engineer, Data Scientist, LLM, Cybersecurity |
 | Design | UX Designer, UI Designer, Design System Expert, Accessibility Expert |
-| Negócio e crescimento | Growth Marketer, SEO Expert, Copywriter, i18n / Localization, CRM Specialist, Sales, Sales Assistant, Customer Success, Support, Finance Analyst, Privacy & Compliance |
+| Business & growth | Growth Marketer, SEO Expert, Copywriter, i18n / Localization, CRM Specialist, Sales, Sales Assistant, Customer Success, Support, Finance Analyst, Privacy & Compliance |
 
-As descrições seguem o formato dos agentes do Claude Code (`~/.claude/agents`): uma frase
-com o papel, o método e os limites, terminando com o formato do relatório
-("Report back with …"). O catálogo também guarda o **modelo/esforço padrão** de
-cada personagem e quais são **orquestradores** (os quatro papéis de coordenação), para que
-um fluxo funcione bem desde o primeiro uso.
+The descriptions follow the Claude Code agents format (`~/.claude/agents`): one sentence with
+the role, the method and the limits, ending with the report format ("Report back with …").
+The catalog also stores the **default model/effort** of each character and which ones are
+**orchestrators** (the four coordination roles), so that a flow works well from the first use.
 
-## Times e fluxos
+## Teams and flows
 
-Um **time** agrupa bits em papéis (membros) e desenha o fluxo como um grafo editável
-(nós + setas). A página **Times** tem o editor visual: arraste para mover, conecte etapas,
-agrupe fases, adicione decisões e pausas, desfaça e salve.
+A **team** groups bits into roles (members) and draws the flow as an editable graph (nodes +
+arrows). The **Teams** page has the visual editor: drag to move, connect steps, group phases,
+add decisions and pauses, undo and save.
 
-- **Membros = bits.** Cada membro aponta para um bit (o mesmo bit pode ser usado em vários
-  fluxos). O membro guarda o que é específico do fluxo: papel, acesso (leitura/escrita),
-  quem ele pode lançar, time referenciado, MCP e skills.
-- **Líder = orquestrador.** Só um bit com `isOrchestrator: true` pode liderar um time: ele
-  recebe o pedido e conduz o fluxo. O editor só oferece orquestradores na lista de líderes.
-- **Worker = requisição → resposta.** O líder chama o worker com uma tarefa autocontida; o
-  worker roda como uma invocação única e devolve o relatório. É por isso que o worker não
-  "lembra" da etapa anterior: o líder manda todo o contexto necessário.
-- **Orquestrador membro** (ex.: um membro que representa outro time) roda como agente filho,
-  com o modelo de rota dele, e pode delegar de novo.
-- **Enviar pedido** executa o fluxo: abre a sessão do time no repositório, entrega o pedido
-  ao líder e acompanha o trabalho. O líder pode passar a sessão para outro time
-  (`team_handoff`) quando o pedido pertence a outro fluxo.
+- **Members = bits.** Each member points to a bit (the same bit can be used in several
+  flows). The member stores what is specific to the flow: role, access (read/write), who it
+  can launch, referenced team, MCP and skills.
+- **Lead = orchestrator.** Only a bit with `isOrchestrator: true` can lead a team: it receives
+  the request and runs the flow. The editor only offers orchestrators in the lead list.
+- **Worker = request → response.** The lead calls the worker with a self-contained task; the
+  worker runs as a one-shot invocation and returns the report. That is why the worker does not
+  "remember" the previous step: the lead sends all the necessary context.
+- **Orchestrator member** (e.g., a member that represents another team) runs as a child agent,
+  with its own route model, and can delegate again.
+- **Send request** runs the flow: it opens the team session in the repository, delivers the
+  request to the lead and follows the work. The lead can hand the session over to another team
+  (`team_handoff`) when the request belongs to another flow.
 
-### Modelos de time
+### Team models
 
-A página Times traz modelos prontos (`bits/teams/*.json`, ex.: **Engenharia (Claude Code)**)
-e permite transformar um harness importado de um repositório em time. O modelo de
-**Engenharia** cria um time com um orquestrador e os workers do Claude Code (scout,
-researcher, architect, builder, debugger, reviewer, writer, runner, CI triager…), já com
-papéis, acessos e fluxo TDD revisado.
+The Teams page includes ready-made models (`bits/teams/*.json`, e.g. **Engineering (Claude
+Code)**) and lets you turn a harness imported from a repository into a team. The
+**Engineering** model creates a team with an orchestrator and the Claude Code workers (scout,
+researcher, architect, builder, debugger, reviewer, writer, runner, CI triager…), already
+with roles, access and a reviewed TDD flow.
 
-## Projetos
+## Projects
 
-A aba **Projetos** agrupa times por produto/repositório. Um projeto pode conter times
-compartilháveis (que também aparecem na aba Times) e times internos. Excluir um projeto
-desvincula os times antes, sem apagá-los.
+The **Projects** tab groups teams by product/repository. A project can contain shareable
+teams (which also appear in the Teams tab) and internal teams. Deleting a project unlinks the
+teams first, without deleting them.
 
-## Times executáveis e harness
+## Executable teams and harness
 
-Um time com **líder**, **repositório** e (opcionalmente) um **pacote de harness** roda de
-verdade no DeepSeek Harness:
+A team with a **lead**, a **repository** and (optionally) a **harness package** really runs in
+DeepSeek Harness:
 
-- **Harness transpilado:** o botão **Harness** da aba Times importa o harness de um
-  repositório (estilo GitHub Copilot / Claude Code: `AGENTS.md`, `.github/agents`,
+- **Transpiled harness:** the **Harness** button in the Teams tab imports a repository's
+  harness (GitHub Copilot / Claude Code style: `AGENTS.md`, `.github/agents`,
   `.github/skills`, `.github/instructions`, `.github/hooks`, `.github/scripts`, `.mcp.json`)
-  para `<botsRoot>/harness/<id>/`. O repositório pode até não ter mais o harness: o time o
-  carrega. Os comandos dos textos passam a apontar para o pacote, e patches ancorados fazem
-  os scripts funcionarem de fora do repositório (`DSH_HARNESS_PACK_ROOT`).
-- **Criar time deste harness** gera um time com um orquestrador e um bit por preset
-  (persona, modelo, esforço, somente leitura, quem cada um pode lançar e as skills que lê
-  antes).
-- **Líder:** quem recebe o pedido. Com **Toda sessão neste workspace é do time** ligado,
-  toda sessão aberta no repositório (inclusive `worktrees/…`) é do líder. Um líder com
-  acesso somente leitura só orquestra: não tem terminal, escrita, busca nem web, e só lê o
-  pacote do harness e arquivos `.dsc/`.
-- **Delegação:** o líder chama `team_delegate({ member, task })`; o worker roda a
-  invocação única (assinatura/rota do chat) e o relatório final volta como resultado. Um
-  membro orquestrador roda como agente filho. Um membro só lança quem está em "pode lançar".
-- **Passagem:** `team_handoff` passa a sessão inteira ao líder de outro time.
-- **Guarda:** antes de cada ferramenta de cada agente do time roda o hook do próprio harness
-  (o `git-guard.cjs`, no formato de evento do Claude Code), com `--read-only` para membros
-  de leitura. A negação chega ao modelo como "Regra do repositório: …". Workers executados
-  na assinatura em modo somente leitura recebem `--permission-mode plan` do Claude Code.
-- **Contexto:** regras do `AGENTS.md`, conduta, roster, o **fluxo desenhado** (em texto, na
-  ordem das fases), glossário Copilot → DeepSeek Harness, skills e as instructions
-  `applyTo`, anexadas quando um arquivo que casa é lido ou editado.
-- **MCP:** os servidores do `.mcp.json` do pacote são montados só nos membros marcados.
+  to `<botsRoot>/harness/<id>/`. The repository may even no longer have the harness: the team
+  carries it. The commands in the texts then point to the package, and anchored patches make
+  the scripts work from outside the repository (`DSH_HARNESS_PACK_ROOT`).
+- **Create team from this harness** generates a team with an orchestrator and one bit per
+  preset (persona, model, effort, read-only, who each one can launch and the skills it reads
+  beforehand).
+- **Lead:** the one that receives the request. With **Every session in this workspace belongs
+  to the team** enabled, every session opened in the repository (including `worktrees/…`)
+  belongs to the lead. A read-only lead only orchestrates: it has no terminal, write, search
+  or web, and only reads the harness package and `.dsc/` files.
+- **Delegation:** the lead calls `team_delegate({ member, task })`; the worker runs the
+  one-shot invocation (subscription/chat route) and the final report comes back as the result.
+  An orchestrator member runs as a child agent. A member only launches those in "can launch".
+- **Handoff:** `team_handoff` hands the entire session over to the lead of another team.
+- **Guard:** before each tool of each team agent, the harness's own hook runs (the
+  `git-guard.cjs`, in the Claude Code event format), with `--read-only` for read members. The
+  denial reaches the model as "Repository rule: …". Workers run on the subscription in
+  read-only mode receive `--permission-mode plan` from Claude Code.
+- **Context:** `AGENTS.md` rules, conduct, roster, the **drawn flow** (in text, in phase
+  order), Copilot → DeepSeek Harness glossary, skills and the `applyTo` instructions, attached
+  when a matching file is read or edited.
+- **MCP:** the package's `.mcp.json` servers are mounted only on the marked members.
 
-## Como usar
+## How to use
 
-1. Clique em **Bits** na barra lateral (ícone de robô).
-2. **Novo bit**: escolha um personagem, ajuste nome/descrição e decida **orquestrador** ou
-   **worker**, **modelo** e **esforço**.
-3. **Executar** (workers): escreva uma requisição, escolha se é somente leitura e veja a
-   resposta.
-4. Aba **Times**: crie um time do zero ou de um modelo/ harness, adicione bits como membros,
-   escolha o líder orquestrador e desenhe o fluxo. **Enviar pedido** executa.
-5. Aba **Projetos**: agrupe os times por produto.
+1. Click **Bits** in the sidebar (robot icon).
+2. **New bit**: choose a character, adjust name/description and decide **orchestrator** or
+   **worker**, **model** and **effort**.
+3. **Run** (workers): write a request, choose whether it is read-only and see the response.
+4. **Teams** tab: create a team from scratch or from a model/harness, add bits as members,
+   choose the orchestrator lead and draw the flow. **Send request** runs it.
+5. **Projects** tab: group the teams by product.
 
-## Requisitos e o plugin da assinatura
+## Requirements and the subscription plugin
 
-- Perfil com a camada Web (`@deepseek-ai/dsh-web-app`).
-- Para workers no modo assinatura: o plugin **`@dsh-burn-plugins/dsh-claude-delegate`** instalado no
-  perfil e o **Claude Code** instalado e logado na máquina (`claude` no PATH do Harness).
-  Esse plugin expõe a tool `claude_delegate` (modelo e esforço por chamada); o bundle dos
-  Bits a invoca pela pipeline de ferramentas do Harness, sem importar o pacote.
-- Sem o plugin, workers apontados para a assinatura falham com uma mensagem clara
-  (`BIT_DELEGATE_UNAVAILABLE`); workers apontados para uma **rota do chat** continuam
-  funcionando como chamada única de modelo.
-- Não há mais dependência de Docker.
+- Profile with the Web layer (`@deepseek-ai/dsh-web-app`).
+- For workers in subscription mode: the **`@dsh-burn-plugins/dsh-claude-delegate`** plugin
+  installed in the profile and **Claude Code** installed and logged in on the machine
+  (`claude` in the Harness PATH). That plugin exposes the `claude_delegate` tool (model and
+  effort per call); the Bits bundle invokes it through the Harness tool pipeline, without
+  importing the package.
+- Without the plugin, workers pointed at the subscription fail with a clear message
+  (`BIT_DELEGATE_UNAVAILABLE`); workers pointed at a **chat route** keep working as a single
+  model call.
+- There is no longer a Docker dependency.
 
-## Como instalar / atualizar
+## How to install / update
 
-O bundle já é instalado no perfil pelo Lead da sessão via **Plugins → Add plugin** (ou pelo
-gerenciador de plugins do Harness). Para instalar em outro perfil:
+The bundle is already installed in the profile by the session Lead via **Plugins → Add
+plugin** (or the Harness plugin manager). To install it in another profile:
 
 ```bash
-# na interface: Plugins → Add plugin → caminho local absoluto
-# ou, na CLI, com um alvo de instalação:
-dsh plugin --profile <perfil> add /caminho/para/bots-plugin
+# in the interface: Plugins → Add plugin → absolute local path
+# or, on the CLI, with an install target:
+dsh plugin --profile <profile> add /path/to/bots-plugin
 ```
 
-## Configuração
+## Configuration
 
-O patch do bundle (`cordis.patch.yml`) aceita, na linha `bots`, um `config` opcional:
+The bundle patch (`cordis.patch.yml`) accepts, on the `bots` line, an optional `config`:
 
 ```yaml
 - insert:
     - id: bots
       name: '@dsh-burn-plugins/dsh-bots'
       config:
-        botsRoot: /caminho/absoluto/para/bits   # padrão: $DSH_HOME/bots
+        botsRoot: /absolute/path/to/bits   # default: $DSH_HOME/bots
 ```
 
-Os bits ficam em `<botsRoot>/bits.json`, os times em `<botsRoot>/teams.json`, os projetos em
-`<botsRoot>/projects.json` e os pacotes de harness em `<botsRoot>/harness/`. Cada bit tem
-`<botsRoot>/<id>/workspace`. Gravação atômica, modo 0600.
+Bits live in `<botsRoot>/bits.json`, teams in `<botsRoot>/teams.json`, projects in
+`<botsRoot>/projects.json` and harness packages in `<botsRoot>/harness/`. Each bit has
+`<botsRoot>/<id>/workspace`. Atomic writes, mode 0600.
 
-## Migração da versão anterior
+## Migration from the previous version
 
-- Um `bots.json` antigo (agentes pessoais + VM) é convertido para `bits.json`: o VM é
-  descartado, `isOrchestrator`/modelo/esforço vêm do catálogo do personagem e o
-  `workspaceDir` é mantido. O arquivo antigo é preservado como `bots.json.migrated-<data>`.
-- Um `teams.json` antigo (membros embutidos) é convertido: cada membro vira/usa um bit
-  (deduplicado por personagem+nome+instruções), o líder vira orquestrador
-  (DeepSeek-V4.1-Flash Max) e os demais usam os padrões do catálogo. O arquivo antigo é
-  preservado como `teams.json.bak-<data>`.
-- Sessões antigas de times continuam funcionando: os ids de membros são preservados.
+- An old `bots.json` (personal agents + VM) is converted to `bits.json`: the VM is discarded,
+  `isOrchestrator`/model/effort come from the character catalog and the `workspaceDir` is
+  kept. The old file is preserved as `bots.json.migrated-<date>`.
+- An old `teams.json` (embedded members) is converted: each member becomes/uses a bit
+  (deduplicated by character+name+instructions), the lead becomes an orchestrator
+  (DeepSeek-V4.1-Flash Max) and the others use the catalog defaults. The old file is
+  preserved as `teams.json.bak-<date>`.
+- Old team sessions keep working: member ids are preserved.
 
-## Arquitetura
+## Architecture
 
 ```
 bots-plugin/
-├── index.js               # plugin host: stores, catálogo de modelos, runtimes, rotas
+├── index.js               # host plugin: stores, model catalog, runtimes, routes
 ├── host/
-│   ├── store.js           # BitStore: registro durável de bits (migração do v4)
-│   ├── routes.js          # /api/bots.* (CRUD, catálogo, modelos, executar, avatar)
-│   ├── catalog.js         # catálogo de bits (carregamento, validação, avatares)
-│   ├── models.js          # catálogo de modelos: assinatura + rotas do chat, resolução
-│   ├── bit-runtime.js     # requisição→resposta: claude_delegate (assinatura) ou 1 chamada
-│   ├── teams.js           # TeamStore: times/fluxos (membros referenciam bits)
-│   ├── team-routes.js     # rotas /api/bots.teams* e modelos de time
-│   ├── projects.js        # ProjectStore: projetos que agrupam times
-│   ├── project-routes.js  # rotas /api/bots.projects*
-│   ├── harness.js         # transpilador de harness → pacote
-│   ├── harness-routes.js  # rotas de pacotes, time a partir do pacote, run e diagnóstico
-│   ├── team-runtime.js    # times executáveis: líder, delegação, passagem, skills, guarda
-│   ├── team-prompt.js     # textos do líder e dos membros (fluxo, roster, glossário)
-│   ├── team-guard.js      # ponte para o hook do harness e políticas do líder
-│   └── team-bindings.js   # sessão → time/membro (durável)
+│   ├── store.js           # BitStore: durable bit registry (v4 migration)
+│   ├── routes.js          # /api/bots.* (CRUD, catalog, models, run, avatar)
+│   ├── catalog.js         # bit catalog (loading, validation, avatars)
+│   ├── models.js          # model catalog: subscription + chat routes, resolution
+│   ├── bit-runtime.js     # request→response: claude_delegate (subscription) or 1 call
+│   ├── teams.js           # TeamStore: teams/flows (members reference bits)
+│   ├── team-routes.js     # /api/bots.teams* routes and team models
+│   ├── projects.js        # ProjectStore: projects that group teams
+│   ├── project-routes.js  # /api/bots.projects* routes
+│   ├── harness.js         # harness → package transpiler
+│   ├── harness-routes.js  # package routes, team from package, run and diagnostics
+│   ├── team-runtime.js    # executable teams: lead, delegation, handoff, skills, guard
+│   ├── team-prompt.js     # lead and member texts (flow, roster, glossary)
+│   ├── team-guard.js      # bridge to the harness hook and lead policies
+│   └── team-bindings.js   # session → team/member (durable)
 ├── bits/
-│   ├── catalog.json       # 52 bits: nome, grupo, emoji, cor, resumo, descrição,
-│   │                      #   isOrchestrator, modelo e esforço padrão
-│   ├── avatars/           # um avatar WebP 256×256 por bit
-│   └── teams/             # modelos de time (JSON)
-├── client.js              # página Web (React via module loader, sem JSX/imports)
-├── cordis.patch.yml       # linha do plugin no perfil
-├── locale/{en,pt}.json    # metadados de exibição do bundle
-└── test/                  # testes unitários, runtime com host falso, E2E e visual
+│   ├── catalog.json       # 52 bits: name, group, emoji, color, summary, description,
+│   │                      #   isOrchestrator, default model and effort
+│   ├── avatars/           # one 256×256 WebP avatar per bit
+│   └── teams/             # team models (JSON)
+├── client.js              # Web page (React via module loader, no JSX/imports)
+├── cordis.patch.yml       # plugin line in the profile
+├── locale/en.json         # bundle display metadata
+└── test/                  # unit tests, runtime with fake host, E2E and visual
 ```
 
-Fluxo de uma execução de time: página → `/api/bots.teams.run` → `startMission` (sessão no
-workspace do time, binding durável) → o líder orquestrador recebe o pedido e chama
-`team_delegate` → worker: `bit-runtime.invokeWorker` → `claude_delegate` (assinatura) ou uma
-chamada de rota do chat → relatório de volta ao líder → resposta final ao dev.
+Flow of a team run: page → `/api/bots.teams.run` → `startMission` (session in the team
+workspace, durable binding) → the orchestrator lead receives the request and calls
+`team_delegate` → worker: `bit-runtime.invokeWorker` → `claude_delegate` (subscription) or a
+chat route call → report back to the lead → final response to the dev.
 
-## Testes
+## Tests
 
 ```bash
 cd bots-plugin
-node test/store.test.mjs        # bits: registro durável, validação, migração
-node test/catalog.test.mjs      # catálogo v2 (52 bits, orquestradores, modelos padrão)
-node test/routes.test.mjs       # rotas /api/bots.* (CRUD, catálogo, modelos, executar)
-node test/teams.test.mjs        # times: membros por bit, líder orquestrador, migração, modelos
-node test/projects.test.mjs     # projetos e desvinculação de times
-node test/harness.test.mjs      # transpilador e time a partir do harness
-node test/team-runtime.test.mjs # runtime com host falso: líder, workers one-shot, guarda
-node test/bit-runtime.test.mjs  # req→resposta: assinatura, rota do chat, somente leitura
-node test/e2e-web.mjs           # E2E: perfil isolado + host Web real + rotas + UI
-node test/visual-teams.mjs --width 1440 --height 900   # editor de fluxo no Chrome headless
-node test/visual-projects.mjs --width 1440 --height 900 # aba Projetos no Chrome headless
-node test/visual.mjs --theme dark   # capturas reais (Chrome headless) em test/screenshots/
+node test/store.test.mjs        # bits: durable registry, validation, migration
+node test/catalog.test.mjs      # catalog v2 (52 bits, orchestrators, default models)
+node test/routes.test.mjs       # /api/bots.* routes (CRUD, catalog, models, run)
+node test/teams.test.mjs        # teams: members by bit, orchestrator lead, migration, models
+node test/projects.test.mjs     # projects and team unlinking
+node test/harness.test.mjs      # transpiler and team from the harness
+node test/team-runtime.test.mjs # runtime with fake host: lead, one-shot workers, guard
+node test/bit-runtime.test.mjs  # req→response: subscription, chat route, read-only
+node test/e2e-web.mjs           # E2E: isolated profile + real Web host + routes + UI
+node test/visual-teams.mjs --width 1440 --height 900   # flow editor in headless Chrome
+node test/visual-projects.mjs --width 1440 --height 900 # Projects tab in headless Chrome
+node test/visual.mjs --theme dark   # real screenshots (headless Chrome) in test/screenshots/
 ```
 
-O E2E cria um `DSH_HOME` temporário, instala o bundle, sobe o host Web real em uma porta
-livre, autentica pelo token de lançamento e exercita as rotas — nunca toca no perfil
-`desktop` ativo. A revisão independente do bundle está em `REVIEW.md`.
+The E2E creates a temporary `DSH_HOME`, installs the bundle, starts the real Web host on a
+free port, authenticates with the launch token and exercises the routes — it never touches
+the active `desktop` profile. The bundle's independent review is in `REVIEW.md`.
 
-## Diagnóstico
+## Diagnostics
 
-`GET /api/bots.diagnostics` (autenticado) devolve o caminho do registro, os bits, os agentes
-de time que receberam prompt/tools do runtime e os últimos erros de integração. É a primeira
-parada para "o time não executou" / "o worker falhou".
+`GET /api/bots.diagnostics` (authenticated) returns the registry path, the bits, the team
+agents that received prompt/tools from the runtime and the latest integration errors. It is
+the first stop for "the team did not run" / "the worker failed".
 
-## Segurança e limites
+## Security and limits
 
-- Orquestradores rodam como agentes do Harness, com as ferramentas e o sandbox do perfil.
-- Workers no modo assinatura rodam no Claude Code com permissões de bypass (ou
-  `--permission-mode plan` quando o membro é somente leitura), no diretório do fluxo.
-  O Claude Code **não** aplica as restrições de ferramenta do Harness: o limite efetivo é o
-  diretório de trabalho + o modo de permissão.
-- Workers no modo rota do chat fazem uma única chamada de modelo, sem ferramentas.
-- O orquestrador recebe o texto do worker; saídas estruturadas são melhor esforço.
-- Uma execução de worker pode demorar (o Claude Code trabalha até terminar); a rota aceita
-  cancelamento pelo pedido HTTP e tem um limite de 15 minutos.
-- Segredos do Harness não são repassados ao Claude Code além do ambiente do host (o plugin
-  da assinatura isola as credenciais de API para valer o login OAuth).
-- Excluir um bit remove o registro e, opcionalmente, o workspace; a remoção de diretório é
-  recusada se o caminho escapar de `botsRoot`.
+- Orchestrators run as Harness agents, with the profile's tools and sandbox.
+- Workers in subscription mode run in Claude Code with bypass permissions (or
+  `--permission-mode plan` when the member is read-only), in the flow directory.
+  Claude Code does **not** apply the Harness tool restrictions: the effective limit is the
+  working directory + the permission mode.
+- Workers in chat-route mode make a single model call, without tools.
+- The orchestrator receives the worker's text; structured outputs are best effort.
+- A worker run can take a while (Claude Code works until it finishes); the route accepts
+  cancellation through the HTTP request and has a 15-minute limit.
+- Harness secrets are not passed to Claude Code beyond the host environment (the subscription
+  plugin isolates the API credentials so the OAuth login applies).
+- Deleting a bit removes the registry entry and, optionally, the workspace; directory removal
+  is refused if the path escapes `botsRoot`.

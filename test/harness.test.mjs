@@ -52,19 +52,19 @@ async function write(root, rel, text) {
 
 async function fixtureRepo() {
   const repo = await tempDir('dsh-bits-harness-src-')
-  await write(repo, 'AGENTS.md', '# Regras\n\nRode `node .github/scripts/where.mjs --card <n>` antes.\nVeja `.github/skills/tdd/SKILL.md` e `packages/ui/src`.\n')
+  await write(repo, 'AGENTS.md', '# Rules\n\nRun `node .github/scripts/where.mjs --card <n>` first.\nSee `.github/skills/tdd/SKILL.md` and `packages/ui/src`.\n')
   await write(repo, '.github/harness.json', '{ "versao": 7 }\n')
-  await write(repo, '.github/copilot-instructions.md', '# Conduta\n')
+  await write(repo, '.github/copilot-instructions.md', '# Conduct\n')
   await write(repo, '.github/agents/scout.agent.md', [
-    '---', 'name: scout', 'description: Localiza.', 'model: Claude Haiku 5.5 (copilot)', 'reasoning-effort: low', 'user-invocable: false',
-    'hooks:', '  PreToolUse:', '    - type: command', '      command: node .github/hooks/scripts/git-guard.cjs --read-only --launches -', '---', '', '# Scout', '', 'Busca.', '',
+    '---', 'name: scout', 'description: Locates.', 'model: Claude Haiku 5.5 (copilot)', 'reasoning-effort: low', 'user-invocable: false',
+    'hooks:', '  PreToolUse:', '    - type: command', '      command: node .github/hooks/scripts/git-guard.cjs --read-only --launches -', '---', '', '# Scout', '', 'Searches.', '',
   ].join('\n'))
   await write(repo, '.github/agents/builder.agent.md', [
-    '---', 'name: builder', 'description: Implementa.', 'model: Claude Sonnet 5.5 (copilot)', 'reasoning-effort: medium',
+    '---', 'name: builder', 'description: Implements.', 'model: Claude Sonnet 5.5 (copilot)', 'reasoning-effort: medium',
     'hooks:', '  PreToolUse:', '    - type: command', '      command: node .github/hooks/scripts/git-guard.cjs --launches scout', '---', '',
-    '**Skills:** leia antes a [`tdd`](../skills/tdd/SKILL.md).', '', 'Código.', '',
+    '**Skills:** read [`tdd`](../skills/tdd/SKILL.md) first.', '', 'Code.', '',
   ].join('\n'))
-  await write(repo, '.github/skills/tdd/SKILL.md', '---\nname: tdd\ndescription: Teste antes.\n---\n\n# TDD\n\nRode `node .github/skills/tdd/scripts/run.mjs`.\n')
+  await write(repo, '.github/skills/tdd/SKILL.md', '---\nname: tdd\ndescription: Test first.\n---\n\n# TDD\n\nRun `node .github/skills/tdd/scripts/run.mjs`.\n')
   await write(repo, '.github/skills/tdd/scripts/run.mjs', 'console.log("ok")\n')
   await write(repo, '.github/instructions/ui.instructions.md', "---\nname: ui\ndescription: UI.\napplyTo: '**/packages/ui/**/*.ts,**/packages/ui/**/*.tsx'\n---\n\n# UI\n")
   await write(repo, '.github/scripts/where.mjs', "const v = readFileSync(path.join(dir, '.github', 'harness.json'), 'utf8')\n")
@@ -90,7 +90,7 @@ await test('parseFrontmatter and modelTier', () => {
 })
 
 await test('rewriteMarkdown points harness commands and files at the pack only', () => {
-  const out = rewriteMarkdown('Rode `node .github/scripts/where.mjs`. Leia `.github/skills/x/SKILL.md`. Não toque `.github/workflows/ci.yml` nem packages/.', '/p')
+  const out = rewriteMarkdown('Run `node .github/scripts/where.mjs`. Read `.github/skills/x/SKILL.md`. Do not touch `.github/workflows/ci.yml` or packages/.', '/p')
   assert.match(out, /`node \/p\/\.github\/scripts\/where\.mjs`/)
   assert.match(out, /`\/p\/\.github\/skills\/x\/SKILL\.md`/)
   assert.match(out, /`\.github\/workflows\/ci\.yml`/)
@@ -137,7 +137,7 @@ await test('transpileHarness replaces an existing pack atomically and validates 
   const packsRoot = await tempDir('dsh-bits-packs-')
   await transpileHarness({ sourceDir: repo, packsRoot, packId: 'demo', patches: [] })
   await fs.writeFile(path.join(packsRoot, 'demo', 'stale.txt'), 'x')
-  await write(repo, 'AGENTS.md', '# Regras v2\n')
+  await write(repo, 'AGENTS.md', '# Rules v2\n')
   await transpileHarness({ sourceDir: repo, packsRoot, packId: 'demo', patches: [] })
   assert.equal(existsSync(path.join(packsRoot, 'demo', 'stale.txt')), false)
   assert.match(await fs.readFile(path.join(packsRoot, 'demo', 'AGENTS.md'), 'utf8'), /v2/)
@@ -251,9 +251,9 @@ const packManifest = {
   packDir: '/packs/demo',
   createdAt: '2026-01-01T00:00:00.000Z',
   agents: [
-    { name: 'builder', description: 'Implementa', model: 'Claude Sonnet 5.5 (copilot)', effort: 'medium', readOnly: false, launches: ['scout'], skills: ['tdd', 'unknown'], instructions: 'Implemente.' },
-    { name: 'scout', description: 'Busca', model: 'Claude Haiku 5.5 (copilot)', effort: 'low', readOnly: true, launches: [], skills: ['tdd'], instructions: 'Busque.' },
-    { name: 'writer', description: 'Docs', model: '', effort: 'bogus', readOnly: false, launches: [], skills: [], instructions: 'Escreva.' },
+    { name: 'builder', description: 'Implements', model: 'Claude Sonnet 5.5 (copilot)', effort: 'medium', readOnly: false, launches: ['scout'], skills: ['tdd', 'unknown'], instructions: 'Implement.' },
+    { name: 'scout', description: 'Searches', model: 'Claude Haiku 5.5 (copilot)', effort: 'low', readOnly: true, launches: [], skills: ['tdd'], instructions: 'Search.' },
+    { name: 'writer', description: 'Docs', model: '', effort: 'bogus', readOnly: false, launches: [], skills: [], instructions: 'Write.' },
   ],
   skills: [{ name: 'tdd', description: 'TDD' }],
   instructions: [],
@@ -277,11 +277,11 @@ const harnessCatalog = {
 }
 
 await test('teamFromPack returns { bits, team }: lead orchestrator + one worker bit per preset', () => {
-  const { bits, team } = teamFromPack(packManifest, { name: 'Meu time', workspaceDir: '/w', has: () => true })
+  const { bits, team } = teamFromPack(packManifest, { name: 'My team', workspaceDir: '/w', has: () => true })
   assert.ok(Array.isArray(bits))
   assert.equal(bits.length, 4, 'lead + one bit per preset')
-  const lead = bits.find((bit) => bit.key === 'lider')
-  assert.equal(lead.name, 'Orquestrador')
+  const lead = bits.find((bit) => bit.key === 'lead')
+  assert.equal(lead.name, 'Orchestrator')
   assert.equal(lead.character, 'bit-coordinator')
   assert.equal(lead.isOrchestrator, true)
   assert.equal(lead.model, 'deepseek-account/deepseek-flash')
@@ -292,20 +292,20 @@ await test('teamFromPack returns { bits, team }: lead orchestrator + one worker 
   assert.equal(byKey.get('builder').name, 'builder')
   assert.equal(byKey.get('builder').character, 'bit-builder')
   assert.equal(byKey.get('builder').isOrchestrator, false)
-  assert.equal(byKey.get('builder').instructions, 'Implemente.')
+  assert.equal(byKey.get('builder').instructions, 'Implement.')
   assert.equal(byKey.get('builder').model, 'subscription/sonnet', 'fallback worker model without a catalog')
   assert.equal(byKey.get('builder').effort, 'medium', 'preset effort when it is a valid CLI effort')
   assert.equal(byKey.get('scout').effort, 'low')
   assert.equal(byKey.get('writer').effort, 'high', 'invalid preset effort falls back to high')
 
   // The team references the definitions by local key (template shape).
-  assert.equal(team.name, 'Meu time')
+  assert.equal(team.name, 'My team')
   assert.equal(team.harness, 'demo')
   assert.equal(team.workspaceDir, '/w')
-  assert.equal(team.lead, 'lider')
+  assert.equal(team.lead, 'lead')
   assert.equal(team.members.length, 4)
-  assert.deepEqual(team.members.map((member) => member.id), ['lider', 'builder', 'scout', 'writer'])
-  assert.deepEqual(team.members.map((member) => member.bitKey), ['lider', 'builder', 'scout', 'writer'])
+  assert.deepEqual(team.members.map((member) => member.id), ['lead', 'builder', 'scout', 'writer'])
+  assert.deepEqual(team.members.map((member) => member.bitKey), ['lead', 'builder', 'scout', 'writer'])
   assert.equal(team.members[0].access, 'read')
   assert.deepEqual(team.members[0].launches, ['builder', 'scout', 'writer'])
   assert.equal(team.members.find((member) => member.id === 'scout').access, 'read')
@@ -314,7 +314,7 @@ await test('teamFromPack returns { bits, team }: lead orchestrator + one worker 
   assert.deepEqual(team.members.find((member) => member.id === 'writer').skills, [])
   assert.equal(team.members.every((member) => typeof member.role === 'string' && typeof member.bitId === 'undefined'), true)
   assert.deepEqual(team.flow.nodes.map((node) => node.id).slice(0, 3), ['start', 'lead', 'm-builder'])
-  assert.equal(team.flow.nodes.find((node) => node.id === 'lead').memberId, 'lider')
+  assert.equal(team.flow.nodes.find((node) => node.id === 'lead').memberId, 'lead')
   assert.ok(team.flow.edges.some((edge) => edge.from === 'lead' && edge.to === 'm-builder' && edge.kind === 'delegate'))
   assert.equal(team.flow.nodes.at(-1).id, 'end')
 })
@@ -326,7 +326,7 @@ await test('teamFromPack uses the catalog defaults for the mapped characters', (
   assert.equal(byKey.get('builder').effort, 'high', 'catalog effort wins over the preset effort')
   assert.equal(byKey.get('scout').model, 'subscription/haiku')
   assert.equal(byKey.get('scout').effort, 'low')
-  assert.equal(byKey.get('lider').model, 'deepseek-account/deepseek-flash')
+  assert.equal(byKey.get('lead').model, 'deepseek-account/deepseek-flash')
 })
 
 await test('teams.fromPack creates the bits and then the team, returning { team, bits }', async () => {
@@ -344,7 +344,7 @@ await test('teams.fromPack creates the bits and then the team, returning { team,
   assert.equal(created.ok, true, JSON.stringify(created))
   assert.equal(created.bits.length, 4)
   assert.equal(created.team.harness, 'demo')
-  assert.equal(created.team.lead, 'lider')
+  assert.equal(created.team.lead, 'lead')
   assert.equal(created.team.members.length, 4)
   assert.deepEqual(created.team.members.map((member) => member.bitId), created.bits.map((bit) => bit.id))
   assert.equal(bits.records.length, 4, 'the bits are persisted by the route')

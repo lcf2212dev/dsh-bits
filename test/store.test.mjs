@@ -232,7 +232,7 @@ await test('create inherits isOrchestrator/model/effort from the catalog charact
     // A store without a catalog falls back to the worker defaults (never throws).
     const plain = new BitStore({ botsRoot: path.join(tmp, 'plain') });
     await plain.init();
-    const noCatalog = await plain.create({ name: 'Sem catálogo', character: 'bit-manager' });
+    const noCatalog = await plain.create({ name: 'No catalog', character: 'bit-manager' });
     assert.equal(noCatalog.isOrchestrator, false);
     assert.equal(noCatalog.model, 'subscription/sonnet');
     assert.equal(noCatalog.effort, 'high');
@@ -255,7 +255,7 @@ await test('create with an explicit isOrchestrator keeps the model family cohere
     assert.equal(demoted.effort, 'high');
 
     // Unknown character + orchestrator flag.
-    const unknown = await store.create({ name: 'Órfão', character: null, isOrchestrator: true });
+    const unknown = await store.create({ name: 'Orphan', character: null, isOrchestrator: true });
     assert.equal(unknown.model, 'deepseek-account/deepseek-flash');
     assert.equal(unknown.effort, 'max');
 
@@ -281,7 +281,7 @@ await test('create accepts explicit fields, a caller id and a custom workspaceDi
       character: 'bit-builder',
       emoji: '🧪',
       color: '#ABCDEF',
-      instructions: 'Você é o Dev.',
+      instructions: 'You are the Dev.',
       isOrchestrator: false,
       model: 'subscription/sonnet',
       effort: 'medium',
@@ -291,7 +291,7 @@ await test('create accepts explicit fields, a caller id and a custom workspaceDi
     assert.equal(record.id, 'abcdef0123');
     assert.equal(record.emoji, '🧪');
     assert.equal(record.color, '#abcdef');
-    assert.equal(record.instructions, 'Você é o Dev.');
+    assert.equal(record.instructions, 'You are the Dev.');
     assert.equal(record.workspaceDir, workspaceDir);
     assert.equal(record.model, 'subscription/sonnet');
     assert.equal(record.effort, 'medium');
@@ -310,7 +310,7 @@ await test('create uses a deterministic palette color derived from the id', () =
     const first = await store.create({ id: '0011223344', name: 'A' });
     const firstColor = first.color;
     await store.remove(first.id);
-    const again = await store.create({ id: '0011223344', name: 'A de novo' });
+    const again = await store.create({ id: '0011223344', name: 'A again' });
     assert.equal(again.color, firstColor, 'palette color is derived from the id');
   }));
 
@@ -319,8 +319,8 @@ await test('create keeps the bit when the workspace mkdir fails', () =>
     const blocker = path.join(tmp, 'blocker');
     await fs.writeFile(blocker, 'not a directory');
     const store = await makeStore(tmp);
-    const record = await store.create({ name: 'Sem workspace', workspaceDir: path.join(blocker, 'workspace') });
-    assert.equal(record.name, 'Sem workspace');
+    const record = await store.create({ name: 'No workspace', workspaceDir: path.join(blocker, 'workspace') });
+    assert.equal(record.name, 'No workspace');
     assert.equal((await readStoreFile(store.file)).bits.length, 1);
   }));
 
@@ -480,14 +480,14 @@ await test('getByWorkspace compares resolved paths and real paths (symlinks)', (
 await test('update patches v5 fields, persists and bumps only updatedAt', () =>
   withTempDir(async (tmp) => {
     const store = await makeStore(tmp);
-    const created = await store.create({ name: 'Original', instructions: 'instruções', character: 'bit-scout' });
+    const created = await store.create({ name: 'Original', instructions: 'instructions', character: 'bit-scout' });
     await new Promise((resolve) => setTimeout(resolve, 5));
     const updated = await store.update(created.id, {
       name: '  Renomeado  ',
       character: 'bit-builder',
       emoji: '🛠️',
       color: '#123456',
-      instructions: 'novas instruções',
+      instructions: 'new instructions',
       isOrchestrator: true,
       model: 'deepseek-account/deepseek-flash',
       effort: 'max',
@@ -499,7 +499,7 @@ await test('update patches v5 fields, persists and bumps only updatedAt', () =>
     assert.equal(updated.character, 'bit-builder');
     assert.equal(updated.emoji, '🛠️');
     assert.equal(updated.color, '#123456');
-    assert.equal(updated.instructions, 'novas instruções');
+    assert.equal(updated.instructions, 'new instructions');
     assert.equal(updated.isOrchestrator, true);
     assert.equal(updated.model, 'deepseek-account/deepseek-flash');
     assert.equal(updated.effort, 'max');
@@ -555,7 +555,7 @@ await test('update with an empty patch only refreshes updatedAt', () =>
 await test('remove keeps the workspace by default and returns the removed record', () =>
   withTempDir(async (tmp) => {
     const store = await makeStore(tmp);
-    const record = await store.create({ name: 'Removível' });
+    const record = await store.create({ name: 'Removable' });
     const workspace = await store.ensureWorkspace(record);
 
     const removed = await store.remove(record.id);
@@ -570,7 +570,7 @@ await test('remove keeps the workspace by default and returns the removed record
 await test('remove with deleteWorkspace deletes a workspace inside the bits root', () =>
   withTempDir(async (tmp) => {
     const store = await makeStore(tmp);
-    const record = await store.create({ name: 'Com arquivos' });
+    const record = await store.create({ name: 'With files' });
     const workspace = await store.ensureWorkspace(record);
     await fs.writeFile(path.join(workspace, 'note.txt'), 'hello');
 
@@ -684,7 +684,7 @@ await test('corrupt JSON is renamed to bits.json.corrupt-<ts> and the store star
     assert.equal((await entriesMatching(botsRoot, /^bits\.json\.corrupt-\d+$/)).length, 1);
 
     // The recovered store keeps working.
-    const record = await store.create({ name: 'Depois do caos' });
+    const record = await store.create({ name: 'After the chaos' });
     assert.deepEqual(await readStoreFile(store.file), { statusVersion: 2, bits: [record] });
     assert.equal((await entriesMatching(botsRoot, /^bits\.json\.corrupt-\d+$/)).length, 1);
   }));
@@ -706,18 +706,18 @@ await test('loadable documents drop unusable entries and repair v5 fields', () =
     await fs.mkdir(botsRoot, { recursive: true });
     const base = {
       id: 'a1b2c3d4e5',
-      name: 'Válido',
+      name: 'Valid',
       character: 'bit-scout',
       emoji: 'nope-not-an-emoji-too-long',
       color: 'red',
-      instructions: 'instruções',
+      instructions: 'instructions',
       vm: { enabled: true, image: 'bad image!' },
       createdAt: '2026-11-08T20:00:00.000Z',
       updatedAt: '2026-11-08T20:00:00.000Z',
     };
     const v5 = {
       id: 'b2c3d4e5f6',
-      name: 'Já v5',
+      name: 'Already v5',
       character: 'bit-manager',
       isOrchestrator: true,
       model: 'custom/provider-model',
@@ -745,7 +745,7 @@ await test('loadable documents drop unusable entries and repair v5 fields', () =
     assert.equal(list.length, 4, 'unusable entries are dropped, duplicate ids regenerated');
     const byName = new Map(list.map((bit) => [bit.name, bit]));
 
-    const valid = byName.get('Válido');
+    const valid = byName.get('Valid');
     assertV5RecordShape(valid, 'loaded v4-shaped record');
     assert.equal(valid.id, base.id);
     assert.equal(valid.character, 'bit-scout');
@@ -757,7 +757,7 @@ await test('loadable documents drop unusable entries and repair v5 fields', () =
     assert.equal(valid.createdAt, base.createdAt);
     assert.equal(valid.vm, undefined, 'v4 vm field is dropped');
 
-    const alreadyV5 = byName.get('Já v5');
+    const alreadyV5 = byName.get('Already v5');
     assert.equal(alreadyV5.isOrchestrator, true);
     assert.equal(alreadyV5.model, 'custom/provider-model', 'explicit model is preserved');
     assert.equal(alreadyV5.effort, 'xhigh', 'explicit effort is preserved');
@@ -784,11 +784,11 @@ async function writeV4Fixture(botsRoot) {
     bots: [
       {
         id: 'a1b2c3d4e5',
-        name: 'Scout antigo',
+        name: 'Old Scout',
         character: 'bit-scout',
         emoji: '🔎',
         color: '#c88f36',
-        instructions: 'Contexto do scout.',
+        instructions: 'Scout context.',
         workspaceDir: path.join(botsRoot, 'a1b2c3d4e5', 'workspace'),
         vm: { enabled: true, image: 'node:24-bookworm' },
         createdAt: iso,
@@ -796,7 +796,7 @@ async function writeV4Fixture(botsRoot) {
       },
       {
         id: 'b2c3d4e5f6',
-        name: 'Sem personagem',
+        name: 'No character',
         instructions: '',
         vm: { enabled: false, image: 'ubuntu:24.04' },
         createdAt: iso,
@@ -804,11 +804,11 @@ async function writeV4Fixture(botsRoot) {
       },
       {
         id: 'c3d4e5f6a7',
-        name: 'Gerente antigo',
+        name: 'Old Manager',
         character: 'bit-manager',
         emoji: '🧭',
         color: '#123456',
-        instructions: 'Coordena tudo.',
+        instructions: 'Coordinates everything.',
         vm: { enabled: true, image: 'ubuntu:24.04' },
         createdAt: iso,
         updatedAt: iso,
@@ -834,11 +834,11 @@ await test('migrates a v4 bots.json to bits.json once, with a backup and a log l
 
     const [scout, plain, manager] = list;
     assertV5RecordShape(scout, 'migrated scout');
-    assert.equal(scout.name, 'Scout antigo');
+    assert.equal(scout.name, 'Old Scout');
     assert.equal(scout.character, 'bit-scout');
     assert.equal(scout.emoji, '🔎');
     assert.equal(scout.color, '#c88f36');
-    assert.equal(scout.instructions, 'Contexto do scout.');
+    assert.equal(scout.instructions, 'Scout context.');
     assert.equal(scout.workspaceDir, path.join(botsRoot, 'a1b2c3d4e5', 'workspace'));
     assert.equal(scout.isOrchestrator, false);
     assert.equal(scout.model, 'subscription/haiku');
@@ -888,7 +888,7 @@ await test('a corrupt legacy bots.json is quarantined and the store starts empty
     assert.equal((await entriesMatching(botsRoot, /^bots\.json\.corrupt-\d+$/)).length, 1);
     assert.deepEqual(await entriesMatching(botsRoot, /^bots\.json$/), []);
 
-    const record = await store.create({ name: 'Depois' });
+    const record = await store.create({ name: 'After' });
     assert.deepEqual(await readStoreFile(store.file), { statusVersion: 2, bits: [record] });
   }));
 

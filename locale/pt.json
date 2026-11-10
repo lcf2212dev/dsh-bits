@@ -1,6 +1,0 @@
-{
-  "meta": {
-    "title": "Bits",
-    "description": "Bits executam em fluxos de times: cada bit recebe uma requisição e devolve uma resposta, com modelo e esforço próprios."
-  }
-}

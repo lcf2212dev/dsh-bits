@@ -3,9 +3,9 @@ node_modules/
 *.tmp
 .DS_Store
 
-# Dados locais do DSH (times criados — ex.: os do DSC —, harness packs, bots, sessões).
-# As equipes ficam em <botsRoot>/teams.json, fora do repositório; estas regras evitam
-# que uma cópia local (DSH_HOME apontando para o projeto) seja versionada por engano.
+# Local DSH data (created teams — e.g. the DSC ones —, harness packs, bots, sessions).
+# Teams live in <botsRoot>/teams.json, outside the repository; these rules prevent a local
+# copy (DSH_HOME pointing at the project) from being versioned by mistake.
 /.dsh/
 /teams.json
 /teams.json.bak-*
@@ -17,7 +17,7 @@ node_modules/
 /bits.json
 /bits.json.bak-*
 
-# Artefatos de migração/quarentena e escritas atômicas dos stores de bits/times/projetos.
+# Migration/quarantine artifacts and atomic writes of the bits/teams/projects stores.
 *.tmp-*
 /bits.json.migrated-*
 /bits.json.corrupt-*

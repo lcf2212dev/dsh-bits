@@ -5,7 +5,7 @@
  * Boots a throwaway DeepSeek Harness Web profile in an isolated DSH_HOME with
  * this bundle installed from its local directory, authenticates with the launch
  * token printed at startup, and exercises the real `/api/bots.*` routes:
- * catalog v2, bits CRUD, model catalog, worker "Executar" (request → response),
+ * catalog v2, bits CRUD, model catalog, worker "Run" (request → response),
  * team templates (bits + flow), team member/lead rules, team execution error
  * paths, the projects layer and diagnostics. Also asserts that the v4 VM/chat
  * routes are gone.
@@ -141,7 +141,7 @@ async function installProfile() {
     timeoutMs: 300000,
   })
   assert.equal(installed.code, 0, `pnpm install failed:\n${installed.stdout}\n${installed.stderr}`)
-  assert.ok(existsSync(path.join(profileDir, 'node_modules', '@local', 'dsh-bots')), 'bundle was not linked into the profile')
+  assert.ok(existsSync(path.join(profileDir, 'node_modules', '@dsh-burn-plugins', 'dsh-bots')), 'bundle was not linked into the profile')
 }
 
 /**
@@ -382,7 +382,8 @@ async function main() {
     assert.ok(body.includes('__ModuleLoader__'), 'served bundle does not contain the module loader registration')
     assert.ok(body.includes('@dsh-burn-plugins/dsh-bots'), 'served bundle does not register the bundle id')
     assert.ok(body.includes('Bits'), 'served bundle does not contain the Bits page code')
-    assert.ok(!/Máquina virtual/i.test(body), 'served bundle still contains the v4 VM copy')
+    assert.ok(body.includes('New bit') && body.includes('Send request'), 'served bundle does not contain the English UI copy')
+    assert.ok(!/Docker/i.test(body), 'served bundle still contains the v4 VM copy')
     console.log(`   served ${bundleHref} (${body.length} bytes)`)
   }
 
@@ -476,17 +477,17 @@ async function main() {
   assert.equal(baseline.bits.length, baselineCount + 2)
   console.log('   create/update/list/validation respected catalog defaults')
 
-  console.log('6/9 worker Executar (request → response)')
+  console.log('6/9 worker Run (request → response)')
   {
     // Orchestrators execute inside flows only.
-    await expectError('/api/bots.run', { id: orchestrator.id, request: 'faça algo' }, 'BIT_IS_ORCHESTRATOR')
+    await expectError('/api/bots.run', { id: orchestrator.id, request: 'do something' }, 'BIT_IS_ORCHESTRATOR')
     // Request validation.
     await expectError('/api/bots.run', { id: builder.id, request: '' }, 'BAD_REQUEST')
     await expectError('/api/bots.run', { id: 'deadbeef01', request: 'oi' }, 'BOT_NOT_FOUND')
     // Without @dsh-burn-plugins/dsh-claude-delegate installed, the subscription backend
     // fails with an actionable coded error instead of hanging or crashing.
     if (DELEGATE_DIR === '') {
-      const unavailable = await api('/api/bots.run', { body: { id: builder.id, request: 'Responda apenas: ok', readOnly: true } })
+      const unavailable = await api('/api/bots.run', { body: { id: builder.id, request: 'Answer only: ok', readOnly: true } })
       assert.equal(unavailable.ok, false, `subscription run without the delegate plugin unexpectedly succeeded: ${JSON.stringify(unavailable).slice(0, 600)}`)
       assert.ok(
         ['BIT_DELEGATE_UNAVAILABLE', 'BIT_MODEL_INVALID'].includes(unavailable.error.code),
@@ -503,7 +504,7 @@ async function main() {
       body: { name: 'E2E DSH Worker', character: 'bit-scout', isOrchestrator: false, model: 'deepseek-account/deepseek-flash', effort: 'low' },
     })
     createdBitIds.push(dshBit.bit.id)
-    const dshRun = await api('/api/bots.run', { body: { id: dshBit.bit.id, request: 'Responda apenas: ok', readOnly: true } })
+    const dshRun = await api('/api/bots.run', { body: { id: dshBit.bit.id, request: 'Answer only: ok', readOnly: true } })
     if (dshRun.ok === false) {
       assert.ok(['BIT_MODEL_INVALID', 'BIT_MODEL_CALL_FAILED', 'BIT_DELEGATE_UNAVAILABLE'].includes(dshRun.error.code), `unexpected error: ${JSON.stringify(dshRun.error)}`)
       console.log(`   coded failure for a DSH-route worker: ${dshRun.error.code}`)
@@ -522,13 +523,13 @@ async function main() {
           isOrchestrator: false,
           model: 'subscription/haiku',
           effort: 'low',
-          instructions: 'Responda em uma linha curta.',
+          instructions: 'Answer in one short line.',
         },
       })
       assert.equal(realBit.ok, true, `real-run bit create failed: ${JSON.stringify(realBit)}`)
       createdBitIds.push(realBit.bit.id)
       const startedAt = Date.now()
-      const realRun = await api('/api/bots.run', { body: { id: realBit.bit.id, request: 'Responda exatamente: ok', readOnly: true } })
+      const realRun = await api('/api/bots.run', { body: { id: realBit.bit.id, request: 'Answer exactly: ok', readOnly: true } })
       assert.equal(realRun.ok, true, `real subscription run failed: ${JSON.stringify(realRun).slice(0, 800)}`)
       assert.equal(typeof realRun.response, 'string')
       assert.ok(realRun.response.trim().length > 0, 'real subscription run returned an empty answer')
@@ -597,10 +598,10 @@ async function main() {
       lead: 'lead',
       flow: {
         nodes: [
-          { id: 'start', type: 'start', x: 0, y: 0, label: 'Pedido' },
+          { id: 'start', type: 'start', x: 0, y: 0, label: 'Request' },
           { id: 'lead', type: 'step', x: 0, y: 100, label: 'Orquestrar', memberId: 'lead' },
           { id: 'builder', type: 'step', x: 0, y: 200, label: 'Implementar', memberId: 'builder' },
-          { id: 'end', type: 'end', x: 0, y: 300, label: 'Entrega' },
+          { id: 'end', type: 'end', x: 0, y: 300, label: 'Delivery' },
         ],
         edges: [
           { id: 'e1', from: 'start', to: 'lead' },
@@ -644,7 +645,7 @@ async function main() {
       body: {
         project: {
           name: '  E2E Project  ',
-          description: 'Projeto de verificação end-to-end.',
+          description: 'End-to-end verification project.',
           id: 'ffffffffff',
           createdAt: '2000-01-01T00:00:00.000Z',
           updatedAt: '2000-01-01T00:00:00.000Z',
@@ -657,12 +658,12 @@ async function main() {
     assert.match(project.id, /^[0-9a-f]{10}$/)
     assert.notEqual(project.id, 'ffffffffff', 'project create kept the client-supplied id')
     assert.equal(project.name, 'E2E Project')
-    assert.equal(project.description, 'Projeto de verificação end-to-end.')
+    assert.equal(project.description, 'End-to-end verification project.')
     assert.equal(project.emoji, '📁')
     assert.equal(project.color, '#2563eb')
 
     const second = await api('/api/bots.projects.create', {
-      body: { project: { name: 'E2E Second', description: 'Outro projeto.', emoji: '🧪', color: '#16a34a' } },
+      body: { project: { name: 'E2E Second', description: 'Another project.', emoji: '🧪', color: '#16a34a' } },
     })
     assert.equal(second.ok, true, `second project create failed: ${JSON.stringify(second)}`)
     const other = second.project

@@ -6,10 +6,10 @@
  * with this bundle, seeds sample bits through the real routes, then drives a
  * headless Chrome over the DevTools Protocol to capture screenshots of:
  *   1. the bit list, 2. the bit picker, 3. the filtered picker, 4. the form
- *   prefilled from a bit, 5. the edit dialog, 6. the Executar dialog, 7. delete.
+ *   prefilled from a bit, 5. the edit dialog, 6. the Run dialog, 7. delete.
  * It creates one bit through the UI, checks the v5 record fields through the API,
  * runs a worker ad-hoc (checking `readOnly` reached the route) and asserts the
- * orchestrator card does not offer Executar.
+ * orchestrator card does not offer the ad-hoc Run action.
  * Screenshots land in `test/screenshots/` (light or dark via --theme).
  *
  * Usage: node test/visual.mjs [--theme dark|light] [--width 1440] [--height 900]
@@ -86,7 +86,7 @@ async function installProfile() {
     dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', '@dsh-burn-plugins/dsh-bots'] } },
   }, null, 2))
   // Pin the UI language so screenshots are deterministic.
-  await fs.writeFile(path.join(dir, 'cordis.patch.yml'), `- id: locale\n  name: '@deepseek-ai/dsh-client-locale'\n  config:\n    preference: ${option('lang', 'pt')}\n`)
+  await fs.writeFile(path.join(dir, 'cordis.patch.yml'), `- id: locale\n  name: '@deepseek-ai/dsh-client-locale'\n  config:\n    preference: ${option('lang', 'en')}\n`)
   const installed = await run(RUNTIME_NODE, [RUNTIME_PNPM, 'install', '--silent'], { cwd: dir, env: { ...process.env, DSH_HOME: tempHome } })
   assert.equal(installed.code, 0, installed.out)
 }
@@ -244,9 +244,9 @@ async function main() {
     color: bit('bit-builder').color,
     instructions: bit('bit-builder').instructions,
   })
-  // Orchestrator: runs inside flows (Times) and is offered as a team lead.
+  // Orchestrator: runs inside flows (Teams) and is offered as a team lead.
   const orchestrator = await createBit({
-    name: 'PO do App',
+    name: 'App PO',
     character: 'bit-product-owner',
     emoji: bit('bit-product-owner').emoji,
     color: bit('bit-product-owner').color,
@@ -257,28 +257,28 @@ async function main() {
   })
   // A bit created before catalog characters existed keeps its emoji avatar.
   const legacy = await createBit({
-    name: 'Legado',
+    name: 'Legacy',
     emoji: '🦊',
     color: '#ea580c',
-    instructions: 'Bit antigo, sem personagem.',
+    instructions: 'Old bit, no character.',
     isOrchestrator: false,
     model: 'subscription/sonnet',
     effort: 'high',
   })
   assert.equal(legacy.character, null)
 
-  // A flow led by the orchestrator bit: the card lists "Líder em: Fluxo PO".
+  // A flow led by the orchestrator bit: the card lists "Lead of: PO Flow".
   const { team: leadTeam } = await api('/api/bots.teams.create', {
     team: {
-      name: 'Fluxo PO',
+      name: 'PO Flow',
       emoji: '🎯',
       color: '#7243aa',
-      members: [{ id: 'po', bitId: orchestrator.id, role: 'Orquestra o pedido', access: 'read' }],
+      members: [{ id: 'po', bitId: orchestrator.id, role: 'Orchestrates the request', access: 'read' }],
       lead: 'po',
       flow: {
         nodes: [
-          { id: 'start', type: 'start', x: 0, y: 0, label: 'Pedido' },
-          { id: 'po', type: 'step', x: 0, y: 96, label: 'Coordenar', memberId: 'po' },
+          { id: 'start', type: 'start', x: 0, y: 0, label: 'Request' },
+          { id: 'po', type: 'step', x: 0, y: 96, label: 'Coordinate', memberId: 'po' },
         ],
         edges: [{ id: 'e1', from: 'start', to: 'po', label: '', kind: 'flow' }],
       },
@@ -312,8 +312,8 @@ async function main() {
   for (let round = 0; round < 4; round += 1) {
     await evaluate(cdp, `(() => {
       const outside = (el) => !el.closest('.dsh-bots-root')
-      const next = [...document.querySelectorAll('button')].filter(outside).find((el) => /^(Continuar|Continue)$/.test(el.textContent.trim()))
-        ?? [...document.querySelectorAll('[role="dialog"] button[aria-label], [aria-modal="true"] button[aria-label]')].filter(outside).find((el) => /fechar|close/i.test(el.getAttribute('aria-label')))
+      const next = [...document.querySelectorAll('button')].filter(outside).find((el) => /^Continue$/.test(el.textContent.trim()))
+        ?? [...document.querySelectorAll('[role="dialog"] button[aria-label], [aria-modal="true"] button[aria-label]')].filter(outside).find((el) => /close/i.test(el.getAttribute('aria-label')))
       if (next) next.click()
     })()`)
     await sleep(400)
@@ -328,20 +328,20 @@ async function main() {
   console.log('   avatars', JSON.stringify(avatarDebug))
   await waitFor(cdp, `[...document.querySelectorAll('.dsh-bots-card img')].length >= 2 && [...document.querySelectorAll('.dsh-bots-card img')].every((img) => img.complete && img.naturalWidth > 0)`, 'card avatars loaded')
   const pageText = await evaluate(cdp, `document.querySelector('.dsh-bots-root').innerText`)
-  assert.ok(!/Máquina virtual|Docker|Conversar/i.test(pageText), 'no VM/chat strings in the page')
+  assert.ok(!/Docker|\bChat\b/i.test(pageText), 'no VM/chat strings in the page')
 
   // Cards: family badge + model/effort route; orchestrators point to flows.
   const scoutCard = `document.querySelector('.dsh-bots-card[data-bit-id="${scout.id}"]')`
   const orchestratorCard = `document.querySelector('.dsh-bots-card[data-bit-id="${orchestrator.id}"]')`
   const scoutText = await evaluate(cdp, `${scoutCard}.textContent`)
   assert.ok(/Worker/.test(scoutText), `worker badge: ${scoutText}`)
-  assert.ok(/Claude Haiku 5\.5 \(assinatura\) · low/.test(scoutText), `model label + effort on the card: ${scoutText}`)
-  assert.ok(!/Executa em fluxos/.test(scoutText), 'workers do not show the flows note')
+  assert.ok(/Claude Haiku 5\.5 \(subscription\) · low/.test(scoutText), `model label + effort on the card: ${scoutText}`)
+  assert.ok(!/Executes in flows/.test(scoutText), 'workers do not show the flows note')
   const orchestratorText = await evaluate(cdp, `${orchestratorCard}.textContent`)
-  assert.ok(/Orquestrador/.test(orchestratorText), `orchestrator badge: ${orchestratorText}`)
-  assert.ok(/Executa em fluxos/.test(orchestratorText), `orchestrator flows note: ${orchestratorText}`)
-  assert.ok(/Líder em: Fluxo PO/.test(orchestratorText), `lead team named: ${orchestratorText}`)
-  assert.equal(await evaluate(cdp, `[...${orchestratorCard}.querySelectorAll('button')].some((el) => /Executar/.test(el.textContent))`), false, 'no Executar on an orchestrator')
+  assert.ok(/Orchestrator/.test(orchestratorText), `orchestrator badge: ${orchestratorText}`)
+  assert.ok(/Executes in flows/.test(orchestratorText), `orchestrator flows note: ${orchestratorText}`)
+  assert.ok(/Lead of: PO Flow/.test(orchestratorText), `lead team named: ${orchestratorText}`)
+  assert.equal(await evaluate(cdp, `[...${orchestratorCard}.querySelectorAll('button')].some((el) => /^Run$/.test(el.textContent.trim()))`), false, 'no ad-hoc Run on an orchestrator')
   await screenshot(cdp, '1-list')
 
   // New bit -> catalog picker.
@@ -359,11 +359,11 @@ async function main() {
   assert.notEqual(surfaces.overlay, 'rgba(0, 0, 0, 0)', 'overlay backdrop is transparent')
   assert.equal(surfaces.focused, 'search', 'search field focused on open')
 
-  // Accent-insensitive search ("teste" matches the tester bits).
-  await setInput(cdp, '.dsh-bots-picker-search input', 'teste')
+  // Search matches the tester bits.
+  await setInput(cdp, '.dsh-bots-picker-search input', 'test')
   await waitFor(cdp, `document.querySelectorAll('.dsh-bots-bit-tile').length > 0 && document.querySelectorAll('.dsh-bots-bit-tile').length < 52`, 'filtered tiles')
   const filtered = await evaluate(cdp, `[...document.querySelectorAll('.dsh-bots-bit-name')].map((el) => el.textContent)`)
-  console.log('   search "teste" ->', filtered.join(', '))
+  console.log('   search "test" ->', filtered.join(', '))
   assert.ok(filtered.includes('Web Tester') && filtered.includes('QA'), 'testers found')
   await sleep(600)
   await screenshot(cdp, '3-picker-search')
@@ -405,11 +405,11 @@ async function main() {
   await setSelect(cdp, '#dsh-bots-effort-input', 'high')
 
   // Rename and create through the UI.
-  await setInput(cdp, '#dsh-bots-name-input', 'Builder da Loja')
+  await setInput(cdp, '#dsh-bots-name-input', 'Store Builder')
   await screenshot(cdp, '4-form-prefilled')
   await evaluate(cdp, `[...document.querySelectorAll('.dsh-bots-dialog-footer button')].at(-1).click()`)
   await waitFor(cdp, `!document.querySelector('.dsh-bots-dialog')`, 'dialog closed after create', 30000)
-  const created = (await api('/api/bots.list')).bits.find((entryBit) => entryBit.name === 'Builder da Loja')
+  const created = (await api('/api/bots.list')).bits.find((entryBit) => entryBit.name === 'Store Builder')
   assert.ok(created, 'bit created through the UI')
   assert.equal(created.character, 'bit-builder')
   assert.equal(created.instructions, bit('bit-builder').instructions)
@@ -437,8 +437,8 @@ async function main() {
     model: document.querySelector('#dsh-bots-model-input').value,
     effort: document.querySelector('#dsh-bots-effort-input').value,
   })`)
-  assert.equal(kept.name, 'Legado')
-  assert.equal(kept.description, 'Bit antigo, sem personagem.')
+  assert.equal(kept.name, 'Legacy')
+  assert.equal(kept.description, 'Old bit, no character.')
   assert.equal(kept.restore, true, 'restore default offered')
   assert.equal(kept.model, 'subscription/sonnet')
   assert.equal(kept.effort, 'medium', 'catalog effort of the Writer bit')
@@ -449,7 +449,7 @@ async function main() {
   assert.equal(editedLegacy.effort, 'medium')
   assert.equal(editedLegacy.isOrchestrator, false)
 
-  // Executar: worker request → response. The route records the readOnly flag; in
+  // Run: worker request → response. The route records the readOnly flag; in
   // this isolated profile the delegate backend is unavailable, so the dialog
   // settles on the coded error (the client must show it instead of hanging).
   await evaluate(cdp, `window.__bitsRunCalls = []; (() => {
@@ -467,14 +467,14 @@ async function main() {
   const readOnlyDefault = await evaluate(cdp, `document.querySelector('.dsh-bots-dialog [role="switch"]').getAttribute('aria-checked')`)
   assert.equal(readOnlyDefault, 'true', 'read-only defaults on')
   assert.ok(await evaluate(cdp, `document.querySelector('.dsh-bots-card[data-bit-id="${scout.id}"] .dsh-bots-button-primary') && true`))
-  await setInput(cdp, '#dsh-bots-run-request', 'Qual a prioridade do backlog?')
+  await setInput(cdp, '#dsh-bots-run-request', 'What is the backlog priority?')
   await evaluate(cdp, `[...document.querySelectorAll('.dsh-bots-dialog-footer button')].at(-1).click()`)
-  await waitFor(cdp, `document.querySelector('.dsh-bots-dialog .dsh-bots-error') || (document.querySelector('#dsh-bots-run-response') && document.querySelector('#dsh-bots-run-response').getAttribute('aria-busy') !== 'true' && !/A resposta aparece aqui|The response shows up here/.test(document.querySelector('#dsh-bots-run-response').textContent))`, 'run settled', 60000)
+  await waitFor(cdp, `document.querySelector('.dsh-bots-dialog .dsh-bots-error') || (document.querySelector('#dsh-bots-run-response') && document.querySelector('#dsh-bots-run-response').getAttribute('aria-busy') !== 'true' && !/The response shows up here/.test(document.querySelector('#dsh-bots-run-response').textContent))`, 'run settled', 60000)
   const calls = await evaluate(cdp, `window.__bitsRunCalls`)
   assert.equal(calls.length, 1, 'one run request sent')
   const runBody = JSON.parse(calls[0].body)
   assert.equal(runBody.id, scout.id)
-  assert.equal(runBody.request, 'Qual a prioridade do backlog?')
+  assert.equal(runBody.request, 'What is the backlog priority?')
   assert.equal(runBody.readOnly, true, 'readOnly true reaches the route')
   const settled = await evaluate(cdp, `({
     response: document.querySelector('#dsh-bots-run-response') ? document.querySelector('#dsh-bots-run-response').textContent : '',
@@ -482,13 +482,13 @@ async function main() {
   })`)
   assert.ok(settled.response || settled.error, 'the dialog shows the response or the error')
   console.log('   run settled:', JSON.stringify(settled).slice(0, 220))
-  await screenshot(cdp, '6-executar')
+  await screenshot(cdp, '6-run')
   await evaluate(cdp, `document.querySelector('.dsh-bots-dialog-footer button').click()`)
   await waitFor(cdp, `!document.querySelector('.dsh-bots-dialog')`, 'run dialog closed')
 
   // The orchestrator card links to the flows tab instead of running ad-hoc.
-  await clickButtonByText(cdp, `.dsh-bots-card[data-bit-id="${orchestrator.id}"]`, 'Abrir Times')
-  await waitFor(cdp, `document.querySelector('.dsh-bots-tabs') && /Times/.test(document.querySelector('.dsh-bots-tabs').textContent)`, 'teams tab from the orchestrator card')
+  await clickButtonByText(cdp, `.dsh-bots-card[data-bit-id="${orchestrator.id}"]`, 'Open Teams')
+  await waitFor(cdp, `document.querySelector('.dsh-bots-tabs') && /Teams/.test(document.querySelector('.dsh-bots-tabs').textContent)`, 'teams tab from the orchestrator card')
   assert.ok(await evaluate(cdp, `document.querySelectorAll('.dsh-bots-tab[aria-selected="true"]').length === 1`), 'one tab selected')
   await evaluate(cdp, `[...document.querySelectorAll('.dsh-bots-tab')].find((el) => /Bits/.test(el.textContent)).click()`)
   await waitFor(cdp, `document.querySelectorAll('.dsh-bots-card').length === 5`, 'back on the bits list')

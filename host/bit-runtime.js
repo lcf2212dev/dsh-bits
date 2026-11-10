@@ -11,7 +11,7 @@
  *   its final answer string.
  * - **Worker with a DSH chat route** (`backend: 'dsh'`): one-shot
  *   `ctx.llm.stream` call (no tools); the response is the concatenated text.
- * - **Ad-hoc run** (`runBit`): the “Executar” path of the Bits page; workers
+ * - **Ad-hoc run** (`runBit`): the “Run” path of the Bits page; workers
  *   only (orchestrators execute inside flows), read-only by default.
  *
  * Errors are coded (`BIT_MODEL_*`, `BIT_IS_ORCHESTRATOR`, `BIT_DELEGATE_UNAVAILABLE`,
@@ -24,7 +24,7 @@ import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 
 /** Appended when the bit has no instructions of its own. */
-const REPORT_INSTRUCTION = 'Ao final, responda com um relatório objetivo do que foi feito: resultado, arquivos alterados e pendências.'
+const REPORT_INSTRUCTION = 'At the end, respond with an objective report of what was done: outcome, files changed and pending items.'
 /** Request limit for ad-hoc runs (`POST /api/bots.run`). */
 const MAX_REQUEST_CHARS = 20000
 
@@ -95,9 +95,9 @@ function finishFailure(reason) {
   const kind = reason && typeof reason.kind === 'string' ? reason.kind : ''
   if (kind === 'success' || kind === 'stop') return null
   const failure = reason && reason.failure && typeof reason.failure === 'object' ? reason.failure : {}
-  const detail = typeof failure.message === 'string' && failure.message !== '' ? failure.message : String(kind || 'sem motivo')
+  const detail = typeof failure.message === 'string' && failure.message !== '' ? failure.message : String(kind || 'no reason')
   const code = typeof failure.code === 'string' && failure.code !== '' ? ` (${failure.code})` : ''
-  return codedError('BIT_MODEL_CALL_FAILED', `A chamada do modelo terminou com falha${code}: ${detail}`)
+  return codedError('BIT_MODEL_CALL_FAILED', `The model call failed${code}: ${detail}`)
 }
 
 /** Tiny async-iterable reader used by the DSH one-shot call. */
@@ -141,7 +141,7 @@ export function createBitRuntime(ctx, deps = {}) {
   async function runSubscription(bit, prompt, resolved, { cwd, readOnly, signal }) {
     const tools = ctx && ctx.tools
     if (!tools || typeof tools.execute !== 'function') {
-      throw codedError('BIT_DELEGATE_UNAVAILABLE', 'A ferramenta claude_delegate não está disponível neste Harness: instale/ative o plugin @dsh-burn-plugins/dsh-claude-delegate no profile e faça login com `claude`.')
+      throw codedError('BIT_DELEGATE_UNAVAILABLE', 'The claude_delegate tool is not available in this Harness: install/enable the @dsh-burn-plugins/dsh-claude-delegate plugin in the profile and log in with `claude`.')
     }
     const args = { task: prompt, model: resolved.alias }
     if (resolved.effort !== undefined) args.effort = resolved.effort
@@ -152,17 +152,17 @@ export function createBitRuntime(ctx, deps = {}) {
     try {
       settled = await tools.execute({ calls: [call], signal })
     } catch (error) {
-      if (signal && signal.aborted) throw codedError('ABORTED', 'Execução cancelada.')
-      throw codedError('BIT_DELEGATE_UNAVAILABLE', `A ferramenta claude_delegate não está disponível: ${messageOf(error)}. Instale/ative o plugin @dsh-burn-plugins/dsh-claude-delegate no profile e faça login com \`claude\`.`)
+      if (signal && signal.aborted) throw codedError('ABORTED', 'Execution cancelled.')
+      throw codedError('BIT_DELEGATE_UNAVAILABLE', `The claude_delegate tool is not available: ${messageOf(error)}. Install/enable the @dsh-burn-plugins/dsh-claude-delegate plugin in the profile and log in with \`claude\`.`)
     }
     const entries = settled && Array.isArray(settled.results) ? settled.results : []
     const entry = entries.find((item) => item && item.callId === call.id) || entries[0] || null
     const result = entry ? entry.result : null
     if (!result || result.isError === true || result.value === undefined) {
-      if (signal && signal.aborted) throw codedError('ABORTED', 'Execução cancelada.')
+      if (signal && signal.aborted) throw codedError('ABORTED', 'Execution cancelled.')
       const detail = result && result.error && typeof result.error.message === 'string' ? result.error.message : ''
       const code = result && result.error && result.error.info && typeof result.error.info.code === 'string' ? result.error.info.code : ''
-      throw codedError('BIT_DELEGATE_UNAVAILABLE', `A ferramenta claude_delegate falhou${code ? ` (${code})` : ''}${detail ? `: ${detail}` : ''}. Instale/ative o plugin @dsh-burn-plugins/dsh-claude-delegate no profile e faça login com \`claude\`.`)
+      throw codedError('BIT_DELEGATE_UNAVAILABLE', `The claude_delegate tool failed${code ? ` (${code})` : ''}${detail ? `: ${detail}` : ''}. Install/enable the @dsh-burn-plugins/dsh-claude-delegate plugin in the profile and log in with \`claude\`.`)
     }
     return typeof result.value === 'string' ? result.value : String(result.value)
   }
@@ -171,7 +171,7 @@ export function createBitRuntime(ctx, deps = {}) {
   async function runDsh(bit, prompt, resolved, { signal }) {
     const llm = ctx && ctx.llm
     if (!llm || typeof llm.stream !== 'function') {
-      throw codedError('BIT_MODEL_CALL_FAILED', 'Este Harness não tem o serviço de modelos (ctx.llm): não é possível executar o bit com uma rota de chat do DSH.')
+      throw codedError('BIT_MODEL_CALL_FAILED', 'This Harness has no model service (ctx.llm): it is not possible to run the bit with a DSH chat route.')
     }
     const options = {
       provider: resolved.provider,
@@ -185,8 +185,8 @@ export function createBitRuntime(ctx, deps = {}) {
       stream = llm.stream(options)
       if (stream && typeof stream.then === 'function') stream = await stream
     } catch (error) {
-      if (signal && signal.aborted) throw codedError('ABORTED', 'Execução cancelada.')
-      throw codedError('BIT_MODEL_CALL_FAILED', `Não foi possível chamar ${resolved.provider}/${resolved.model} para o bit "${nameOf(bit)}": ${messageOf(error)}`)
+      if (signal && signal.aborted) throw codedError('ABORTED', 'Execution cancelled.')
+      throw codedError('BIT_MODEL_CALL_FAILED', `Could not call ${resolved.provider}/${resolved.model} for bit "${nameOf(bit)}": ${messageOf(error)}`)
     }
     try {
       const { text } = await readTextStream(stream)
@@ -194,8 +194,8 @@ export function createBitRuntime(ctx, deps = {}) {
     } catch (error) {
       // A terminal `finish` failure is already the coded error the contract asks for.
       if (error && error.code === 'BIT_MODEL_CALL_FAILED') throw error
-      if (signal && signal.aborted) throw codedError('ABORTED', 'Execução cancelada.')
-      throw codedError('BIT_MODEL_CALL_FAILED', `A chamada de ${resolved.provider}/${resolved.model} para o bit "${nameOf(bit)}" falhou: ${messageOf(error)}`)
+      if (signal && signal.aborted) throw codedError('ABORTED', 'Execution cancelled.')
+      throw codedError('BIT_MODEL_CALL_FAILED', `The call to ${resolved.provider}/${resolved.model} for bit "${nameOf(bit)}" failed: ${messageOf(error)}`)
     }
   }
 
@@ -226,16 +226,16 @@ export function createBitRuntime(ctx, deps = {}) {
   }
 
   /**
-   * Ad-hoc invocation of a worker bit (Bits page → Executar).
+   * Ad-hoc invocation of a worker bit (Bits page → Run).
    *
    * @param {{ bit: any, request: string, readOnly?: boolean, cwd?: string, signal?: AbortSignal }} input
    * @returns {Promise<{ response: string, meta: any }>}
    */
   async function runBit({ bit, request, readOnly, cwd, signal } = {}) {
-    if (!bit || typeof bit !== 'object') throw codedError('BOT_NOT_FOUND', 'Bit não encontrado.')
-    if (bit.isOrchestrator === true) throw codedError('BIT_IS_ORCHESTRATOR', `O bit "${nameOf(bit)}" é orquestrador: orquestradores executam em fluxos (aba Times), não em execuções ad-hoc.`)
+    if (!bit || typeof bit !== 'object') throw codedError('BOT_NOT_FOUND', 'Bit not found.')
+    if (bit.isOrchestrator === true) throw codedError('BIT_IS_ORCHESTRATOR', `Bit "${nameOf(bit)}" is an orchestrator: orchestrators run in flows (Teams tab), not in ad-hoc runs.`)
     const input = String(request === undefined || request === null ? '' : request).trim()
-    if (input.length < 1 || input.length > MAX_REQUEST_CHARS) throw codedError('BOT_INVALID', `request: o pedido precisa ter de 1 a ${MAX_REQUEST_CHARS} caracteres.`)
+    if (input.length < 1 || input.length > MAX_REQUEST_CHARS) throw codedError('BOT_INVALID', `request: the request must be between 1 and ${MAX_REQUEST_CHARS} characters.`)
     // The bit workspace is the run cwd; a different cwd is only accepted inside it.
     let workspaceDir = typeof bit.workspaceDir === 'string' && bit.workspaceDir !== '' ? bit.workspaceDir : ''
     if (bits && typeof bits.ensureWorkspace === 'function') {
@@ -249,8 +249,8 @@ export function createBitRuntime(ctx, deps = {}) {
     let effectiveCwd = workspaceDir
     if (cwd !== undefined && cwd !== null && String(cwd).trim() !== '') {
       const requested = String(cwd).trim()
-      if (!isAbsolutePath(requested)) throw codedError('BOT_INVALID', 'cwd: o diretório precisa ser absoluto.')
-      if (workspaceDir !== '' && !isInside(workspaceDir, requested)) throw codedError('BOT_INVALID', 'cwd: o diretório precisa estar dentro do workspace do bit.')
+      if (!isAbsolutePath(requested)) throw codedError('BOT_INVALID', 'cwd: the directory must be absolute.')
+      if (workspaceDir !== '' && !isInside(workspaceDir, requested)) throw codedError('BOT_INVALID', 'cwd: the directory must be inside the bit workspace.')
       effectiveCwd = requested
     }
     const prompt = composePrompt(bit, input)
@@ -272,10 +272,10 @@ export function createBitRuntime(ctx, deps = {}) {
    * @returns {Promise<{ text: string, meta: any }>}
    */
   async function invokeWorker({ bit, task, cwd, readOnly, signal } = {}) {
-    if (!bit || typeof bit !== 'object') throw codedError('BOT_NOT_FOUND', 'Bit não encontrado.')
-    if (bit.isOrchestrator === true) throw codedError('BIT_IS_ORCHESTRATOR', `O bit "${nameOf(bit)}" é orquestrador: agentes orquestradores rodam como agente filho, não como invocação única.`)
+    if (!bit || typeof bit !== 'object') throw codedError('BOT_NOT_FOUND', 'Bit not found.')
+    if (bit.isOrchestrator === true) throw codedError('BIT_IS_ORCHESTRATOR', `Bit "${nameOf(bit)}" is an orchestrator: orchestrator agents run as child agents, not as a one-shot invocation.`)
     const input = String(task === undefined || task === null ? '' : task).trim()
-    if (input === '') throw codedError('BAD_REQUEST', 'team_delegate: a tarefa do bit precisa ser autocontida e não pode ser vazia.')
+    if (input === '') throw codedError('BAD_REQUEST', 'team_delegate: the bit task must be self-contained and cannot be empty.')
     const prompt = composePrompt(bit, input)
     return invoke(bit, prompt, {
       cwd: typeof cwd === 'string' && cwd !== '' ? cwd : undefined,
