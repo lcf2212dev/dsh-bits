@@ -141,7 +141,7 @@ export function createBitRuntime(ctx, deps = {}) {
   async function runSubscription(bit, prompt, resolved, { cwd, readOnly, signal }) {
     const tools = ctx && ctx.tools
     if (!tools || typeof tools.execute !== 'function') {
-      throw codedError('BIT_DELEGATE_UNAVAILABLE', 'The claude_delegate tool is not available in this Harness: install/enable the @dsh-burn-plugins/dsh-claude-delegate plugin in the profile and log in with `claude`.')
+      throw codedError('BIT_DELEGATE_UNAVAILABLE', 'The claude_delegate tool is not available in this Harness: install/enable (and update) the @dsh-burn-plugins/dsh-claude-delegate plugin in the profile and log in with `claude`.')
     }
     const args = { task: prompt, model: resolved.alias }
     if (resolved.effort !== undefined) args.effort = resolved.effort
@@ -153,7 +153,7 @@ export function createBitRuntime(ctx, deps = {}) {
       settled = await tools.execute({ calls: [call], signal })
     } catch (error) {
       if (signal && signal.aborted) throw codedError('ABORTED', 'Execution cancelled.')
-      throw codedError('BIT_DELEGATE_UNAVAILABLE', `The claude_delegate tool is not available: ${messageOf(error)}. Install/enable the @dsh-burn-plugins/dsh-claude-delegate plugin in the profile and log in with \`claude\`.`)
+      throw codedError('BIT_DELEGATE_UNAVAILABLE', `The claude_delegate tool is not available: ${messageOf(error)}. Install/enable (and update) the @dsh-burn-plugins/dsh-claude-delegate plugin in the profile and log in with \`claude\`.`)
     }
     const entries = settled && Array.isArray(settled.results) ? settled.results : []
     const entry = entries.find((item) => item && item.callId === call.id) || entries[0] || null
@@ -162,7 +162,7 @@ export function createBitRuntime(ctx, deps = {}) {
       if (signal && signal.aborted) throw codedError('ABORTED', 'Execution cancelled.')
       const detail = result && result.error && typeof result.error.message === 'string' ? result.error.message : ''
       const code = result && result.error && result.error.info && typeof result.error.info.code === 'string' ? result.error.info.code : ''
-      throw codedError('BIT_DELEGATE_UNAVAILABLE', `The claude_delegate tool failed${code ? ` (${code})` : ''}${detail ? `: ${detail}` : ''}. Install/enable the @dsh-burn-plugins/dsh-claude-delegate plugin in the profile and log in with \`claude\`.`)
+      throw codedError('BIT_DELEGATE_UNAVAILABLE', `The claude_delegate tool failed${code ? ` (${code})` : ''}${detail ? `: ${detail}` : ''}. Install/enable (and update) the @dsh-burn-plugins/dsh-claude-delegate plugin in the profile and log in with \`claude\`.`)
     }
     return typeof result.value === 'string' ? result.value : String(result.value)
   }

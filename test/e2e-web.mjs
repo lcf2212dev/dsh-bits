@@ -403,15 +403,15 @@ async function main() {
   console.log(`bundle: ${BUNDLE_DIR}`)
   console.log(`install root: ${INSTALL_ROOT}`)
   console.log(`delegate plugin: ${DELEGATE_DIR === '' ? '(not installed; real run skipped)' : DELEGATE_DIR}`)
-  console.log('1/11 install throwaway profile')
+  console.log('1/12 install throwaway profile')
   await installProfile()
   const port = await freePort()
-  console.log(`2/11 boot isolated web host on port ${port}`)
+  console.log(`2/12 boot isolated web host on port ${port}`)
   const tokenized = await bootServer(port)
   await authenticate(tokenized)
   console.log(`   authenticated at ${origin}`)
 
-  console.log('3/11 client bundle is served')
+  console.log('3/12 client bundle is served')
   {
     const indexResponse = await fetch(`${origin}/`, { headers: { cookie } })
     assert.equal(indexResponse.status, 200, `index answered HTTP ${indexResponse.status}`)
@@ -432,12 +432,12 @@ async function main() {
     console.log(`   served ${bundleHref} (${body.length} bytes)`)
   }
 
-  console.log('4/11 bits catalog v2 + model catalog')
+  console.log('4/12 bits catalog v2 + model catalog')
   {
     const catalog = await api('/api/bots.catalog')
     assert.equal(catalog.ok, true, `catalog failed: ${JSON.stringify(catalog).slice(0, 400)}`)
     assert.equal(catalog.version, 2)
-    assert.ok(Array.isArray(catalog.bits) && catalog.bits.length === 52, `expected 52 bits, got ${catalog.bits?.length}`)
+    assert.ok(Array.isArray(catalog.bits) && catalog.bits.length === 53, `expected 53 bits, got ${catalog.bits?.length}`)
     assert.ok(Array.isArray(catalog.groups) && catalog.groups.length >= 1)
     for (const bit of catalog.bits) {
       assert.equal(typeof bit.isOrchestrator, 'boolean', `catalog bit ${bit.id} has no isOrchestrator`)
@@ -465,7 +465,7 @@ async function main() {
       assert.ok(['claude-code', 'dsh'].includes(option.backend))
       assert.ok(Array.isArray(option.efforts))
     }
-    for (const id of ['subscription/opus', 'subscription/sonnet', 'subscription/haiku']) {
+    for (const id of ['subscription/fable', 'subscription/opus', 'subscription/sonnet', 'subscription/haiku']) {
       assert.ok(models.models.some((option) => option.id === id), `model catalog lacks ${id}`)
     }
     const opus = models.models.find((option) => option.id === 'subscription/opus')
@@ -475,7 +475,7 @@ async function main() {
     console.log(`   ${catalog.bits.length} catalog bits (${orchestrators.length} orchestrators), ${models.models.length} model options`)
   }
 
-  console.log('5/11 bits CRUD')
+  console.log('5/12 bits CRUD')
   let baseline = await api('/api/bots.list')
   assert.equal(baseline.ok, true)
   assert.ok(Array.isArray(baseline.bits))
@@ -493,7 +493,7 @@ async function main() {
   assert.equal(builder.character, 'bit-builder')
   assert.equal(builder.isOrchestrator, false)
   assert.equal(builder.model, 'subscription/sonnet')
-  assert.equal(builder.effort, 'high')
+  assert.equal(builder.effort, 'medium')
   assert.ok(typeof builder.workspaceDir === 'string' && path.isAbsolute(builder.workspaceDir))
   await fs.access(builder.workspaceDir)
 
@@ -522,7 +522,7 @@ async function main() {
   assert.equal(baseline.bits.length, baselineCount + 2)
   console.log('   create/update/list/validation respected catalog defaults')
 
-  console.log('6/11 worker Run (request → response)')
+  console.log('6/12 worker Run (request → response)')
   {
     // Orchestrators execute inside flows only.
     await expectError('/api/bots.run', { id: orchestrator.id, request: 'do something' }, 'BIT_IS_ORCHESTRATOR')
@@ -584,7 +584,7 @@ async function main() {
     }
   }
 
-  console.log('7/11 teams: templates, bit-referencing members, lead rule, run error paths')
+  console.log('7/12 teams: templates, bit-referencing members, lead rule, run error paths')
   {
     const templates = await api('/api/bots.teams.templates')
     assert.equal(templates.ok, true, `templates failed: ${JSON.stringify(templates).slice(0, 400)}`)
@@ -680,7 +680,7 @@ async function main() {
     console.log(`   template instantiated ${instantiated.bits.length} bits + ${team.members.length} members; lead/bitId rules and run errors verified`)
   }
 
-  console.log('8/11 projects layer (unchanged)')
+  console.log('8/12 projects layer (unchanged)')
   {
     const none = await api('/api/bots.projects')
     assert.equal(none.ok, true, `projects list failed: ${JSON.stringify(none)}`)
@@ -788,7 +788,7 @@ async function main() {
     console.log('   projects CRUD, shared/non-shared membership, unknown-id rejection and delete/detach verified')
   }
 
-  console.log('9/11 diagnostics + removed v4 surface')
+  console.log('9/12 diagnostics + removed v4 surface')
   {
     const diagnostics = await api('/api/bots.diagnostics')
     assert.equal(diagnostics.ok, true, `diagnostics failed: ${JSON.stringify(diagnostics).slice(0, 400)}`)
@@ -815,7 +815,7 @@ async function main() {
     console.log('   diagnostics reports bits/agents only; v4 VM/chat/provider routes are gone')
   }
 
-  console.log('10/11 Bit mode preset + session wiring (remote RPC)')
+  console.log('10/12 Bit mode preset + session wiring (remote RPC)')
   {
     // Drift guard (review F1): the preset's `config.plugins` is a verbatim copy
     // of the installed web-app standard preset. A DSH upgrade could change that
@@ -1000,7 +1000,7 @@ async function main() {
   }
 
 
-  console.log('11/11 Bit mode orchestrating-bit selection (routes)')
+  console.log('11/12 Bit mode orchestrating-bit selection (routes)')
   {
     const fresh = await api('/api/bots.orchestrator')
     assert.equal(fresh.ok, true, `orchestrator selection read failed: ${JSON.stringify(fresh).slice(0, 400)}`)
@@ -1061,6 +1061,54 @@ async function main() {
     assert.equal(cleared.bit, null, 'clearing did not clear the bit view')
     assert.equal((await api('/api/bots.orchestrator')).bitId, null, 'the cleared selection still persists')
     console.log(`   selection: Manager provisioned (${provisioned.id}), worker/unknown refused, clear persisted`)
+  }
+
+  console.log('12/12 Bit mode picked on an already-created blank session')
+  {
+    // DSH lets a session that has not started its first turn select a preset
+    // after creation: the pick is recorded as `agent-preset/selected` while the
+    // frozen creation header keeps the old preset. The runtime must judge the
+    // session by its effective preset, not by the header alone.
+    const pickedCwd = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-bits-e2e-picked-'))
+    createdDirs.push(pickedCwd)
+    const blank = await remote('session/create', { request: { cwd: pickedCwd } })
+    assert.ok(blank !== null && typeof blank === 'object', `picked scenario session/create returned no value: ${JSON.stringify(blank)}`)
+    assert.equal(blank.agentPreset, 'standard', `picked scenario session started as ${JSON.stringify(blank.agentPreset)}`)
+    const pickedId = blank.sessionId
+    assert.ok(typeof pickedId === 'string' && pickedId !== '', `picked scenario returned no sessionId: ${JSON.stringify(blank).slice(0, 600)}`)
+
+    const committed = await remote('agentPresets/select', { agentId: pickedId, agentPreset: 'bits-orchestrator' })
+    assert.equal(committed, 'bits-orchestrator', `agentPresets/select committed ${JSON.stringify(committed)}`)
+    let pickedEntry
+    let pickedDiagnostics
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      pickedDiagnostics = (await api('/api/bots.diagnostics')).orchestrator
+      pickedEntry = pickedDiagnostics.installed.find((entry) => entry.sessionId === pickedId)
+      if (pickedEntry !== undefined) break
+      await new Promise((resolve) => setTimeout(resolve, 250))
+    }
+    assert.ok(
+      pickedEntry !== undefined,
+      `the Bit mode picked on the blank session ${pickedId} was not instrumented: ${JSON.stringify(pickedDiagnostics).slice(0, 1200)}`,
+    )
+    assert.ok(
+      Array.isArray(pickedEntry.tools) && pickedEntry.tools.includes('bit_delegate'),
+      `picked session orchestrator tools are ${JSON.stringify(pickedEntry.tools)}`,
+    )
+
+    // Switching the still-blank session back to a normal preset drops the
+    // runtime again (no section/tool left behind).
+    const reverted = await remote('agentPresets/select', { agentId: pickedId, agentPreset: 'standard' })
+    assert.equal(reverted, 'standard', `agentPresets/select back to standard committed ${JSON.stringify(reverted)}`)
+    let stillInstalled = true
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const orchestrator = (await api('/api/bots.diagnostics')).orchestrator
+      stillInstalled = orchestrator.installed.some((entry) => entry.sessionId === pickedId)
+      if (!stillInstalled) break
+      await new Promise((resolve) => setTimeout(resolve, 250))
+    }
+    assert.equal(stillInstalled, false, `session ${pickedId} kept the orchestrator runtime after switching to standard`)
+    console.log(`   picked on blank session: ${pickedId} instrumented as bits-orchestrator, then cleaned up on standard`)
   }
 
   console.log('\nE2E PASS')

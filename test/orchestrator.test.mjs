@@ -22,6 +22,7 @@ import { loadBitCatalog } from '../host/catalog.js'
 import { createOrchestratorSelection } from '../host/orchestrator-selection.js'
 import {
   ORCHESTRATOR_PRESET,
+  effectivePresetIdOfSession,
   isOrchestratorSession,
   installOrchestrator,
   presetIdOfSession,
@@ -77,15 +78,32 @@ async function makeBits() {
  * call and answers from `state.nextResult`, throws `state.nextError`, or returns
  * a default claude-code report. `failWorkingDirectory` and the per-Agent
  * `failSection`/`failRegister` switches feed the error-containment cases.
+ *
+ * `presets: true` adds an `agentPresets` service whose `presetForSession` answers
+ * from `state.projections` (session id -> recorded preset), mirroring the DSH
+ * projection that advances with `agent-preset/selected`; `failPresets` makes the
+ * service throw instead.
  */
-function fakeHost({ workspace, failWorkingDirectory = false }) {
+function fakeHost({ workspace, failWorkingDirectory = false, presets = false, failPresets = false }) {
   const listeners = {}
   const sections = new Map()
   const tools = new Map()
   const agents = []
   const calls = []
-  const state = { nextResult: null, nextError: null }
+  const state = { nextResult: null, nextError: null, projections: new Map() }
+  const agentPresets = presets === true
+    ? {
+        presetForSession(session) {
+          if (failPresets) throw new Error('agentPresets projection unavailable')
+          const id = session && typeof session === 'object' ? session.id : undefined
+          return id === undefined ? null : state.projections.get(id) ?? null
+        },
+      }
+    : null
   const ctx = {
+    get(name) {
+      return name === 'agentPresets' ? agentPresets : null
+    },
     on(name, fn) {
       ;(listeners[name] = listeners[name] || []).push(fn)
       return () => {
@@ -119,8 +137,8 @@ function fakeHost({ workspace, failWorkingDirectory = false }) {
       }
     },
   }
-  const emit = async (name, payload) => {
-    for (const fn of listeners[name] || []) await fn(payload)
+  const emit = async (name, ...args) => {
+    for (const fn of listeners[name] || []) await fn(...args)
   }
   function makeAgent(id, { preset = null, cwd = workspace, failSection = false, failRegister = false } = {}) {
     const agent = {
@@ -155,7 +173,7 @@ function fakeHost({ workspace, failWorkingDirectory = false }) {
     agents.push(agent)
     return agent
   }
-  return { ctx, bitRuntime, state, sections, tools, agents, calls, emit, makeAgent }
+  return { ctx, bitRuntime, state, sections, tools, agents, calls, emit, makeAgent, agentPresets }
 }
 
 /** A fresh bits store + host + runtime for the isolated edge cases. */
@@ -232,6 +250,112 @@ await test('presetIdOfSession/isOrchestratorSession read the recorded Session pr
   assert.equal(isOrchestratorSession(null), false)
 })
 
+await test('the effective preset advances with agent-preset/selected beyond the creation header', () => {
+  // DSH freezes the creation header but records a later pick in the log: the
+  // registry projection is the truth for a blank session whose preset changed.
+  const registry = {
+    presetForSession(session) {
+      if (session.id === 'picked') return ORCHESTRATOR_PRESET
+      if (session.id === 'unpicked') return 'standard'
+      return null
+    },
+  }
+  const picked = { session: { id: 'picked', header: { agentPreset: 'standard' } } }
+  const unpicked = { session: { id: 'unpicked', header: { agentPreset: ORCHESTRATOR_PRESET } } }
+  assert.equal(presetIdOfSession(picked.session), 'standard', 'the header stays the creation fact')
+  assert.equal(effectivePresetIdOfSession(picked, registry), ORCHESTRATOR_PRESET)
+  assert.equal(isOrchestratorSession(picked, registry), true)
+  assert.equal(effectivePresetIdOfSession(unpicked, registry), 'standard')
+  assert.equal(isOrchestratorSession(unpicked, registry), false)
+  // No registry / a broken projection falls back to the header.
+  assert.equal(effectivePresetIdOfSession(picked), 'standard')
+  assert.equal(effectivePresetIdOfSession(picked, null), 'standard')
+  assert.equal(effectivePresetIdOfSession(picked, { presetForSession() { return null } }), 'standard')
+  assert.equal(
+    effectivePresetIdOfSession(picked, { presetForSession() { throw new Error('projection unavailable') } }),
+    'standard',
+  )
+  assert.equal(effectivePresetIdOfSession(null, registry), null)
+})
+
+await test('a preset picked on an already-created blank Session installs and uninstalls the runtime', async () => {
+  const env2 = await makeBits()
+  const workspace2 = await tempDir('dsh-bits-orchestrator-picked-')
+  const host2 = fakeHost({ workspace: workspace2, presets: true })
+  const runtime2 = installOrchestrator(host2.ctx, {
+    bits: env2.bits,
+    catalog: CATALOG,
+    models: {},
+    bitRuntime: host2.bitRuntime,
+    log: () => {},
+  })
+  try {
+    // Created as a normal chat: no header preset, so nothing is installed yet.
+    const blank = host2.makeAgent('picked-after-creation', { preset: 'standard' })
+    await host2.emit('agent/created', { agent: blank, source: 'startup' })
+    assert.equal(host2.sections.get(blank.id), undefined)
+    assert.equal(host2.tools.get(blank.id)?.has('bit_delegate') ?? false, false)
+
+    // The user selects Bit mode on the still-blank chat: the projection advances
+    // and the registry announces the committed preset on the host event.
+    host2.state.projections.set(blank.id, ORCHESTRATOR_PRESET)
+    await host2.emit('agent-preset/selected', blank.id, ORCHESTRATOR_PRESET)
+    assert.ok(host2.sections.get(blank.id), 'the Bit mode prompt section was not installed')
+    assert.ok(host2.tools.get(blank.id)?.get('bit_delegate'), 'bit_delegate was not installed')
+    assert.deepEqual(
+      runtime2.diagnostics().installed,
+      [{ sessionId: blank.id, tools: ['bit_delegate'] }],
+      'diagnostics does not report the picked session',
+    )
+
+    // Switching back before the first turn removes the section and the tool.
+    host2.state.projections.set(blank.id, 'standard')
+    await host2.emit('agent-preset/selected', blank.id, 'standard')
+    assert.equal(host2.sections.get(blank.id), undefined, 'the section survived the preset switch')
+    assert.equal(host2.tools.get(blank.id)?.has('bit_delegate') ?? false, false, 'the tool survived the preset switch')
+    assert.deepEqual(runtime2.diagnostics().installed, [])
+  } finally {
+    runtime2.dispose()
+  }
+})
+
+await test('a picked Bit mode Agent live at install time is picked up by the sweep', async () => {
+  const env2 = await makeBits()
+  const workspace2 = await tempDir('dsh-bits-orchestrator-sweep-')
+  const host2 = fakeHost({ workspace: workspace2, presets: true })
+  const live = host2.makeAgent('live-picked', { preset: 'standard' })
+  host2.state.projections.set(live.id, ORCHESTRATOR_PRESET)
+  const runtime2 = installOrchestrator(host2.ctx, {
+    bits: env2.bits,
+    catalog: CATALOG,
+    models: {},
+    bitRuntime: host2.bitRuntime,
+    log: () => {},
+  })
+  try {
+    assert.ok(host2.sections.get(live.id), 'the sweep did not install the live picked Agent')
+    assert.ok(host2.tools.get(live.id)?.get('bit_delegate'))
+  } finally {
+    runtime2.dispose()
+  }
+})
+
+await test('a preset event for an unknown Session is inert and a broken registry falls back to the header', async () => {
+  const edge = await makeEdgeRuntime({ presets: true, failPresets: true })
+  try {
+    await edge.host.emit('agent-preset/selected', 'does-not-exist', ORCHESTRATOR_PRESET)
+    edge.host.state.projections.set('does-not-exist', ORCHESTRATOR_PRESET)
+    assert.deepEqual(edge.runtime.diagnostics().installed, [])
+    // The registry projection throws, the creation header still selects Bit mode.
+    const byHeader = edge.host.makeAgent('header-orchestrator', { preset: ORCHESTRATOR_PRESET })
+    await edge.host.emit('agent/created', { agent: byHeader, source: 'startup' })
+    assert.ok(edge.host.tools.get(byHeader.id)?.get('bit_delegate'), 'header detection was lost when the registry throws')
+    assert.deepEqual(edge.runtime.diagnostics().errors, [], 'a broken projection must be contained, not reported as an error')
+  } finally {
+    edge.runtime.dispose()
+  }
+})
+
 const env = await makeBits()
 const workspace = await tempDir('dsh-bits-orchestrator-ws-')
 const host = fakeHost({ workspace })
@@ -283,9 +407,10 @@ await test('the prompt describes the role, delegation rules, read-only default a
   assert.match(text, /### Workers \(tasks\)/)
   assert.match(text, /### Quality & testing/)
   assert.match(text, /### Engineering/)
-  assert.match(text, /- \*\*Builder\*\* \(`bit-builder`\) — Implements specified features.*preset: subscription\/sonnet · high/)
-  assert.match(text, /- \*\*Scout\*\* \(`bit-scout`\) — Finds files.*preset: subscription\/haiku · low/)
+  assert.match(text, /- \*\*Builder\*\* \(`bit-builder`\) — Implements specified features.*preset: subscription\/sonnet · medium/)
+  assert.match(text, /- \*\*Scout\*\* \(`bit-scout`\) — Finds files.*preset: subscription\/haiku · medium/)
   assert.match(text, /- \*\*Reviewer\*\* \(`bit-reviewer`\) — Adversarial reviewer.*preset: subscription\/opus · high/)
+  assert.match(text, /- \*\*Pixel Artist\*\* \(`bit-pixel-artist`\) — .*preset: subscription\/sonnet · high/)
   const roster = text.split('## Available bits')[1].split('## Work split')[0]
   const entries = roster.split('\n').filter((line) => line.startsWith('- **'))
   assert.equal(entries.length, WORKER_TOTAL, 'only delegable worker characters are listed')
@@ -293,6 +418,11 @@ await test('the prompt describes the role, delegation rules, read-only default a
     assert.ok(!roster.includes(id), `${id} is not delegable one-shot`)
   }
   assert.match(text, /Orchestrator catalog characters \(Manager, Product Owner, Coordinator, Sub-coordinator\) cannot be called one-shot — the mode itself is the orchestrator; use worker bits/)
+  // Delegation policy: do the orchestration, not the work; independent review.
+  assert.match(text, /Use the cheapest bit that fits each job: bit-scout for lookups and recon/)
+  assert.match(text, /bit-pixel-artist for pixel-art visuals/)
+  assert.match(text, /do not do the implementation here/)
+  assert.match(text, /A review done by the same bit that implemented the change is not independent/)
 })
 
 await test('the section text is rebuilt per turn from the selected orchestrating bit', async () => {
@@ -340,6 +470,25 @@ await test('the section text is rebuilt per turn from the selected orchestrating
     assert.match(selected, /## How delegation works/)
     assert.match(selected, /## Available bits/)
     assert.match(selected, /## Work split/)
+
+    // The Coordinator catalog persona spells out the delegation policy.
+    const coordinator = CATALOG.get('bit-coordinator')
+    selection.bit = {
+      id: 'bit-orchestrating',
+      name: 'Coordinator',
+      character: 'bit-coordinator',
+      emoji: coordinator.emoji,
+      color: coordinator.color,
+      instructions: coordinator.instructions,
+      isOrchestrator: true,
+      model: 'deepseek-account/deepseek-flash',
+      effort: 'max',
+    }
+    const orchestrated = section.text()
+    assert.match(orchestrated, /Do the orchestration, not the work/)
+    assert.match(orchestrated, /bit-pixel-artist for pixel-art visuals/)
+    assert.match(orchestrated, /a review by the implementing bit is not independent/)
+    assert.match(orchestrated, /who did what/)
 
     // Clearing the selection reverts to the generic prompt on the next turn.
     selection.bit = null
@@ -440,7 +589,7 @@ await test('the bit_delegate definition documents the delegation contract', asyn
   assert.deepEqual(definition.output.render({}, 'answer'), [{ type: 'text', text: 'answer' }])
   const card = definition.presentCall({ bit: 'Scout' })
   assert.equal(card.card, 'generic')
-  assert.equal(card.title, 'Bit delegate · Scout · subscription/haiku/low')
+  assert.equal(card.title, 'Bit delegate · Scout · subscription/haiku/medium')
   // An existing bit: title from its stored model/effort.
   const cardBit = await env.bits.create({
     name: 'Card Worker',

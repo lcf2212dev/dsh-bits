@@ -5,7 +5,10 @@
  *
  * 1. **Subscription** — Claude Code through the `claude_delegate` tool of
  *    `@dsh-burn-plugins/dsh-claude-delegate`. Stored as `subscription/<alias>` with
- *    `alias ∈ {opus, sonnet, haiku}`; the effort is a CLI flag.
+ *    `alias ∈ {fable, opus, sonnet, haiku}`; the effort is a CLI flag. `fable`
+ *    needs a delegate plugin that accepts the alias and Claude Code ≥ 2.1.321
+ *    (older CLIs resolve it to an earlier Fable); depending on the plan it bills
+ *    usage credits instead of the included limits.
  * 2. **DSH chat routes** — the profile's LLM providers. Stored as
  *    `<provider>/<modelId>`. Orchestrator bits must use this family (an agent
  *    needs a route); workers may use it as a single model call.
@@ -33,8 +36,9 @@ export const EFFORT_ALIASES = {
   max: ['max', 'xhigh', 'high'],
 }
 
-/** Subscription aliases and their display labels. */
+/** Subscription aliases and their display labels, most capable first. */
 export const SUBSCRIPTION_MODELS = [
+  { alias: 'fable', label: 'Claude Fable 5.2 (subscription)' },
   { alias: 'opus', label: 'Claude Opus 5.5 (subscription)' },
   { alias: 'sonnet', label: 'Claude Sonnet 5.5 (subscription)' },
   { alias: 'haiku', label: 'Claude Haiku 5.5 (subscription)' },
@@ -118,7 +122,7 @@ function normalizeLabel(text) {
     .trim()
 }
 
-/** Subscription alias of a stored model string (`subscription/opus` or legacy `opus`). */
+/** Subscription alias of a stored model string (`subscription/opus` or a bare alias such as `opus`). */
 function subscriptionAlias(model) {
   const raw = String(model || '').trim().toLowerCase()
   if (raw.startsWith('subscription/')) {

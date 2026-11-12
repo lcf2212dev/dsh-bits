@@ -53,22 +53,22 @@ const EXPECTED_DEFAULTS = Object.freeze({
   'bit-product-owner': [true, 'deepseek-account/deepseek-flash', 'max'],
   'bit-coordinator': [true, 'deepseek-account/deepseek-flash', 'max'],
   'bit-sub-coordinator': [true, 'deepseek-account/deepseek-flash', 'max'],
-  'bit-systems-analyst': [false, 'subscription/opus', 'high'],
-  'bit-product-analyst': [false, 'subscription/sonnet', 'medium'],
-  'bit-user-researcher': [false, 'subscription/sonnet', 'medium'],
-  'bit-scout': [false, 'subscription/haiku', 'low'],
-  'bit-researcher': [false, 'subscription/sonnet', 'medium'],
-  'bit-architect': [false, 'subscription/opus', 'xhigh'],
-  'bit-builder': [false, 'subscription/sonnet', 'high'],
+  'bit-systems-analyst': [false, 'subscription/opus', 'medium'],
+  'bit-product-analyst': [false, 'subscription/sonnet', 'high'],
+  'bit-user-researcher': [false, 'subscription/sonnet', 'high'],
+  'bit-scout': [false, 'subscription/haiku', 'medium'],
+  'bit-researcher': [false, 'subscription/sonnet', 'high'],
+  'bit-architect': [false, 'subscription/fable', 'high'],
+  'bit-builder': [false, 'subscription/sonnet', 'medium'],
   'bit-runner': [false, 'subscription/haiku', 'low'],
   'bit-reviewer': [false, 'subscription/opus', 'high'],
-  'bit-debugger': [false, 'subscription/opus', 'xhigh'],
-  'bit-ci-triager': [false, 'subscription/sonnet', 'medium'],
+  'bit-debugger': [false, 'subscription/fable', 'high'],
+  'bit-ci-triager': [false, 'subscription/sonnet', 'high'],
   'bit-writer': [false, 'subscription/sonnet', 'medium'],
   'bit-qa': [false, 'subscription/sonnet', 'high'],
-  'bit-web-tester': [false, 'subscription/sonnet', 'high'],
-  'bit-android-tester': [false, 'subscription/sonnet', 'high'],
-  'bit-ios-tester': [false, 'subscription/sonnet', 'high'],
+  'bit-web-tester': [false, 'subscription/sonnet', 'medium'],
+  'bit-android-tester': [false, 'subscription/sonnet', 'medium'],
+  'bit-ios-tester': [false, 'subscription/sonnet', 'medium'],
   'bit-frontend-engineer': [false, 'subscription/sonnet', 'high'],
   'bit-backend-engineer': [false, 'subscription/sonnet', 'high'],
   'bit-android-engineer': [false, 'subscription/sonnet', 'high'],
@@ -76,7 +76,7 @@ const EXPECTED_DEFAULTS = Object.freeze({
   'bit-flutter-engineer': [false, 'subscription/sonnet', 'high'],
   'bit-react-native-engineer': [false, 'subscription/sonnet', 'high'],
   'bit-cloud-engineer': [false, 'subscription/sonnet', 'high'],
-  'bit-sre': [false, 'subscription/opus', 'high'],
+  'bit-sre': [false, 'subscription/opus', 'medium'],
   'bit-deployer': [false, 'subscription/sonnet', 'medium'],
   'bit-integration-engineer': [false, 'subscription/sonnet', 'high'],
   'bit-performance-engineer': [false, 'subscription/opus', 'high'],
@@ -89,17 +89,18 @@ const EXPECTED_DEFAULTS = Object.freeze({
   'bit-ui-designer': [false, 'subscription/sonnet', 'medium'],
   'bit-design-system-expert': [false, 'subscription/sonnet', 'high'],
   'bit-accessibility-expert': [false, 'subscription/sonnet', 'medium'],
+  'bit-pixel-artist': [false, 'subscription/sonnet', 'high'],
   'bit-growth-marketer': [false, 'subscription/sonnet', 'medium'],
   'bit-seo-expert': [false, 'subscription/sonnet', 'medium'],
   'bit-copywriter': [false, 'subscription/sonnet', 'medium'],
-  'bit-i18n': [false, 'subscription/haiku', 'low'],
-  'bit-crm-specialist': [false, 'subscription/haiku', 'low'],
+  'bit-i18n': [false, 'subscription/sonnet', 'medium'],
+  'bit-crm-specialist': [false, 'subscription/haiku', 'high'],
   'bit-sales': [false, 'subscription/sonnet', 'medium'],
-  'bit-sales-assistant': [false, 'subscription/haiku', 'low'],
+  'bit-sales-assistant': [false, 'subscription/haiku', 'high'],
   'bit-customer-success': [false, 'subscription/sonnet', 'medium'],
-  'bit-support': [false, 'subscription/haiku', 'low'],
-  'bit-finance-analyst': [false, 'subscription/sonnet', 'medium'],
-  'bit-privacy-compliance': [false, 'subscription/opus', 'high'],
+  'bit-support': [false, 'subscription/haiku', 'high'],
+  'bit-finance-analyst': [false, 'subscription/sonnet', 'high'],
+  'bit-privacy-compliance': [false, 'subscription/opus', 'medium'],
 })
 
 /** Every key one catalog bit is allowed to have (schema v2). */
@@ -169,15 +170,15 @@ async function setupRoutes(catalogDependency) {
 // Shipped assets
 // ---------------------------------------------------------------------------
 
-await test('shipped catalog is schema v2 with 52 bits in 7 groups', async () => {
+await test('shipped catalog is schema v2 with 53 bits in 7 groups', async () => {
   assert.equal(catalog.error, null)
   assert.equal(catalog.version, 2)
   assert.equal(CATALOG_SCHEMA_VERSION, 2)
   assert.equal(catalog.groups.length, 7)
-  assert.equal(catalog.bits.length, 52)
-  assert.equal(Object.keys(EXPECTED_DEFAULTS).length, 52)
+  assert.equal(catalog.bits.length, 53)
+  assert.equal(Object.keys(EXPECTED_DEFAULTS).length, 53)
   assert.equal(rawCatalog.version, 2)
-  assert.equal(rawCatalog.bits.length, 52)
+  assert.equal(rawCatalog.bits.length, 53)
 
   const groupIds = new Set(catalog.groups.map((group) => group.id))
   assert.equal(groupIds.size, 7)
@@ -198,6 +199,26 @@ await test('shipped catalog is schema v2 with 52 bits in 7 groups', async () => 
   }
   for (const id of ['bit-mascot', 'bit-scout', 'bit-product-owner', 'bit-android-engineer', 'bit-crm-specialist', 'bit-user-researcher']) {
     assert.ok(catalog.has(id), id)
+  }
+})
+
+await test('workers never delegate: cross-bit handoffs are report items for real bits', async () => {
+  /** Other catalog ids referenced by a text (the bit's own id excluded). */
+  const otherBits = (text, id) => (text.match(/bit-[a-z0-9-]+/g) || []).filter((ref) => ref !== id)
+  for (const bit of catalog.bits) {
+    for (const ref of otherBits(bit.instructions, bit.id)) {
+      assert.ok(catalog.has(ref), `${bit.id} references the unknown bit ${ref}`)
+    }
+    // A worker runs one-shot and has no delegation tool: it may not command another bit.
+    if (bit.isOrchestrator === false) {
+      // "handoff" as a noun (design handoff) is fine; the delegation verb is "hand off".
+      assert.ok(!/delegat|team_delegate|bit_delegate|hand(?:[\s-]off|ing off|ed off)/i.test(bit.instructions), `${bit.id} is a one-shot worker and must not delegate`)
+      for (const sentence of bit.instructions.split(/(?<=[.!?])\s+/)) {
+        if (otherBits(sentence, bit.id).length === 0) continue
+        if (!/\b(?:nam|ask|hand|leav|rout|escalat)\w*/i.test(sentence)) continue
+        assert.match(sentence, /in your report/i, `${bit.id} hands work to another bit outside the report: ${sentence}`)
+      }
+    }
   }
 })
 
@@ -249,6 +270,19 @@ await test('exactly four orchestrators, all on the DeepSeek route with max effor
   for (const bit of catalog.bits.filter((bit) => !bit.isOrchestrator)) {
     assert.notEqual(bit.model, 'deepseek-account/deepseek-flash', `${bit.id} worker model family`)
   }
+})
+
+await test('the design group ships a Pixel Artist worker with the preset row', async () => {
+  const pixel = catalog.get('bit-pixel-artist')
+  assert.ok(pixel, 'bit-pixel-artist is in the catalog')
+  assert.equal(pixel.name, 'Pixel Artist')
+  assert.equal(pixel.group, 'design')
+  assert.equal(pixel.isOrchestrator, false)
+  assert.equal(pixel.model, 'subscription/sonnet')
+  assert.equal(pixel.effort, 'high')
+  assert.match(pixel.summary.en, /pixel-art/i)
+  assert.match(pixel.instructions, /pixel-art/i)
+  assert.match(pixel.instructions, /Report back with the files changed/)
 })
 
 await test('every bit has a WebP avatar and no avatar is orphaned', async () => {
@@ -346,7 +380,7 @@ await test('store persists, patches, clears and reloads the character with its v
   assert.equal(scout.character, 'bit-scout')
   assert.equal(scout.isOrchestrator, false)
   assert.equal(scout.model, 'subscription/haiku')
-  assert.equal(scout.effort, 'low')
+  assert.equal(scout.effort, 'medium')
 
   const manager = await store.create({ name: 'Manager', character: 'bit-manager' })
   assert.equal(manager.character, 'bit-manager')
@@ -403,13 +437,13 @@ await test('GET /api/bots.catalog returns groups and v2 bits with avatar URLs', 
   assert.equal(payload.ok, true)
   assert.equal(payload.version, 2)
   assert.equal(payload.groups.length, 7)
-  assert.equal(payload.bits.length, 52)
+  assert.equal(payload.bits.length, 53)
   const scout = payload.bits.find((bit) => bit.id === 'bit-scout')
   assert.equal(scout.avatar, '/api/bots.avatar?id=bit-scout')
   assert.equal(scout.instructions, catalog.get('bit-scout').instructions)
   assert.equal(scout.isOrchestrator, false)
   assert.equal(scout.model, 'subscription/haiku')
-  assert.equal(scout.effort, 'low')
+  assert.equal(scout.effort, 'medium')
   const coordinator = payload.bits.find((bit) => bit.id === 'bit-coordinator')
   assert.equal(coordinator.isOrchestrator, true)
   assert.equal(coordinator.model, 'deepseek-account/deepseek-flash')
@@ -442,7 +476,7 @@ await test('create/update accept catalog characters and reject unknown ones', as
   assert.equal(created.ok, true)
   assert.equal(created.bit.character, 'bit-scout')
   assert.equal(created.bit.model, 'subscription/haiku', 'route create inherits the catalog defaults')
-  assert.equal(created.bit.effort, 'low')
+  assert.equal(created.bit.effort, 'medium')
 
   const manager = await (await app.call('/api/bots.create', { name: 'Boss', character: 'bit-manager' })).json()
   assert.equal(manager.ok, true)

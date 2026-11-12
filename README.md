@@ -43,7 +43,7 @@ your chat models (profile providers/accounts) and the subscription ones.
 
 ## Bits: the characters
 
-Every bit is born from a **catalog bit**, one of the 52 illustrated characters
+Every bit is born from a **catalog bit**, one of the 53 illustrated characters
 (`bits/catalog.json` + `bits/avatars/*.webp`). When you click **New bit**, the page opens the
 gallery (with search by function, name or skill, accent-insensitive). The form already comes
 with name, description, **orchestrator/worker**, **model** and **effort** suggested for that
@@ -57,13 +57,41 @@ text.
 | Workers (tasks) | Scout, Researcher, Architect, Builder, Runner, Reviewer, Debugger, CI Triager, Writer |
 | Quality & testing | QA, Web Tester, Android Tester, iOS Tester |
 | Engineering | Frontend, Backend, Android, iOS, Flutter, React Native, Cloud, SRE, Deployer, Integration, Performance, Database, Data Engineer, Data Scientist, LLM, Cybersecurity |
-| Design | UX Designer, UI Designer, Design System Expert, Accessibility Expert |
+| Design | UX Designer, UI Designer, Design System Expert, Accessibility Expert, Pixel Artist |
 | Business & growth | Growth Marketer, SEO Expert, Copywriter, i18n / Localization, CRM Specialist, Sales, Sales Assistant, Customer Success, Support, Finance Analyst, Privacy & Compliance |
 
 The descriptions follow the Claude Code agents format (`~/.claude/agents`): one sentence with
 the role, the method and the limits, ending with the report format ("Report back with …").
-The catalog also stores the **default model/effort** of each character and which ones are
+Because a worker runs one shot with nobody to answer questions, the descriptions of the
+longer-running workers tell them to finish the whole task, and a worker names in the report
+the bit that should take work outside its scope — a worker cannot call another bit. The
+catalog also stores the **default model/effort** of each character and which ones are
 **orchestrators** (the four coordination roles), so that a flow works well from the first use.
+
+### Model and effort presets
+
+The presets follow Anthropic's guidance for the current lineup
+([models overview](https://platform.claude.com/docs/en/models/overview),
+[effort](https://platform.claude.com/docs/en/build-with-claude/effort)):
+
+- **Fable 5.2** (`subscription/fable`) is the most capable and most expensive model, worth it
+  on ambiguous, long-horizon work. The Architect and the Debugger run it at `high`, the
+  documented starting level; `xhigh` only where a measured gain justifies its cost, and `max`
+  to measure the ceiling rather than as a default.
+- **Opus 5.5** runs at `medium` — its default, which matches Opus 5 at `high` — for
+  document-shaped work (specification, SRE process, privacy review), and at `high` where
+  precision matters: review, data science, databases, LLM evals, performance. Cybersecurity
+  stays on Opus at `xhigh`: Fable costs twice as much there and flagged security requests are
+  rerouted to an older Opus anyway, and the deepest level is kept because a missed
+  vulnerability costs more than the extra tokens.
+- **Sonnet 5.5** runs well-specified implementation and test writing at `medium`, and
+  specialist engineering, research and analysis at `high`, where the orchestrator acts on the
+  report without re-checking it.
+- **Haiku 5.5** keeps `low` only for the Runner (purely mechanical execution). The Scout runs
+  at `medium`, because Haiku at `low` tends to skip searches and a false "not found" derails
+  the flow; the bits bound by strict rules and knowledge work — Support, Sales Assistant, CRM
+  Specialist — run at `high`, where Haiku follows instructions closely at a fraction of
+  Sonnet's price.
 
 ## Teams and flows
 
@@ -140,6 +168,12 @@ prompt and one extra tool, `bit_delegate`. Install or update the bundle while th
 running and the mode appears when the profile recomposes (the plugin manager applies it live
 with HMR); without HMR it appears after the app restarts.
 
+A chat keeps the mode it was created with, but DSH also lets you pick a preset for a session
+that has not started its first turn yet: choose **Bit mode** for an existing, still-empty chat
+and it runs in Bit mode from its first message (the plugin reads the recorded selection, not the
+frozen creation header). Switching back to a normal mode before the first message removes the
+orchestration prompt and `bit_delegate` again.
+
 With **Bit mode** selected, a second chip appears right next to the mode chip: it picks **which
 bit orchestrates** this chat. The menu lists the orchestrator bits (avatar, name and the short
 English description); picking a catalog orchestrator character provisions its bit on first use,
@@ -147,6 +181,11 @@ like a delegation does. The chosen bit's instructions become the chat's persona 
 turn — pick **No specific bit** to keep the generic orchestrator prompt. The choice is stored in
 `<botsRoot>/orchestrator.json` and shared by every Bit-mode chat; it never changes the chat's
 model or effort.
+
+In a conversation that is already open, the same picker is not hidden: the compact chip sits in
+the session header right after the read-only **Bit mode** label, so you can see which bit is
+orchestrating and switch it at any point. The switch applies from the next turn (the prompt is
+rebuilt per turn) and still does not touch the session's preset, model or effort.
 
 The chat's own model and reasoning effort are the ones you select in the composer. The mode
 never pins or overrides them: the chat only orchestrates, and the bits it delegates to run with
@@ -187,9 +226,24 @@ A chat in orchestrator mode is never treated as a team lead, even in a repositor
 session belongs to a team. The bits it creates from the catalog are normal bits: they appear on
 the **Bits** page, can be run standalone and can be reused in flows.
 
+The Bit mode prompt also spells out the **delegation policy**: keep planning, brief writing,
+integration and the user-facing answer in the chat and delegate the work itself — research and
+recon to **Scout**, plans to **Architect**, implementation to **Builder** or the matching
+specialist (the **Pixel Artist** character for pixel-art game visuals, the engineer bits for
+their platforms), mechanical commands to **Runner** — and verify non-trivial deliveries with a
+**different bit than the author**: the final review to **Reviewer** and the tests to **QA** /
+the tester bits when the project has no automated gate. A review by the bit that wrote the
+change is not independent. The bundled **Coordinator** persona repeats the policy. To audit a
+real mission afterwards, use the smoke checker `test/bit-usage.mjs` (below): it lists which bits
+were delegated and can fail when the required roles were not used.
+
 ## How to use
 
-1. Click **Bits** in the sidebar (robot icon).
+1. Click **Bits** in the sidebar (robot icon). The page lists the bits created in this profile
+   and, below them, **All bits**: every character of the shipped catalog (53) that does not have
+   a bit yet, with its avatar, role, group and preset model/effort. **New bit** on one of those
+   cards opens the create form prefilled from that character, so all bits are visible and usable
+   without hunting through the gallery first.
 2. **New bit**: choose a character, adjust name/description and decide **orchestrator** or
    **worker**, **model** and **effort**.
 3. **Run** (workers): write a request, choose whether it is read-only and see the response.
@@ -210,6 +264,18 @@ the **Bits** page, can be run standalone and can be reused in flows.
 - Without the plugin, workers pointed at the subscription fail with a clear message
   (`BIT_DELEGATE_UNAVAILABLE`); workers pointed at a **chat route** keep working as a single
   model call.
+- **Worker reports are not replaced by background-task notices.** That plugin reads Claude
+  Code's `stream-json` result events and returns the answer of the task itself, so a shell
+  command that finishes after the worker answered can no longer turn the report into a short
+  "the background task finished" acknowledgement. Use
+  `@dsh-burn-plugins/dsh-claude-delegate` **≥ 0.2.1** (the version that selects the real
+  result); older builds print the last `result` of the CLI run, which is that acknowledgement.
+- **`fable`** (`Claude Fable 5.2 (subscription)`, the default of the Architect and Debugger
+  characters) needs `@dsh-burn-plugins/dsh-claude-delegate` **≥ 0.1.1** (the version that
+  accepts the alias) and **Claude Code ≥ 2.1.321**;
+  older CLIs resolve `fable` to an earlier Fable, and depending on the plan it bills usage
+  credits instead of the included limits. Any worker bit can be re-pointed to it, or away
+  from it, on the Bits page; orchestrators need a DSH chat route.
 - There is no longer a Docker dependency.
 
 ## How to install / update
@@ -274,7 +340,7 @@ bots-plugin/
 │   ├── orchestrator.js    # chat preset runtime: orchestrator prompt, bit_delegate
 │   └── orchestrator-selection.js  # Bit mode: which bit orchestrates (durable preference)
 ├── bits/
-│   ├── catalog.json       # 52 bits: name, group, emoji, color, summary, description,
+│   ├── catalog.json       # 53 bits: name, group, emoji, color, summary, description,
 │   │                      #   isOrchestrator, default model and effort
 │   ├── avatars/           # one 256×256 WebP avatar per bit
 │   └── teams/             # team models (JSON)
@@ -300,7 +366,7 @@ the text report comes back as the tool result.
 ```bash
 cd bots-plugin
 node test/store.test.mjs        # bits: durable registry, validation, migration
-node test/catalog.test.mjs      # catalog v2 (52 bits, orchestrators, default models)
+node test/catalog.test.mjs      # catalog v2 (53 bits, orchestrators, default models)
 node test/routes.test.mjs       # /api/bots.* routes (CRUD, catalog, models, run, orchestrator)
 node test/teams.test.mjs        # teams: members by bit, orchestrator lead, migration, models
 node test/projects.test.mjs     # projects and team unlinking
@@ -309,12 +375,31 @@ node test/team-runtime.test.mjs # runtime with fake host: lead, one-shot workers
 node test/orchestrator.test.mjs # chat preset: detection, prompt, bit_delegate, auto-provision
 node test/orchestrator-selection.test.mjs # Bit mode picker: durable selection, provisioning, routes
 node test/bit-runtime.test.mjs  # req→response: subscription, chat route, read-only
+node test/bit-usage.mjs --self-test  # smoke checker for a real Bit mode mission (see below)
 node test/e2e-web.mjs           # E2E: isolated profile + real Web host + routes + UI
 node test/visual-teams.mjs --width 1440 --height 900   # flow editor in headless Chrome
 node test/visual-projects.mjs --width 1440 --height 900 # Projects tab in headless Chrome
 node test/visual.mjs --theme dark   # real screenshots (headless Chrome) in test/screenshots/
                                     #   (--theme light also supported)
 ```
+
+**Smoke checker for a real mission:** run a Bit mode mission in the app, then
+
+```bash
+node test/bit-usage.mjs <session-id> --require Scout,Builder,Reviewer
+```
+
+It reads the session log (compressed or not), prints which bits were delegated, how many calls
+each received, the errors, and any `spawn_teammate`/`subagent` use instead of a bit. With
+`--require` it exits non-zero when a required bit was not delegated, so a mission can be gated
+on the work split it was supposed to follow. `--self-test` runs the parser against a synthetic
+session instead.
+
+Example: a review-and-improve mission should delegate a recon brief to **Scout**, the change to
+**Builder** (or **Pixel Artist** for pixel art), and the final review to **Reviewer**; running
+`node test/bit-usage.mjs <session-id> --require Scout,Builder,Reviewer` then prints PASS. The
+checker cannot force the model to choose those bits — the prompt and the Coordinator persona
+ask for that split; the checker is the smoke test that proves a real mission followed it.
 
 The E2E creates a temporary `DSH_HOME`, installs the bundle, starts the real Web host on a
 free port, authenticates with the launch token and exercises the routes — it never touches

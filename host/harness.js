@@ -93,7 +93,7 @@ function launchesOf(raw) {
 
 /**
  * Model tier from a qualified model name (`Claude Opus 5.5 (copilot)`,
- * `opus`, `sonnet`…). The runtime maps tiers to the profile's models.
+ * `fable`, `opus`, `sonnet`…). The runtime maps tiers to the profile's models.
  *
  * @param {string} model
  * @returns {{ tier: 'strong' | 'balanced' | 'fast' | null, label: string }}
@@ -101,7 +101,7 @@ function launchesOf(raw) {
 export function modelTier(model) {
   const text = String(model || '').trim()
   const label = text.replace(/\s*\((copilot|github)\)\s*$/i, '')
-  if (/opus|\bstrong\b|\bpro\b/i.test(text)) return { tier: 'strong', label }
+  if (/fable|opus|\bstrong\b|\bpro\b/i.test(text)) return { tier: 'strong', label }
   if (/sonnet|balanced|\bmedium\b/i.test(text)) return { tier: 'balanced', label }
   if (/haiku|\bfast\b|\bflash\b|\bmini\b/i.test(text)) return { tier: 'fast', label }
   return { tier: null, label }

@@ -144,15 +144,17 @@ await test('model catalog: subscription aliases + profile routes with efforts, c
   const ctx = fakeCtx({ llm })
   const models = createModelCatalog(ctx)
   const { models: list } = await models.list()
-  assert.equal(list.length, 4)
+  assert.equal(list.length, 5)
   const subscription = list.filter((option) => option.group === 'subscription')
-  assert.deepEqual(subscription.map((option) => option.id), ['subscription/opus', 'subscription/sonnet', 'subscription/haiku'])
-  assert.equal(subscription[1].label, 'Claude Sonnet 5.5 (subscription)')
+  assert.deepEqual(subscription.map((option) => option.id), ['subscription/fable', 'subscription/opus', 'subscription/sonnet', 'subscription/haiku'])
+  assert.equal(subscription[0].label, 'Claude Fable 5.2 (subscription)')
+  assert.equal(subscription[2].label, 'Claude Sonnet 5.5 (subscription)')
   assert.equal(subscription[0].backend, 'claude-code')
-  assert.equal(subscription[0].alias, 'opus')
+  assert.equal(subscription[0].alias, 'fable')
   assert.deepEqual(subscription[0].efforts, FULL_EFFORTS)
   assert.equal(subscription[0].tools, true)
   assert.equal(subscription[0].supportsOrchestrator, false)
+  assert.equal(subscription[1].alias, 'opus')
   const route = list.find((option) => option.group === 'routes')
   assert.deepEqual(route, {
     id: 'deepseek-account/deepseek-flash',
@@ -175,11 +177,11 @@ await test('model catalog: subscription aliases + profile routes with efforts, c
 
 await test('model catalog: never throws — subscriptions only when providers fail', async () => {
   const list = await createModelCatalog(fakeCtx({ llm: fakeLlm({ failListProviders: true }) })).list()
-  assert.deepEqual(list.models.map((option) => option.id), ['subscription/opus', 'subscription/sonnet', 'subscription/haiku'])
+  assert.deepEqual(list.models.map((option) => option.id), ['subscription/fable', 'subscription/opus', 'subscription/sonnet', 'subscription/haiku'])
   const brokenModels = await createModelCatalog(fakeCtx({ llm: fakeLlm({ failListModels: true }) })).list()
   assert.equal(brokenModels.models.filter((option) => option.group === 'routes').length, 0)
   const noLlm = await createModelCatalog({}).list()
-  assert.equal(noLlm.models.length, 3)
+  assert.equal(noLlm.models.length, 4)
   // A model without reasoning metadata still appears with the fallback efforts.
   const noEfforts = await createModelCatalog(fakeCtx({ llm: fakeLlm({ efforts: [] }) })).list()
   assert.deepEqual(noEfforts.models.find((option) => option.group === 'routes').efforts, FULL_EFFORTS)
@@ -192,6 +194,11 @@ await test('resolve: stored ids, legacy aliases, bare labels, efforts and coded 
   // Legacy bare alias.
   const opus = await models.resolve({ model: 'opus', effort: 'xhigh' })
   assert.deepEqual(opus, { backend: 'claude-code', alias: 'opus', modelId: 'subscription/opus', effort: 'xhigh' })
+  // Fable 5.2 through the subscription, stored id and bare alias.
+  const fable = await models.resolve({ model: 'subscription/fable', effort: 'high', name: 'Architect' })
+  assert.deepEqual(fable, { backend: 'claude-code', alias: 'fable', modelId: 'subscription/fable', effort: 'high' })
+  const bareFable = await models.resolve({ model: 'fable', effort: 'xhigh' })
+  assert.deepEqual(bareFable, { backend: 'claude-code', alias: 'fable', modelId: 'subscription/fable', effort: 'xhigh' })
   // DSH stored route.
   const dsh = await models.resolve({ model: 'deepseek-account/deepseek-flash', effort: 'max', name: 'Coordinator' })
   assert.deepEqual(dsh, { backend: 'dsh', provider: 'deepseek-account', model: 'deepseek-flash', effort: 'max' })
@@ -412,7 +419,7 @@ await test('invokeWorker: one-shot with readOnly/cwd from the team and the same 
   await assert.rejects(runtime.invokeWorker({ bit: subscriptionBit(), task: '  ' }), (error) => codedOf(error) === 'BAD_REQUEST')
   // listModels is the catalog (`GET /api/bots.models`).
   const listed = await runtime.listModels()
-  assert.equal(listed.models.length, 4)
+  assert.equal(listed.models.length, 5)
 })
 
 for (const dir of temps) await fs.rm(dir, { recursive: true, force: true })

@@ -74,7 +74,7 @@ export function bitInstructionsOf(bit) {
 export function backendOf(bit) {
   if (bit && bit.isOrchestrator === true) return 'dsh'
   const model = bit && typeof bit.model === 'string' ? bit.model.trim() : ''
-  if (model.startsWith('subscription/') || model === 'opus' || model === 'sonnet' || model === 'haiku') return 'claude-code'
+  if (model.startsWith('subscription/') || model === 'fable' || model === 'opus' || model === 'sonnet' || model === 'haiku') return 'claude-code'
   return model === '' ? '?' : 'dsh'
 }
 

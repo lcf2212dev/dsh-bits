@@ -47,7 +47,7 @@ const MAX_EFFORT_LENGTH = 20;
 const MAX_BITS = 200;
 /** Subscription models: workers only (orchestrators need a DSH chat route). */
 const SUBSCRIPTION_MODEL_PATTERN = /^subscription\//;
-const SUBSCRIPTION_ALIASES = new Set(['opus', 'sonnet', 'haiku']);
+const SUBSCRIPTION_ALIASES = new Set(['fable', 'opus', 'sonnet', 'haiku']);
 const CREATE_FIELDS = new Set([
   'id',
   'name',
@@ -267,7 +267,7 @@ function normalizeEffort(value) {
 
 /**
  * Whether a model string belongs to the subscription (Claude Code) family:
- * `subscription/<alias>` or a legacy bare `opus` / `sonnet` / `haiku`.
+ * `subscription/<alias>` or a bare alias (`fable` / `opus` / `sonnet` / `haiku`).
  *
  * @param {string} model normalized model string
  * @returns {boolean}

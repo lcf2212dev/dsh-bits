@@ -24,6 +24,21 @@ window.__ModuleLoader__.load({
     const React = require('react')
     const h = React.createElement
 
+    /**
+     * Optional `react-dom` portal for the session-header seat menu: the
+     * conversation shell clips absolutely positioned descendants, and a portal
+     * to `document.body` is the only placement no shell container can clip.
+     * Older Hosts that do not expose the shared module fall back to in-place
+     * rendering (the menu still works, it may be clipped).
+     */
+    let createPortal = null
+    try {
+      const ReactDOM = require('react-dom')
+      if (ReactDOM && typeof ReactDOM.createPortal === 'function') createPortal = ReactDOM.createPortal
+    } catch (error) {
+      createPortal = null
+    }
+
     /* ------------------------------------------------------------------ */
     /* Constants                                                          */
     /* ------------------------------------------------------------------ */
@@ -132,6 +147,11 @@ window.__ModuleLoader__.load({
       loading: 'Loading bits…',
       empty: 'No bits yet',
       emptyHint: 'Create a bit (Scout, Builder, Product Owner, …) to use it in a flow or run an ad-hoc request.',
+      catalogTitle: 'All bits',
+      catalogHint: 'Catalog characters that do not have a bit yet. Create one with its preset and edit the name or the description afterwards.',
+      catalogCreate: 'New bit',
+      catalogCreateFor: 'Create a bit from {name}',
+      catalogEmpty: 'Every catalog character already has a bit.',
       error: 'Could not load the bits.',
       retry: 'Retry',
       confirm: 'Confirm',
@@ -300,6 +320,14 @@ window.__ModuleLoader__.load({
 .dsh-bots-bit-hero-role { margin: 0; font-size: 15px; font-weight: 600; line-height: 22px; }
 .dsh-bots-bit-hero-summary { margin: 2px 0 8px; font-size: 13px; line-height: 19px; color: var(--dsh-bots-text-2); }
 .dsh-bots-role { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; line-height: 18px; color: var(--dsh-bots-text-3); }
+.dsh-bots-catalog-section { display: flex; flex-direction: column; gap: 12px; min-width: 0; margin-top: 4px; padding-top: 20px; border-top: 1px solid var(--dsh-bots-border-1); }
+.dsh-bots-catalog-head { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.dsh-bots-catalog-title { margin: 0; font-size: 16px; font-weight: 600; line-height: 24px; }
+.dsh-bots-catalog-hint { margin: 0; overflow-wrap: anywhere; font-size: 13px; line-height: 20px; color: var(--dsh-bots-text-2); }
+.dsh-bots-catalog-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr)); gap: 12px; margin: 0; padding: 0; list-style: none; min-width: 0; }
+.dsh-bots-catalog-card { box-sizing: border-box; display: flex; flex-direction: column; gap: 10px; min-width: 0; height: 100%; padding: 14px; border: 1px solid var(--dsh-bots-border-2); border-radius: var(--dsh-bots-radius); background: var(--dsh-bots-bg-1); }
+.dsh-bots-catalog-card:hover { border-color: var(--dsh-bots-border-3); }
+.dsh-bots-catalog-group { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; line-height: 18px; color: var(--dsh-bots-text-3); }
 .dsh-bots-link-button { padding: 0; border: 0; background: none; color: var(--dsh-bots-accent); font: inherit; font-size: 12px; line-height: 18px; cursor: pointer; }
 .dsh-bots-link-button:hover:not(:disabled) { text-decoration: underline; }
 .dsh-bots-link-button:disabled { cursor: not-allowed; opacity: .5; }
@@ -459,6 +487,14 @@ window.__ModuleLoader__.load({
       return bit.summary.en || ''
     }
 
+    /** First sentence of a summary (the whole text when it has no sentence break). */
+    function firstSentence(text) {
+      const value = asString(text).replace(/\s+/g, ' ').trim()
+      if (!value) return ''
+      const end = value.indexOf('. ')
+      return end >= 0 ? value.slice(0, end + 1) : value
+    }
+
     /** Group label (English). */
     function groupLabelOf(catalog, groupId, t) {
       for (let index = 0; index < catalog.groups.length; index += 1) {
@@ -466,6 +502,26 @@ window.__ModuleLoader__.load({
         if (group.id === groupId) return group.label.en
       }
       return t('otherGroup')
+    }
+
+    /**
+     * Catalog characters that do not have a bit yet, in catalog order. A
+     * character counts as taken when a stored bit references its id as
+     * `character` and also when a stored bit uses its name (case-insensitive),
+     * so bits created without a character do not duplicate a catalog entry.
+     */
+    function availableCatalogBits(catalog, bits) {
+      const usedCharacters = {}
+      const usedNames = {}
+      bits.forEach(function (bit) {
+        if (bit.character) usedCharacters[bit.character] = true
+        const name = foldText(asString(bit.name).trim())
+        if (name) usedNames[name] = true
+      })
+      return catalog.bits.filter(function (character) {
+        if (usedCharacters[character.id]) return false
+        return !usedNames[foldText(character.name).trim()]
+      })
     }
 
     /** `usePanelInfo` fallback: the page only composes while its panel is selected. */
@@ -839,8 +895,13 @@ window.__ModuleLoader__.load({
     /* Form helpers                                                       */
     /* ------------------------------------------------------------------ */
 
-    /** Default form values for create/edit. */
-    function initialFormValues(bit) {
+    /**
+     * Default form values for create/edit. A catalog character (creating from
+     * the page catalog section) prefills the same fields as picking it in the
+     * gallery: name, character, emoji, colour, description and the
+     * family/model/effort preset, all editable.
+     */
+    function initialFormValues(bit, character, models) {
       if (bit) {
         return {
           name: bit.name,
@@ -851,6 +912,20 @@ window.__ModuleLoader__.load({
           isOrchestrator: bit.isOrchestrator === true,
           model: bit.model || defaultModelFor(bit.isOrchestrator === true),
           effort: bit.effort || defaultEffortFor(bit.isOrchestrator === true),
+        }
+      }
+      if (character) {
+        const orchestrator = character.isOrchestrator === true
+        const model = snapModel(models, orchestrator, character.model)
+        return {
+          name: character.name,
+          character: character.id,
+          emoji: character.emoji,
+          color: character.color,
+          instructions: character.instructions,
+          isOrchestrator: orchestrator,
+          model: model,
+          effort: snapEffort(models, orchestrator, model, character.effort),
         }
       }
       return {
@@ -1209,6 +1284,115 @@ window.__ModuleLoader__.load({
     }
 
     /* ------------------------------------------------------------------ */
+    /* Catalog section (catalog characters that have no bit yet)          */
+    /* ------------------------------------------------------------------ */
+
+    /**
+     * Card of one catalog character that has no bit yet: avatar, family badge,
+     * group, English summary, preset route and a primary action that opens the
+     * create form already prefilled from this character.
+     */
+    function CatalogCard(props) {
+      const t = props.t
+      const character = props.character
+      const catalog = props.catalog
+      const models = props.models || emptyModels('idle')
+      const orchestrator = character.isOrchestrator === true
+      const summary = firstSentence(summaryOf(character))
+      const route = bitRouteText(character, models)
+      return h('li', { className: 'dsh-bots-catalog-card', 'data-catalog-character': character.id },
+        h('div', { className: 'dsh-bots-card-head' },
+          h(BitAvatar, { bit: character, size: 44 }),
+          h('div', { className: 'dsh-bots-card-titles' },
+            h('div', { className: 'dsh-bots-name-row' },
+              h('h3', { className: 'dsh-bots-name', title: character.name }, character.name),
+              h(Badge, {
+                label: orchestrator ? t('orchestrator') : t('worker'),
+                tone: orchestrator ? 'info' : 'neutral',
+              })
+            ),
+            h('p', { className: 'dsh-bots-catalog-group' }, groupLabelOf(catalog, character.group, t)),
+            route
+              ? h('div', { className: 'dsh-bots-meta' },
+                h('span', { className: 'dsh-bots-meta-label' }, t('model')),
+                h('span', { title: route }, route))
+              : null
+          )
+        ),
+        h('p', { className: 'dsh-bots-persona', title: summaryOf(character) || undefined },
+          summary || t('noInstructions')),
+        h('div', { className: 'dsh-bots-actions' },
+          h(Button, {
+            variant: 'primary',
+            size: 'sm',
+            label: tf(t, 'catalogCreateFor', { name: character.name }),
+            onClick: function () { props.onCreate(character) },
+          }, h(PlusIcon, { size: 14 }), t('catalogCreate')))
+      )
+    }
+
+    /**
+     * Section below the bit cards listing the catalog characters that have no
+     * bit yet, so the whole shipped catalog is reachable from the page and not
+     * only from the "New bit" gallery. The page skeleton stays while the
+     * catalog loads; a failed load keeps the created cards and offers a retry.
+     */
+    function CatalogSection(props) {
+      const t = props.t
+      const catalog = props.catalog
+      const models = props.models || emptyModels('idle')
+      const available = props.available
+      const loading = catalog.phase === 'loading'
+      let content = null
+      if (loading) {
+        content = h('ul', { className: 'dsh-bots-cards', 'aria-hidden': 'true' },
+          [0, 1, 2].map(function (index) {
+            return h('li', { key: 'catalog-skeleton-' + index, className: 'dsh-bots-skeleton' },
+              h('div', { className: 'dsh-bots-skeleton-head' },
+                h('div', { className: 'dsh-bots-skeleton-bar dsh-bots-skeleton-avatar' }),
+                h('div', { className: 'dsh-bots-skeleton-col' },
+                  h('div', { className: 'dsh-bots-skeleton-bar dsh-bots-skeleton-bar-short' }),
+                  h('div', { className: 'dsh-bots-skeleton-bar dsh-bots-skeleton-bar-wide' })
+                )
+              )
+            )
+          })
+        )
+      } else if (catalog.phase === 'error') {
+        content = h('div', { className: 'dsh-bots-banner', role: 'alert' },
+          h('span', { className: 'dsh-bots-banner-text' },
+            t('catalogError') + (catalog.error ? ' ' + catalog.error : '')),
+          h(Button, { variant: 'outline', size: 'sm', onClick: props.onRetry }, t('retry')))
+      } else if (available.length === 0) {
+        content = h('p', { className: 'dsh-bots-hint', role: 'status' }, t('catalogEmpty'))
+      } else {
+        content = h('ul', { className: 'dsh-bots-catalog-grid' },
+          available.map(function (character) {
+            return h(CatalogCard, {
+              key: character.id,
+              t: t,
+              character: character,
+              catalog: catalog,
+              models: models,
+              onCreate: props.onCreate,
+            })
+          })
+        )
+      }
+      return h('section', {
+        className: 'dsh-bots-catalog-section',
+        'data-catalog-phase': catalog.phase,
+        'aria-labelledby': 'dsh-bots-catalog-title',
+        'aria-busy': loading ? 'true' : undefined,
+      },
+        h('div', { className: 'dsh-bots-catalog-head' },
+          h('h2', { className: 'dsh-bots-catalog-title', id: 'dsh-bots-catalog-title' }, t('catalogTitle')),
+          h('p', { className: 'dsh-bots-catalog-hint' },
+            loading ? t('catalogLoading') : t('catalogHint'))),
+        content)
+    }
+
+    /* ------------------------------------------------------------------ */
     /* Run dialog (ad-hoc worker invocation)                              */
     /* ------------------------------------------------------------------ */
 
@@ -1458,9 +1642,11 @@ window.__ModuleLoader__.load({
       const searchRef = React.useRef(null)
       const firstStepRef = React.useRef(true)
       const [values, setValues] = React.useState(function () {
-        return initialFormValues(props.bot)
+        return initialFormValues(props.bot, props.character || null, models)
       })
-      const [step, setStep] = React.useState(editing ? 'form' : 'pick')
+      // Creating from a catalog card opens the form already prefilled; the
+      // gallery is only the first step when no character was supplied.
+      const [step, setStep] = React.useState((editing || !!props.character) ? 'form' : 'pick')
       const [errors, setErrors] = React.useState({})
       const [serverError, setServerError] = React.useState(null)
       const [saving, setSaving] = React.useState(false)
@@ -6717,8 +6903,9 @@ window.__ModuleLoader__.load({
         load(loadedRef.current)
       }, [panelActive, load, tab])
 
-      function openCreate() {
-        setDialog({ kind: 'form', bot: null })
+      /** Open the create form; a catalog character prefills it and starts on the form step. */
+      function openCreate(character) {
+        setDialog({ kind: 'form', bot: null, character: character || null })
       }
 
       function openEdit(bit) {
@@ -6792,12 +6979,29 @@ window.__ModuleLoader__.load({
         }, h(RefreshIcon, { size: 16 })),
         h(Button, {
           variant: 'primary',
-          onClick: openCreate,
+          onClick: function () { openCreate() },
         }, h(PlusIcon, { size: 14 }), t('newBot'))
       )
 
+      const availableCatalog = availableCatalogBits(catalog, bits)
+      const catalogHasBits = catalog.bits.length > 0
+      const catalogLoading = catalog.phase === 'loading'
+      // A catalog with no characters at all keeps the page exactly as before;
+      // otherwise the section lists the characters that have no bit yet.
+      const catalogSection = (catalog.phase === 'ready' && !catalogHasBits)
+        ? null
+        : h(CatalogSection, {
+          key: 'catalog',
+          t: t,
+          catalog: catalog,
+          models: models,
+          available: availableCatalog,
+          onCreate: openCreate,
+          onRetry: loadCatalog,
+        })
+
       let body = null
-      if (phase === 'loading') {
+      if (phase === 'loading' || (bits.length === 0 && catalogLoading)) {
         body = h(React.Fragment, null,
           h('p', { className: 'dsh-bots-visually-hidden', role: 'status' }, t('loading')),
           h('ul', { className: 'dsh-bots-cards', 'aria-hidden': 'true' },
@@ -6823,39 +7027,39 @@ window.__ModuleLoader__.load({
           data.error ? h('p', { className: 'dsh-bots-state-text' }, data.error) : null,
           h(Button, { variant: 'outline', onClick: handleRefresh }, t('retry'))
         )
-      } else if (bits.length === 0) {
-        body = h('div', { className: 'dsh-bots-state' },
+      } else {
+        const emptyState = h('div', { key: 'empty', className: 'dsh-bots-state' },
           catalog.byId[MASCOT_ID]
             ? h(BitAvatar, { bit: catalog.byId[MASCOT_ID], size: 112, eager: true })
             : h('span', { className: 'dsh-bots-state-icon', 'aria-hidden': 'true' }, h(BotsGlyph, { size: 40 })),
           h('p', { className: 'dsh-bots-state-title' }, t('empty')),
           h('p', { className: 'dsh-bots-state-text' }, t('emptyHint')),
-          h(Button, { variant: 'primary', onClick: openCreate }, h(PlusIcon, { size: 14 }), t('newBot'))
+          h(Button, { variant: 'primary', onClick: function () { openCreate() } }, h(PlusIcon, { size: 14 }), t('newBot'))
         )
-      } else {
         body = h(React.Fragment, null,
           data.error
-            ? h('div', { className: 'dsh-bots-banner', role: 'alert' },
+            ? h('div', { key: 'bits-error', className: 'dsh-bots-banner', role: 'alert' },
               h('span', { className: 'dsh-bots-banner-text' }, t('error') + ' ' + data.error),
               h(Button, { variant: 'outline', size: 'sm', onClick: handleRefresh }, t('retry')))
             : null,
-          h('ul', { className: 'dsh-bots-cards' },
-            bits.map(function (bit) {
-              return h(BitCard, {
-                key: bit.id,
-                bit: bit,
-                models: models,
-                catalog: catalog,
-                t: t,
-                leadTeams: bit.isOrchestrator === true ? teamsLedBy(bit) : [],
-                onRun: openRun,
-                onEdit: openEdit,
-                onDelete: openDelete,
-                onOpenTeams: function () { setTab('teams') },
-              })
-            })
-          )
-        )
+          bits.length > 0
+            ? h('ul', { key: 'bits', className: 'dsh-bots-cards' },
+              bits.map(function (bit) {
+                return h(BitCard, {
+                  key: bit.id,
+                  bit: bit,
+                  models: models,
+                  catalog: catalog,
+                  t: t,
+                  leadTeams: bit.isOrchestrator === true ? teamsLedBy(bit) : [],
+                  onRun: openRun,
+                  onEdit: openEdit,
+                  onDelete: openDelete,
+                  onOpenTeams: function () { setTab('teams') },
+                })
+              }))
+            : (catalogHasBits ? null : emptyState),
+          catalogSection)
       }
 
       let dialogNode = null
@@ -6864,6 +7068,7 @@ window.__ModuleLoader__.load({
           key: 'form',
           t: t,
           bot: dialog.bot,
+          character: dialog.character || null,
           catalog: catalog,
           models: models,
           onRetryCatalog: loadCatalog,
@@ -6969,7 +7174,8 @@ window.__ModuleLoader__.load({
      */
     const MODE_BIT_STYLES = `
 div:has(> [data-slot="conversation.hero.options"]) { margin-left: 0; }
-.dsh-bots-mode-root { --dsh-mode-text: var(--dsw-alias-label-primary, rgba(20, 22, 30, .92)); --dsh-mode-text-2: var(--dsw-alias-label-secondary, rgba(20, 22, 30, .64)); --dsh-mode-text-3: var(--dsw-alias-label-caption, rgba(20, 22, 30, .4)); --dsh-mode-bg: var(--dsw-menu-surface-fill, var(--dsw-alias-bg-overlay, #2a2b31)); --dsh-mode-border: var(--dsw-alias-border-l2, rgba(127, 127, 127, .18)); --dsh-mode-hover: var(--dsw-alias-interactive-bg-hover, rgba(127, 127, 127, .1)); --dsh-mode-active: var(--dsw-alias-interactive-bg-active, rgba(127, 127, 127, .16)); --dsh-mode-shadow: var(--dsw-elevation-prominent, 0 12px 32px rgba(0, 0, 0, .24)); --dsh-mode-radius: var(--dsw-radius-sm, 6px); --dsh-mode-radius-lg: var(--dsw-radius-lg, 10px); --dsh-mode-bad: var(--dsw-alias-state-error-primary, #dc2626); --dsh-mode-ring: var(--dsw-alias-state-business-primary, #3b82f6); position: relative; display: inline-flex; align-items: center; min-width: 0; color: var(--dsh-mode-text); font-size: 13px; line-height: 20px; }
+.dsh-bots-mode-root, .dsh-bots-mode-menu { --dsh-mode-text: var(--dsw-alias-label-primary, rgba(20, 22, 30, .92)); --dsh-mode-text-2: var(--dsw-alias-label-secondary, rgba(20, 22, 30, .64)); --dsh-mode-text-3: var(--dsw-alias-label-caption, rgba(20, 22, 30, .4)); --dsh-mode-bg: var(--dsw-menu-surface-fill, var(--dsw-alias-bg-overlay, #2a2b31)); --dsh-mode-border: var(--dsw-alias-border-l2, rgba(127, 127, 127, .18)); --dsh-mode-hover: var(--dsw-alias-interactive-bg-hover, rgba(127, 127, 127, .1)); --dsh-mode-active: var(--dsw-alias-interactive-bg-active, rgba(127, 127, 127, .16)); --dsh-mode-shadow: var(--dsw-elevation-prominent, 0 12px 32px rgba(0, 0, 0, .24)); --dsh-mode-radius: var(--dsw-radius-sm, 6px); --dsh-mode-radius-lg: var(--dsw-radius-lg, 10px); --dsh-mode-bad: var(--dsw-alias-state-error-primary, #dc2626); --dsh-mode-ring: var(--dsw-alias-state-business-primary, #3b82f6); }
+.dsh-bots-mode-root { position: relative; display: inline-flex; align-items: center; min-width: 0; color: var(--dsh-mode-text); font-size: 13px; line-height: 20px; }
 .dsh-bots-mode-chip { box-sizing: border-box; display: inline-flex; align-items: center; gap: 6px; height: 28px; max-width: min(100%, 240px); padding: 0 8px; border: 0; border-radius: var(--dsh-mode-radius); background: transparent; color: inherit; font: inherit; font-size: 13px; line-height: 20px; font-weight: 500; white-space: nowrap; cursor: pointer; }
 .dsh-bots-mode-chip:hover:not(:disabled), .dsh-bots-mode-chip[aria-expanded="true"] { background: var(--dsh-mode-hover); }
 .dsh-bots-mode-chip:active:not(:disabled) { background: var(--dsh-mode-active); }
@@ -6979,6 +7185,9 @@ div:has(> [data-slot="conversation.hero.options"]) { margin-left: 0; }
 .dsh-bots-mode-chevron { flex: none; color: var(--dsh-mode-text-3); }
 .dsh-bots-mode-menu { position: absolute; left: 0; top: calc(100% + 6px); z-index: 1300; box-sizing: border-box; display: flex; flex-direction: column; gap: 1px; width: 340px; max-width: min(340px, calc(100vw - 32px)); padding: 4px; overflow-y: auto; border: 1px solid var(--dsh-mode-border); border-radius: var(--dsh-mode-radius-lg); background: var(--dsh-mode-bg); color: var(--dsh-mode-text); box-shadow: var(--dsh-mode-shadow); backdrop-filter: var(--dsw-menu-backdrop-filter, none); }
 .dsh-bots-mode-menu-above { top: auto; bottom: calc(100% + 6px); }
+.dsh-bots-mode-menu-right { left: auto; right: 0; }
+.dsh-bots-mode-chip-compact { height: 22px; max-width: 180px; padding: 0 6px; gap: 5px; font-size: 12px; line-height: 18px; }
+.dsh-bots-mode-chip-compact .dsh-bots-mode-chevron { margin-left: -1px; }
 .dsh-bots-mode-menu-label { padding: 4px 8px 2px; color: var(--dsh-mode-text-3); font-size: 11px; line-height: 16px; font-weight: 500; letter-spacing: .02em; text-transform: uppercase; }
 .dsh-bots-mode-item { box-sizing: border-box; display: flex; align-items: flex-start; gap: 10px; width: 100%; padding: 5px 8px; border: 0; border-radius: var(--dsh-mode-radius); background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .dsh-bots-mode-item:hover:not(:disabled), .dsh-bots-mode-item:focus-visible { background: var(--dsh-mode-hover); outline: none; }
@@ -7013,14 +7222,26 @@ div:has(> [data-slot="conversation.hero.options"]) { margin-left: 0; }
     }
 
     /**
-     * Seat in the new-session hero that picks which bit orchestrates a Bit mode
-     * chat. It renders only while the current blank session's preset is
-     * `bits-orchestrator`, and not at all when the Host lacks the selection
-     * route (older Host) or `ctx.sessions` (never registered in that case).
+     * Seat that picks which bit orchestrates a Bit mode chat. It renders only
+     * while the session's preset is `bits-orchestrator`, and not at all when the
+     * Host lacks the selection route (older Host) or `ctx.sessions` (never
+     * registered in that case).
+     *
+     * The same component serves both seats: the new-session hero next to the
+     * mode chip (`conversation.hero.options`) and, for an already-open Bit mode
+     * conversation, the session header next to the read-only "Bit mode" label
+     * (`conversation.session.header.actions`, compact variant). The header menu
+     * renders through a `document.body` portal with fixed coordinates, because
+     * the conversation shell clips absolutely positioned descendants. The header seat
+     * lets the user see and switch the orchestrating bit mid-conversation: the
+     * prompt section text is rebuilt per turn, so the new persona applies from
+     * the next turn while the session's preset itself is untouched.
      */
     function ModeBitSeat(props) {
       const t = typeof props.t === 'function' ? props.t : fallbackT
       const sessionId = props.sessionId
+      const compact = props.compact === true
+      const variant = compact ? 'header' : 'hero'
       const useSessions = typeof props.useSessions === 'function' ? props.useSessions : useMissingSessions
       const summary = useSessions(function (snapshot) {
         if (sessionId === undefined || !snapshot || !snapshot.byId) return undefined
@@ -7038,7 +7259,7 @@ div:has(> [data-slot="conversation.hero.options"]) { margin-left: 0; }
       const [open, setOpen] = React.useState(false)
       const [pending, setPending] = React.useState('')
       const [error, setError] = React.useState('')
-      const [menuLayout, setMenuLayout] = React.useState({ placement: 'below', maxHeight: 360 })
+      const [menuLayout, setMenuLayout] = React.useState({ placement: 'below', maxHeight: 360, alignRight: false })
 
       /** GET the selection + candidates; a 404 marks the seat unavailable. */
       const load = React.useCallback(function () {
@@ -7084,7 +7305,9 @@ div:has(> [data-slot="conversation.hero.options"]) { margin-left: 0; }
         if (!open) return undefined
         function handlePointer(event) {
           const root = rootRef.current
+          const menu = menuRef.current
           if (root && event.target instanceof Node && root.contains(event.target)) return
+          if (menu && event.target instanceof Node && menu.contains(event.target)) return
           closeMenu(true)
         }
         function handleKey(event) {
@@ -7102,8 +7325,12 @@ div:has(> [data-slot="conversation.hero.options"]) { margin-left: 0; }
       }, [open, closeMenu])
 
       /**
-       * The hero row sits low in the viewport: open below-left when it fits and
-       * flip above when there is more room there, so no candidate is clipped.
+       * Place the menu inside the viewport: the hero row sits low and the header
+       * chip sits at the right edge, so flip vertically when there is more room
+       * above and right-align when a left-aligned menu would overflow. The
+       * header variant positions the menu `fixed` in viewport coordinates: the
+       * conversation shell clips absolutely positioned descendants, so the
+       * header menu would otherwise render cut off under the header row.
        */
       React.useEffect(function () {
         if (!open) return
@@ -7111,18 +7338,35 @@ div:has(> [data-slot="conversation.hero.options"]) { margin-left: 0; }
         const menu = menuRef.current
         if (!root || !menu) return
         const rect = root.getBoundingClientRect()
-        const viewport = typeof window !== 'undefined' && window.innerHeight ? window.innerHeight : 900
-        const spaceBelow = viewport - rect.bottom - 12
+        const viewportHeight = typeof window !== 'undefined' && window.innerHeight ? window.innerHeight : 900
+        const viewportWidth = typeof window !== 'undefined' && window.innerWidth ? window.innerWidth : 1440
+        const spaceBelow = viewportHeight - rect.bottom - 12
         const spaceAbove = rect.top - 12
         const wanted = menu.offsetHeight || 0
         const placement = wanted > spaceBelow && spaceAbove > spaceBelow ? 'above' : 'below'
         const space = placement === 'above' ? spaceAbove : spaceBelow
         const maxHeight = Math.max(180, Math.min(360, space))
+        const menuWidth = menu.offsetWidth || 340
+        const alignRight = rect.left + menuWidth > viewportWidth - 16 && rect.right - menuWidth >= 8
+        const next = { placement: placement, maxHeight: maxHeight, alignRight: alignRight, fixed: compact }
+        if (compact) {
+          next.top = placement === 'below' ? rect.bottom + 6 : null
+          next.bottom = placement === 'above' ? viewportHeight - rect.top + 6 : null
+          next.left = alignRight ? null : Math.max(8, Math.min(rect.left, viewportWidth - menuWidth - 8))
+          next.right = alignRight ? Math.max(8, viewportWidth - rect.right) : null
+        }
         setMenuLayout(function (current) {
-          if (current.placement === placement && current.maxHeight === maxHeight) return current
-          return { placement: placement, maxHeight: maxHeight }
+          const same = current.placement === next.placement
+            && current.maxHeight === next.maxHeight
+            && current.alignRight === next.alignRight
+            && current.fixed === next.fixed
+            && current.top === next.top
+            && current.bottom === next.bottom
+            && current.left === next.left
+            && current.right === next.right
+          return same ? current : next
         })
-      }, [open, state.phase, state.candidates.length, error])
+      }, [open, state.phase, state.candidates.length, error, compact])
 
       /** POST the pick (or clear); errors keep the menu open with the message. */
       function selectTarget(target) {
@@ -7200,12 +7444,42 @@ div:has(> [data-slot="conversation.hero.options"]) { margin-left: 0; }
         }
       }
 
-      return h('span', { className: 'dsh-bots-mode-root', ref: rootRef, 'data-bots-mode-phase': state.phase },
+      const menuNode = open ? h('div', {
+        ref: menuRef,
+        className: 'dsh-bots-mode-menu'
+          + (menuLayout.placement === 'above' && menuLayout.fixed !== true ? ' dsh-bots-mode-menu-above' : '')
+          + (menuLayout.alignRight && menuLayout.fixed !== true ? ' dsh-bots-mode-menu-right' : ''),
+        role: 'menu',
+        'aria-label': t('modeBitMenuLabel'),
+        'aria-busy': pending ? 'true' : undefined,
+        'data-bots-mode-menu': variant,
+        style: menuLayout.fixed === true
+          ? {
+            position: 'fixed',
+            top: menuLayout.top === null || menuLayout.top === undefined ? 'auto' : menuLayout.top,
+            bottom: menuLayout.bottom === null || menuLayout.bottom === undefined ? 'auto' : menuLayout.bottom,
+            left: menuLayout.left === null || menuLayout.left === undefined ? 'auto' : menuLayout.left,
+            right: menuLayout.right === null || menuLayout.right === undefined ? 'auto' : menuLayout.right,
+            maxHeight: menuLayout.maxHeight,
+          }
+          : { maxHeight: menuLayout.maxHeight },
+      }, menuChildren) : null
+      const headerMenu = menuNode !== null && compact && typeof createPortal === 'function' && typeof document !== 'undefined'
+        ? createPortal(menuNode, document.body)
+        : menuNode
+
+      return h('span', {
+        className: 'dsh-bots-mode-root',
+        ref: rootRef,
+        'data-bots-mode-phase': state.phase,
+        'data-bots-mode-variant': variant,
+        'data-bots-mode-session': typeof sessionId === 'string' ? sessionId : undefined,
+      },
         h('style', { key: 'dsh-bots-mode-styles' }, MODE_BIT_STYLES),
         h('button', {
           ref: chipRef,
           type: 'button',
-          className: 'dsh-bots-mode-chip',
+          className: 'dsh-bots-mode-chip' + (compact ? ' dsh-bots-mode-chip-compact' : ''),
           'aria-haspopup': 'menu',
           'aria-expanded': open ? 'true' : 'false',
           'aria-label': t('modeBitHint'),
@@ -7214,19 +7488,12 @@ div:has(> [data-slot="conversation.hero.options"]) { margin-left: 0; }
           onClick: function () { if (open) closeMenu(true); else setOpen(true) },
         },
           selected
-            ? h(BitAvatar, { bit: selected, size: 18, eager: true })
-            : h(BitAvatar, { bit: MODE_BIT_GENERIC_AVATAR, size: 18, eager: true }),
+            ? h(BitAvatar, { bit: selected, size: compact ? 16 : 18, eager: true })
+            : h(BitAvatar, { bit: MODE_BIT_GENERIC_AVATAR, size: compact ? 16 : 18, eager: true }),
           h('span', { className: 'dsh-bots-mode-chip-label' }, pending ? t('modeBitSaving') : label),
-          h('span', { className: 'dsh-bots-mode-chevron', 'aria-hidden': 'true' }, h(ChevronDownIcon, { size: 12 }))
+          h('span', { className: 'dsh-bots-mode-chevron', 'aria-hidden': 'true' }, h(ChevronDownIcon, { size: compact ? 10 : 12 }))
         ),
-        open ? h('div', {
-          ref: menuRef,
-          className: 'dsh-bots-mode-menu' + (menuLayout.placement === 'above' ? ' dsh-bots-mode-menu-above' : ''),
-          role: 'menu',
-          'aria-label': t('modeBitMenuLabel'),
-          'aria-busy': pending ? 'true' : undefined,
-          style: { maxHeight: menuLayout.maxHeight },
-        }, menuChildren) : null
+        headerMenu
       )
     }
 
@@ -7310,9 +7577,9 @@ div:has(> [data-slot="conversation.hero.options"]) { margin-left: 0; }
         }, BotsGlyph)
       })
 
-      // Bit mode seat: the orchestrating-bit picker beside the mode chip. It is
-      // registered only when the session store is available (the chip reads the
-      // preset from `ctx.sessions.list`); otherwise the Bits page keeps working.
+      // Bit mode seat: the orchestrating-bit picker. It is registered only when
+      // the session store is available (the chip reads the preset from
+      // `ctx.sessions.list`); otherwise the Bits page keeps working.
       let sessionsList = null
       try {
         sessionsList = ctx.sessions && ctx.sessions.list ? ctx.sessions.list : null
@@ -7338,6 +7605,31 @@ div:has(> [data-slot="conversation.hero.options"]) { margin-left: 0; }
           })
         } catch (error) {
           // An older Host without the hero options slot: keep the page working.
+        }
+        // Same picker in the session header, right after the read-only "Bit
+        // mode" preset label, for a conversation that is already open (the hero
+        // unmounts after the first message). The header slot is hidden while the
+        // session is blank, so the two seats never show at the same time.
+        try {
+          ctx.slots.inject('conversation.session.header.actions', function () {
+            return ctx.slots.register({
+              name: 'conversation.session.header.actions',
+              id: 'bots-mode-bit',
+              order: 5,
+              locale: NS,
+              inject: function (sessionId) {
+                return {
+                  hooks: { sessions: sessionsList },
+                  t: t,
+                  sessionId: sessionId,
+                  compact: true,
+                }
+              },
+            }, ModeBitSeat)
+          })
+        } catch (error) {
+          // An older Host without the session header actions slot: keep the
+          // hero seat and the Bits page working.
         }
       }
     }

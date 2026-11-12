@@ -1,6 +1,6 @@
 {
   "name": "@dsh-burn-plugins/dsh-bots",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
   "description": "Bits for DeepSeek Harness: flow workers that receive a request and return a response, orchestrator/worker model routing (DeepSeek-V4.1-Flash Max or the Claude subscription through @dsh-burn-plugins/dsh-claude-delegate), teams of bits with a visual flow editor, and projects that group teams.",
   "type": "module",

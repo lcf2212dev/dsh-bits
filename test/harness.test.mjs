@@ -84,6 +84,7 @@ await test('parseFrontmatter and modelTier', () => {
   assert.equal(parsed.fields.model, 'Claude Opus 5.5 (copilot)')
   assert.equal(parsed.body, 'body\n')
   assert.deepEqual(modelTier('Claude Opus 5.5 (copilot)'), { tier: 'strong', label: 'Claude Opus 5.5' })
+  assert.equal(modelTier('Claude Fable 5.2').tier, 'strong')
   assert.equal(modelTier('Claude Sonnet 5.5').tier, 'balanced')
   assert.equal(modelTier('haiku').tier, 'fast')
   assert.equal(modelTier('').tier, null)

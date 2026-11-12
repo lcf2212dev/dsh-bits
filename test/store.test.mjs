@@ -212,12 +212,12 @@ await test('create inherits isOrchestrator/model/effort from the catalog charact
     const scout = await store.create({ name: 'Scout', character: 'bit-scout' });
     assert.equal(scout.isOrchestrator, false);
     assert.equal(scout.model, 'subscription/haiku');
-    assert.equal(scout.effort, 'low');
+    assert.equal(scout.effort, 'medium');
 
     const architect = await store.create({ name: 'Arquiteto', character: 'bit-architect' });
     assert.equal(architect.isOrchestrator, false);
-    assert.equal(architect.model, 'subscription/opus');
-    assert.equal(architect.effort, 'xhigh');
+    assert.equal(architect.model, 'subscription/fable');
+    assert.equal(architect.effort, 'high');
 
     const manager = await store.create({ name: 'Manager', character: 'bit-manager' });
     assert.equal(manager.isOrchestrator, true, 'orchestrator catalog bit inherits the flag');
@@ -667,7 +667,7 @@ await test('records survive a new store instance', () =>
     assert.deepEqual(
       second.list().map((bit) => [bit.id, bit.name, bit.instructions, bit.isOrchestrator, bit.model, bit.effort]),
       [
-        [a.id, 'A', 'persistida', false, 'subscription/haiku', 'low'],
+        [a.id, 'A', 'persistida', false, 'subscription/haiku', 'medium'],
         [b.id, 'B', '', true, 'deepseek-account/deepseek-flash', 'max'],
       ],
     );
@@ -753,7 +753,7 @@ await test('loadable documents drop unusable entries and repair v5 fields', () =
     assert.match(valid.color, /^#[0-9a-f]{6}$/, 'invalid color falls back to the palette');
     assert.equal(valid.isOrchestrator, false, 'catalog defaults fill the flag');
     assert.equal(valid.model, 'subscription/haiku', 'catalog defaults fill the model');
-    assert.equal(valid.effort, 'low', 'catalog defaults fill the effort');
+    assert.equal(valid.effort, 'medium', 'catalog defaults fill the effort');
     assert.equal(valid.createdAt, base.createdAt);
     assert.equal(valid.vm, undefined, 'v4 vm field is dropped');
 
@@ -842,7 +842,7 @@ await test('migrates a v4 bots.json to bits.json once, with a backup and a log l
     assert.equal(scout.workspaceDir, path.join(botsRoot, 'a1b2c3d4e5', 'workspace'));
     assert.equal(scout.isOrchestrator, false);
     assert.equal(scout.model, 'subscription/haiku');
-    assert.equal(scout.effort, 'low');
+    assert.equal(scout.effort, 'medium');
     assert.equal(scout.createdAt, fixture.bots[0].createdAt);
 
     assert.equal(plain.character, null);

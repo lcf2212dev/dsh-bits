@@ -22,6 +22,7 @@
 
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import fs from 'node:fs/promises'
 import net from 'node:net'
@@ -124,6 +125,29 @@ async function api(route, body) {
   const payload = await response.json()
   assert.equal(payload.ok, true, `${route}: ${JSON.stringify(payload)}`)
   return payload
+}
+
+/**
+ * Call one remote endpoint through the authenticated HTTP bridge, using the
+ * same `client-request`/`server-response` envelope the Web client uses.
+ *
+ * @param {string} endpoint remote method name, e.g. `session/prompt`.
+ * @param {object} [args] method arguments object.
+ * @returns {Promise<any>} the `result.value` of a successful answer.
+ */
+async function remote(endpoint, args = {}) {
+  const rpcId = randomUUID()
+  const response = await fetch(`${origin}/api/${endpoint}`, {
+    method: 'POST',
+    headers: { cookie, 'content-type': 'application/json' },
+    body: JSON.stringify({ type: 'client-request', rpcId, method: endpoint, payload: { args } }),
+  })
+  const text = await response.text()
+  assert.equal(response.status, 200, `${endpoint} answered HTTP ${response.status}: ${text.slice(0, 400)}`)
+  const payload = JSON.parse(text)
+  assert.equal(payload.type, 'server-response', `${endpoint} answered an unexpected envelope: ${text.slice(0, 400)}`)
+  assert.equal(payload.result.ok, true, `${endpoint} failed: ${JSON.stringify(payload.result).slice(0, 800)}`)
+  return payload.result.value
 }
 
 /** Minimal Chrome DevTools Protocol client over Node's global WebSocket. */
@@ -256,7 +280,7 @@ async function main() {
 
   console.log('2/5 seed bits')
   const { bits: catalogBits } = await api('/api/bots.catalog')
-  assert.equal(catalogBits.length, 52, 'catalog served by the real host')
+  assert.equal(catalogBits.length, 53, 'catalog served by the real host')
   const bit = (id) => catalogBits.find((entry) => entry.id === id)
   const createBit = async (fields) => (await api('/api/bots.create', fields)).bit
 
@@ -456,7 +480,171 @@ async function main() {
   }
   const coordinatorCandidate = persisted.candidates.find((row) => row.name === 'Coordinator')
   assert.equal(coordinatorCandidate.isExisting, true, 'the provisioned bit joins the candidates')
+
   await screenshot(cdp, 'bit-3-selected')
+
+  // Existing-conversation seat: after the Bit-mode chat gets its first message
+  // the hero (and its chip) unmount, and a compact chip appears in the session
+  // header next to the read-only "Bit mode" label, so the orchestrating bit can
+  // still be seen and switched mid-conversation.
+  console.log('   in-conversation bit chip')
+  const heroChipSession = await evaluate(cdp, `(() => {
+    const root = document.querySelector('[data-slot="conversation.hero.options"] .dsh-bots-mode-root')
+    return root ? root.getAttribute('data-bots-mode-session') : null
+  })()`)
+  assert.ok(typeof heroChipSession === 'string' && heroChipSession !== '', `hero seat reports its session: ${JSON.stringify(heroChipSession)}`)
+  const prompted = await remote('session/prompt', {
+    request: {
+      requestId: randomUUID(),
+      sessionId: heroChipSession,
+      mode: 'queue',
+      content: [{ type: 'text', text: 'Plan the bits for this session.' }],
+    },
+  })
+  assert.equal(prompted.accepted, true, `session/prompt was not accepted: ${JSON.stringify(prompted)}`)
+  const headerChipSelector = '[data-slot="conversation.session.header.actions"] .dsh-bots-mode-root[data-bots-mode-variant="header"]'
+  // The header menu is portaled to document.body (fixed positioning) so the
+  // conversation shell cannot clip it.
+  const headerMenuSelector = '.dsh-bots-mode-menu[data-bots-mode-menu="header"]'
+  const headerItems = `${headerMenuSelector} .dsh-bots-mode-item`
+  await waitFor(cdp, `document.querySelector(${JSON.stringify(headerChipSelector)})`, 'in-conversation Bit mode chip', 60000)
+  await waitFor(cdp, `!document.querySelector('[data-slot="conversation.hero.options"] .dsh-bots-mode-root')`, 'hero seat unmounted', 30000)
+  await waitFor(cdp, `document.querySelector(${JSON.stringify(headerChipSelector)}).getAttribute('data-bots-mode-phase') === 'ready'`, 'header chip loaded', 30000)
+  const headerChip = await evaluate(cdp, `(() => {
+    const root = document.querySelector(${JSON.stringify(headerChipSelector)})
+    const chip = root.querySelector('.dsh-bots-mode-chip')
+    const rect = chip.getBoundingClientRect()
+    return {
+      label: chip.textContent,
+      phase: root.getAttribute('data-bots-mode-phase'),
+      compact: chip.classList.contains('dsh-bots-mode-chip-compact'),
+      height: rect.height,
+      session: root.getAttribute('data-bots-mode-session'),
+      headerText: document.querySelector('[data-slot="conversation.session.header.actions"]').textContent,
+      avatar: chip.querySelector('img') ? { src: chip.querySelector('img').getAttribute('src'), width: chip.querySelector('img').naturalWidth } : null,
+    }
+  })()`)
+  assert.equal(headerChip.session, heroChipSession, 'the header seat is bound to the same session')
+  assert.ok(/Coordinator/.test(headerChip.label), `header chip shows the selected bit: ${JSON.stringify(headerChip)}`)
+  assert.equal(headerChip.compact, true, 'the header seat uses the compact chip')
+  assert.ok(headerChip.height <= 24, `the compact chip fits the header row: ${headerChip.height}`)
+  assert.ok(/Bit mode/.test(headerChip.headerText), `the header still names the session preset: ${headerChip.headerText}`)
+  assert.ok(headerChip.avatar && headerChip.avatar.width > 0, `header chip avatar loaded: ${JSON.stringify(headerChip.avatar)}`)
+  await screenshot(cdp, 'bit-4-in-chat')
+
+  // The header chip opens the same picker; it must stay inside the viewport,
+  // right-aligning when a right-anchored panel fits and left-clamping otherwise.
+  await waitFor(cdp, `document.querySelector(${JSON.stringify(headerChipSelector)}).querySelector('.dsh-bots-mode-chip').getAttribute('aria-expanded') === 'false'`, 'header chip idle')
+  await evaluate(cdp, `document.querySelector(${JSON.stringify(headerChipSelector)}).querySelector('.dsh-bots-mode-chip').click()`)
+  await waitFor(cdp, `document.querySelectorAll(${JSON.stringify(headerItems)}).length === 5`, 'header menu rows', 30000)
+  await waitFor(cdp, `getComputedStyle(document.querySelector(${JSON.stringify(headerMenuSelector)})).position === 'fixed'`, 'header menu fixed positioning', 10000)
+  await waitFor(cdp, `[...document.querySelectorAll(${JSON.stringify(headerItems)})].filter((row) => row.querySelector('img')).length >= 4 && [...document.querySelectorAll(${JSON.stringify(headerItems)})].filter((row) => row.querySelector('img')).every((row) => { const img = row.querySelector('img'); return img.complete && img.naturalWidth > 0 })`, 'header menu avatars', 30000)
+  const headerMenu = await evaluate(cdp, `(() => {
+    const menu = document.querySelector(${JSON.stringify(headerMenuSelector)})
+    const rect = menu.getBoundingClientRect()
+    const chip = document.querySelector(${JSON.stringify(headerChipSelector)}).querySelector('.dsh-bots-mode-chip')
+    const chipRect = chip.getBoundingClientRect()
+    const header = document.querySelector('[data-slot="conversation.session.header.actions"]').getBoundingClientRect()
+    const style = getComputedStyle(menu)
+    const checkedRow = menu.querySelector('.dsh-bots-mode-item[aria-checked="true"]')
+    return {
+      position: style.position,
+      backgroundColor: style.backgroundColor,
+      borderTopStyle: style.borderTopStyle,
+      borderRadius: style.borderRadius,
+      boxShadow: style.boxShadow,
+      checkedRowBackground: checkedRow ? getComputedStyle(checkedRow).backgroundColor : '',
+      alignsRight: menu.style.left === 'auto' && menu.style.right !== 'auto',
+      rect: { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, width: rect.width },
+      chip: { left: chipRect.left, right: chipRect.right },
+      header: { top: header.top, bottom: header.bottom },
+      viewport: { width: window.innerWidth, height: window.innerHeight },
+      label: menu.querySelector('.dsh-bots-mode-menu-label') ? menu.querySelector('.dsh-bots-mode-menu-label').textContent : '',
+      names: [...menu.querySelectorAll('.dsh-bots-mode-item-name')].map((el) => el.textContent.trim()),
+    }
+  })()`)
+  assert.equal(headerMenu.label, 'Orchestrating bit', `header menu label: ${JSON.stringify(headerMenu.label)}`)
+  assert.deepEqual(headerMenu.names.slice(0, 1), ['No specific bit'], `header menu starts with the generic row: ${JSON.stringify(headerMenu.names)}`)
+  assert.equal(headerMenu.position, 'fixed', 'the header menu is fixed so the conversation shell cannot clip it')
+  // The portal escapes the seat's themed subtree, so the menu must carry the
+  // --dsh-mode-* tokens itself: an unstyled panel would be transparent.
+  assert.notEqual(headerMenu.backgroundColor, 'rgba(0, 0, 0, 0)', `the portaled header menu keeps its surface: ${JSON.stringify(headerMenu.backgroundColor)}`)
+  assert.equal(headerMenu.borderTopStyle, 'solid', `the portaled header menu keeps its border: ${JSON.stringify(headerMenu.borderTopStyle)}`)
+  assert.notEqual(headerMenu.borderRadius, '0px', `the portaled header menu keeps its rounded corners: ${JSON.stringify(headerMenu.borderRadius)}`)
+  assert.notEqual(headerMenu.boxShadow, 'none', `the portaled header menu keeps its elevation: ${JSON.stringify(headerMenu.boxShadow)}`)
+  assert.notEqual(headerMenu.checkedRowBackground, 'rgba(0, 0, 0, 0)', `the selected row keeps its highlight: ${JSON.stringify(headerMenu.checkedRowBackground)}`)
+  const needsRightAlign = headerMenu.chip.left + headerMenu.rect.width > headerMenu.viewport.width - 16
+    && headerMenu.chip.right - headerMenu.rect.width >= 8
+  assert.equal(headerMenu.alignsRight, needsRightAlign, `the header menu alignment matches the free space: ${JSON.stringify(headerMenu)}`)
+  assert.ok(headerMenu.rect.left >= 0 && headerMenu.rect.right <= headerMenu.viewport.width, `header menu inside the viewport: ${JSON.stringify(headerMenu.rect)}`)
+  assert.ok(headerMenu.rect.top >= headerMenu.header.bottom, `header menu opens below the header row: ${JSON.stringify(headerMenu)}`)
+  assert.ok(headerMenu.rect.top >= 0 && headerMenu.rect.bottom <= headerMenu.viewport.height, `header menu vertically inside the viewport: ${JSON.stringify(headerMenu.rect)}`)
+  await screenshot(cdp, 'bit-5-header-menu')
+
+  // Narrow viewport: when a left-aligned 340px panel would overflow, the header
+  // menu must right-align (the wide layout keeps it left-aligned, so this is the
+  // only way to exercise the clamp branch). Skipped when the narrow layout hides
+  // the header seat.
+  const closeHeaderMenu = `(() => {
+    const chip = document.querySelector(${JSON.stringify(headerChipSelector)})
+    const button = chip ? chip.querySelector('.dsh-bots-mode-chip') : null
+    if (button && button.getAttribute('aria-expanded') === 'true') button.click()
+    return true
+  })()`
+  await evaluate(cdp, closeHeaderMenu)
+  await waitFor(cdp, `!document.querySelector(${JSON.stringify(headerMenuSelector)})`, 'header menu closed before the narrow check')
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width: 480, height: 900, deviceScaleFactor: 1, mobile: false })
+  await sleep(600)
+  const narrowChip = await evaluate(cdp, `Boolean(document.querySelector(${JSON.stringify(headerChipSelector)}))`)
+  if (narrowChip) {
+    await evaluate(cdp, `document.querySelector(${JSON.stringify(headerChipSelector)}).querySelector('.dsh-bots-mode-chip').click()`)
+    await waitFor(cdp, `document.querySelectorAll(${JSON.stringify(headerItems)}).length === 5`, 'narrow header menu rows', 30000)
+    await waitFor(cdp, `getComputedStyle(document.querySelector(${JSON.stringify(headerMenuSelector)})).position === 'fixed'`, 'narrow header menu fixed positioning', 10000)
+    const narrowMenu = await evaluate(cdp, `(() => {
+      const menu = document.querySelector(${JSON.stringify(headerMenuSelector)})
+      const rect = menu.getBoundingClientRect()
+      const chip = document.querySelector(${JSON.stringify(headerChipSelector)}).querySelector('.dsh-bots-mode-chip')
+      const chipRect = chip.getBoundingClientRect()
+      return {
+        alignsRight: menu.style.left === 'auto' && menu.style.right !== 'auto',
+        rect: { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, width: rect.width },
+        chip: { left: chipRect.left, right: chipRect.right },
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+      }
+    })()`)
+    assert.ok(narrowMenu.rect.left >= 0 && narrowMenu.rect.right <= narrowMenu.viewport.width, `narrow header menu inside the viewport: ${JSON.stringify(narrowMenu)}`)
+    // Left-clamp wins when a right-anchored 340px panel would also overflow to
+    // the left; either way the panel must stay inside the viewport.
+    const narrowNeedsRight = narrowMenu.chip.left + narrowMenu.rect.width > narrowMenu.viewport.width - 16
+      && narrowMenu.chip.right - narrowMenu.rect.width >= 8
+    assert.equal(narrowMenu.alignsRight, narrowNeedsRight, `narrow header menu alignment matches the free space: ${JSON.stringify(narrowMenu)}`)
+    console.log('   narrow header menu:', JSON.stringify(narrowMenu.alignsRight), '| needs right align:', narrowNeedsRight)
+    await evaluate(cdp, closeHeaderMenu)
+    await waitFor(cdp, `!document.querySelector(${JSON.stringify(headerMenuSelector)})`, 'narrow header menu closed')
+  } else {
+    console.log('   narrow viewport hides the header seat; right-align branch stays defensive')
+  }
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width: WIDTH, height: HEIGHT, deviceScaleFactor: 1, mobile: false })
+  await sleep(600)
+
+  // Clear the selection from the header, then restore the existing bit: the
+  // global preference changes, but the session preset itself is untouched.
+  await waitFor(cdp, `document.querySelector(${JSON.stringify(headerChipSelector)}).querySelector('.dsh-bots-mode-chip').getAttribute('aria-expanded') === 'false'`, 'header chip idle after the narrow check')
+  await evaluate(cdp, `document.querySelector(${JSON.stringify(headerChipSelector)}).querySelector('.dsh-bots-mode-chip').click()`)
+  await waitFor(cdp, `document.querySelectorAll(${JSON.stringify(headerItems)}).length === 5`, 'header menu rows before clearing', 30000)
+  await evaluate(cdp, `[...document.querySelectorAll(${JSON.stringify(headerItems)})].find((row) => row.getAttribute('data-generic') === 'true').click()`)
+  await waitFor(cdp, `!/Coordinator/.test(document.querySelector(${JSON.stringify(headerChipSelector)}).textContent) && /Choose bit/i.test(document.querySelector(${JSON.stringify(headerChipSelector)}).textContent)`, 'header chip cleared', 30000)
+  await waitFor(cdp, `!document.querySelector(${JSON.stringify(headerMenuSelector)})`, 'header menu closed after clearing', 30000)
+  const clearedSelection = await api('/api/bots.orchestrator')
+  assert.equal(clearedSelection.bitId, null, `clearing from the header persists: ${JSON.stringify(clearedSelection.bitId)}`)
+  await waitFor(cdp, `document.querySelector(${JSON.stringify(headerChipSelector)}).querySelector('.dsh-bots-mode-chip').getAttribute('aria-expanded') === 'false'`, 'header chip idle after clearing')
+  await evaluate(cdp, `document.querySelector(${JSON.stringify(headerChipSelector)}).querySelector('.dsh-bots-mode-chip').click()`)
+  await waitFor(cdp, `document.querySelectorAll(${JSON.stringify(headerItems)}).length === 5`, 'header menu rows after clearing', 30000)
+  await evaluate(cdp, `[...document.querySelectorAll(${JSON.stringify(headerItems)})].find((row) => row.getAttribute('data-target') === ${JSON.stringify(orchestratorView.bitId)}).click()`)
+  await waitFor(cdp, `/Coordinator/.test(document.querySelector(${JSON.stringify(headerChipSelector)}).textContent)`, 'header chip shows the restored bit', 30000)
+  const restored = await api('/api/bots.orchestrator')
+  assert.equal(restored.bitId, orchestratorView.bitId, `restoring from the header persists: ${JSON.stringify(restored.bitId)}`)
+  console.log('   header chip:', JSON.stringify(headerChip.label.trim()), '| menu rows:', headerMenu.names.length, '| right-aligned:', headerMenu.alignsRight)
 
   console.log('5/5 screenshots + interactions')
   const entry = `[...document.querySelectorAll('nav button, nav a, [role="button"], button')].find((el) => /^\\s*Bits\\s*$/.test(el.textContent || el.getAttribute('aria-label') || ''))`
@@ -483,7 +671,7 @@ async function main() {
   const orchestratorCard = `document.querySelector('.dsh-bots-card[data-bit-id="${orchestrator.id}"]')`
   const scoutText = await evaluate(cdp, `${scoutCard}.textContent`)
   assert.ok(/Worker/.test(scoutText), `worker badge: ${scoutText}`)
-  assert.ok(/Claude Haiku 5\.5 \(subscription\) · low/.test(scoutText), `model label + effort on the card: ${scoutText}`)
+  assert.ok(/Claude Haiku 5\.5 \(subscription\) · medium/.test(scoutText), `model label + effort on the card: ${scoutText}`)
   assert.ok(!/Executes in flows/.test(scoutText), 'workers do not show the flows note')
   const orchestratorText = await evaluate(cdp, `${orchestratorCard}.textContent`)
   assert.ok(/Orchestrator/.test(orchestratorText), `orchestrator badge: ${orchestratorText}`)
@@ -492,9 +680,105 @@ async function main() {
   assert.equal(await evaluate(cdp, `[...${orchestratorCard}.querySelectorAll('button')].some((el) => /^Run$/.test(el.textContent.trim()))`), false, 'no ad-hoc Run on an orchestrator')
   await screenshot(cdp, '1-list')
 
+  // Catalog section: every catalog character without a bit is listed as an
+  // available bit (catalog order), below the created cards.
+  await waitFor(cdp, `document.querySelector('.dsh-bots-catalog-section')`, 'catalog section')
+  const usedCharacters = ['bit-scout', 'bit-builder', 'bit-product-owner', 'bit-coordinator']
+  const expectedAvailable = catalogBits.filter((entry) => !usedCharacters.includes(entry.id))
+  assert.equal(expectedAvailable.length, 49, 'the seeded bits leave 49 catalog characters')
+  await waitFor(cdp, `document.querySelectorAll('.dsh-bots-catalog-card').length === ${expectedAvailable.length}`, 'catalog available cards')
+  const catalogSection = await evaluate(cdp, `(() => {
+    const section = document.querySelector('.dsh-bots-catalog-section')
+    const readCard = (id) => {
+      const card = document.querySelector('.dsh-bots-catalog-card[data-catalog-character="' + id + '"]')
+      if (!card) return null
+      const avatar = card.querySelector('img')
+      return {
+        name: card.querySelector('.dsh-bots-name').textContent.trim(),
+        badges: [...card.querySelectorAll('.dsh-bots-badge')].map((el) => el.textContent.trim()),
+        group: card.querySelector('.dsh-bots-catalog-group') ? card.querySelector('.dsh-bots-catalog-group').textContent.trim() : '',
+        summary: card.querySelector('.dsh-bots-persona') ? card.querySelector('.dsh-bots-persona').textContent.trim() : '',
+        route: card.querySelector('.dsh-bots-meta') ? card.querySelector('.dsh-bots-meta').textContent.trim() : '',
+        action: card.querySelector('.dsh-bots-button-primary') ? card.querySelector('.dsh-bots-button-primary').textContent.trim() : '',
+        avatar: avatar ? avatar.getAttribute('src') : '',
+      }
+    }
+    const cards = [...document.querySelectorAll('.dsh-bots-catalog-card')]
+    return {
+      title: section.querySelector('.dsh-bots-catalog-title') ? section.querySelector('.dsh-bots-catalog-title').textContent.trim() : '',
+      hint: section.querySelector('.dsh-bots-catalog-hint') ? section.querySelector('.dsh-bots-catalog-hint').textContent.trim() : '',
+      ids: cards.map((card) => card.getAttribute('data-catalog-character')),
+      manager: readCard('bit-manager'),
+      architect: readCard('bit-architect'),
+    }
+  })()`)
+  assert.equal(catalogSection.title, 'All bits')
+  assert.ok(catalogSection.hint.length > 0, 'catalog section has an intro')
+  assert.deepEqual(catalogSection.ids, expectedAvailable.map((entry) => entry.id), 'catalog cards keep the catalog order')
+  assert.ok(!catalogSection.ids.includes('bit-scout'), 'Scout already has a bit and is not offered twice')
+  assert.equal(catalogSection.manager.name, 'Manager')
+  assert.deepEqual(catalogSection.manager.badges, ['Orchestrator'], 'orchestrator family badge')
+  assert.equal(catalogSection.manager.group, 'Management & product', 'catalog group label')
+  assert.ok(catalogSection.manager.summary.length > 0, 'orchestrator summary shown')
+  assert.ok(/·\s*max$/.test(catalogSection.manager.route), `orchestrator preset route: ${catalogSection.manager.route}`)
+  assert.ok(/\/api\/bots\.avatar\?id=bit-manager/.test(catalogSection.manager.avatar), `catalog avatar: ${catalogSection.manager.avatar}`)
+  assert.deepEqual(catalogSection.architect.badges, ['Worker'], 'worker family badge')
+  assert.equal(catalogSection.architect.group, 'Workers (tasks)')
+  assert.ok(catalogSection.architect.summary.length > 0, 'worker summary shown')
+  assert.ok(/·\s*high$/.test(catalogSection.architect.route), `worker preset route: ${catalogSection.architect.route}`)
+  assert.equal(catalogSection.architect.action, 'New bit')
+
+  // Scroll to the section so the screenshot shows the available catalog bits.
+  await sleep(400)
+  await evaluate(cdp, `document.querySelector('.dsh-bots-catalog-section').scrollIntoView({ block: 'start' })`)
+  await sleep(500)
+  await waitFor(cdp, `(() => {
+    const images = [...document.querySelectorAll('.dsh-bots-catalog-card img')].slice(0, 4)
+    return images.length === 4 && images.every((img) => img.complete && img.naturalWidth > 0)
+  })()`, 'catalog avatars loaded')
+  await screenshot(cdp, '8-catalog')
+
+  // A card action opens the create form on the form step, prefilled from the
+  // character (family included) — not on the gallery step.
+  await evaluate(cdp, `document.querySelector('.dsh-bots-catalog-card[data-catalog-character="bit-manager"] .dsh-bots-button-primary').click()`)
+  await waitFor(cdp, `document.querySelector('#dsh-bots-name-input')`, 'prefilled form from a catalog card')
+  const catalogPrefilled = await evaluate(cdp, `({
+    name: document.querySelector('#dsh-bots-name-input').value,
+    description: document.querySelector('#dsh-bots-instructions-input').value,
+    family: document.querySelector('.dsh-bots-box [role="switch"]').getAttribute('aria-checked'),
+    familyLabel: document.querySelector('.dsh-bots-box [role="switch"]').textContent.trim(),
+    galleryTiles: document.querySelectorAll('.dsh-bots-bit-tile').length,
+    focused: document.activeElement && document.activeElement.id,
+  })`)
+  assert.equal(catalogPrefilled.name, 'Manager')
+  assert.equal(catalogPrefilled.description, bit('bit-manager').instructions)
+  assert.equal(catalogPrefilled.galleryTiles, 0, 'opens on the form step, not the gallery')
+  assert.equal(catalogPrefilled.family, 'true', 'family badge matches the orchestrator character')
+  assert.ok(/Orchestrator/.test(catalogPrefilled.familyLabel), catalogPrefilled.familyLabel)
+  assert.equal(catalogPrefilled.focused, 'dsh-bots-name-input')
+  await evaluate(cdp, `document.querySelector('.dsh-bots-dialog-footer button').click()`)
+  await waitFor(cdp, `!document.querySelector('.dsh-bots-dialog')`, 'catalog form closed without creating')
+
+  // A worker character prefills the worker family as well.
+  await evaluate(cdp, `document.querySelector('.dsh-bots-catalog-card[data-catalog-character="bit-architect"] .dsh-bots-button-primary').click()`)
+  await waitFor(cdp, `document.querySelector('#dsh-bots-name-input')`, 'prefilled worker form')
+  const catalogWorkerPrefilled = await evaluate(cdp, `({
+    name: document.querySelector('#dsh-bots-name-input').value,
+    description: document.querySelector('#dsh-bots-instructions-input').value,
+    family: document.querySelector('.dsh-bots-box [role="switch"]').getAttribute('aria-checked'),
+  })`)
+  assert.equal(catalogWorkerPrefilled.name, 'Architect')
+  assert.equal(catalogWorkerPrefilled.description, bit('bit-architect').instructions)
+  assert.equal(catalogWorkerPrefilled.family, 'false')
+  await evaluate(cdp, `document.querySelector('.dsh-bots-dialog-footer button').click()`)
+  await waitFor(cdp, `!document.querySelector('.dsh-bots-dialog')`, 'worker catalog form closed')
+  // Back to the top: the rest of the run frames the created bit cards as before.
+  await evaluate(cdp, `document.querySelector('.dsh-bots-page').scrollTo({ top: 0 })`)
+  await sleep(300)
+
   // New bit -> catalog picker.
   await evaluate(cdp, `[...document.querySelectorAll('.dsh-bots-toolbar button')].at(-1).click()`)
-  await waitFor(cdp, `document.querySelectorAll('.dsh-bots-bit-tile').length === 52`, 'picker tiles')
+  await waitFor(cdp, `document.querySelectorAll('.dsh-bots-bit-tile').length === 53`, 'picker tiles')
   await sleep(1200)
   await screenshot(cdp, '2-picker')
   const surfaces = await evaluate(cdp, `(() => {
@@ -509,7 +793,7 @@ async function main() {
 
   // Search matches the tester bits.
   await setInput(cdp, '.dsh-bots-picker-search input', 'test')
-  await waitFor(cdp, `document.querySelectorAll('.dsh-bots-bit-tile').length > 0 && document.querySelectorAll('.dsh-bots-bit-tile').length < 52`, 'filtered tiles')
+  await waitFor(cdp, `document.querySelectorAll('.dsh-bots-bit-tile').length > 0 && document.querySelectorAll('.dsh-bots-bit-tile').length < 53`, 'filtered tiles')
   const filtered = await evaluate(cdp, `[...document.querySelectorAll('.dsh-bots-bit-name')].map((el) => el.textContent)`)
   console.log('   search "test" ->', filtered.join(', '))
   assert.ok(filtered.includes('Web Tester') && filtered.includes('QA'), 'testers found')
@@ -518,7 +802,7 @@ async function main() {
 
   // Pick Builder (worker): name/instructions/model/effort are prefilled from the bit.
   await setInput(cdp, '.dsh-bots-picker-search input', '')
-  await waitFor(cdp, `document.querySelectorAll('.dsh-bots-bit-tile').length === 52`, 'all tiles again')
+  await waitFor(cdp, `document.querySelectorAll('.dsh-bots-bit-tile').length === 53`, 'all tiles again')
   await evaluate(cdp, `[...document.querySelectorAll('.dsh-bots-bit-tile')].find((el) => el.querySelector('.dsh-bots-bit-name').textContent === 'Builder').click()`)
   await waitFor(cdp, `document.querySelector('#dsh-bots-name-input')`, 'form step')
   const prefilled = await evaluate(cdp, `({
@@ -532,7 +816,7 @@ async function main() {
   assert.equal(prefilled.name, 'Builder')
   assert.equal(prefilled.description, bit('bit-builder').instructions)
   assert.equal(prefilled.model, 'subscription/sonnet')
-  assert.equal(prefilled.effort, 'high')
+  assert.equal(prefilled.effort, bit('bit-builder').effort)
   assert.equal(prefilled.orchestrator, 'false')
   assert.equal(prefilled.focused, 'dsh-bots-name-input')
 
@@ -550,7 +834,7 @@ async function main() {
   assert.ok(asWorker.model === 'deepseek-account/deepseek-flash' || asWorker.model === 'subscription/sonnet', `worker model after toggling off: ${JSON.stringify(asWorker)}`)
   // Deterministic record for the save below: back to the catalog worker default.
   await setSelect(cdp, '#dsh-bots-model-input', 'subscription/sonnet')
-  await setSelect(cdp, '#dsh-bots-effort-input', 'high')
+  await setSelect(cdp, '#dsh-bots-effort-input', bit('bit-builder').effort)
 
   // Rename and create through the UI.
   await setInput(cdp, '#dsh-bots-name-input', 'Store Builder')
@@ -565,17 +849,19 @@ async function main() {
   assert.equal(created.color, bit('bit-builder').color)
   assert.equal(created.isOrchestrator, false, 'worker family saved')
   assert.equal(created.model, 'subscription/sonnet', 'catalog model saved')
-  assert.equal(created.effort, 'high', 'catalog effort saved')
+  assert.equal(created.effort, bit('bit-builder').effort, 'catalog effort saved')
   assert.equal('vm' in created, false, 'v5 record has no vm')
   console.log('   created through UI:', created.name, created.character, created.model, created.effort)
 
   // Edit the legacy bit: no character yet, the custom name/description are kept.
   await waitFor(cdp, `document.querySelectorAll('.dsh-bots-card').length === 6`, 'six cards')
+  // Creating a bit through the gallery keeps the catalog section in place.
+  await waitFor(cdp, `document.querySelectorAll('.dsh-bots-catalog-card').length === ${expectedAvailable.length}`, 'catalog available cards after a creation')
   await evaluate(cdp, `document.querySelector('.dsh-bots-card[data-bit-id="${legacy.id}"] .dsh-bots-button-outline').click()`)
   await waitFor(cdp, `document.querySelector('.dsh-bots-bit-hero')`, 'edit dialog')
   await screenshot(cdp, '5-edit-legacy')
   await evaluate(cdp, `document.querySelector('.dsh-bots-bit-hero button').click()`)
-  await waitFor(cdp, `document.querySelectorAll('.dsh-bots-bit-tile').length === 52`, 'picker from edit')
+  await waitFor(cdp, `document.querySelectorAll('.dsh-bots-bit-tile').length === 53`, 'picker from edit')
   await evaluate(cdp, `[...document.querySelectorAll('.dsh-bots-bit-tile')].find((el) => el.querySelector('.dsh-bots-bit-name').textContent === 'Writer').click()`)
   await waitFor(cdp, `document.querySelector('#dsh-bots-name-input')`, 'back to form')
   const kept = await evaluate(cdp, `({
@@ -596,6 +882,8 @@ async function main() {
   assert.equal(editedLegacy.character, 'bit-writer')
   assert.equal(editedLegacy.effort, 'medium')
   assert.equal(editedLegacy.isOrchestrator, false)
+  // The legacy bit now uses the Writer character: the catalog section drops it.
+  await waitFor(cdp, `document.querySelectorAll('.dsh-bots-catalog-card').length === ${expectedAvailable.length - 1}`, 'catalog drops the created character')
 
   // Run: worker request → response. The route records the readOnly flag; in
   // this isolated profile the delegate backend is unavailable, so the dialog
@@ -640,6 +928,23 @@ async function main() {
   assert.ok(await evaluate(cdp, `document.querySelectorAll('.dsh-bots-tab[aria-selected="true"]').length === 1`), 'one tab selected')
   await evaluate(cdp, `[...document.querySelectorAll('.dsh-bots-tab')].find((el) => /Bits/.test(el.textContent)).click()`)
   await waitFor(cdp, `document.querySelectorAll('.dsh-bots-card').length === 6`, 'back on the bits list')
+
+  // Creating a bit from a catalog card uses the same create route and moves the
+  // character from the catalog section into the created list.
+  await waitFor(cdp, `document.querySelector('.dsh-bots-catalog-card[data-catalog-character="bit-architect"]')`, 'available Architect card')
+  await evaluate(cdp, `document.querySelector('.dsh-bots-catalog-card[data-catalog-character="bit-architect"] .dsh-bots-button-primary').click()`)
+  await waitFor(cdp, `document.querySelector('#dsh-bots-name-input')`, 'catalog prefilled form')
+  assert.equal(await evaluate(cdp, `document.querySelector('#dsh-bots-name-input').value`), 'Architect')
+  await evaluate(cdp, `[...document.querySelectorAll('.dsh-bots-dialog-footer button')].at(-1).click()`)
+  await waitFor(cdp, `!document.querySelector('.dsh-bots-dialog')`, 'dialog closed after the catalog create', 30000)
+  await waitFor(cdp, `document.querySelectorAll('.dsh-bots-card').length === 7`, 'the catalog bit joins the created cards')
+  await waitFor(cdp, `document.querySelectorAll('.dsh-bots-catalog-card').length === ${expectedAvailable.length - 2}`, 'the catalog section drops the created character')
+  const catalogCreated = (await api('/api/bots.list')).bits.find((entryBit) => entryBit.character === 'bit-architect')
+  assert.ok(catalogCreated, 'the catalog card created a bit through the create route')
+  assert.equal(catalogCreated.name, 'Architect')
+  assert.equal(catalogCreated.isOrchestrator, false)
+  assert.equal(catalogCreated.model, bit('bit-architect').model, 'catalog preset model saved')
+  assert.equal(catalogCreated.effort, bit('bit-architect').effort, 'catalog preset effort saved')
 
   // Delete confirmation.
   await evaluate(cdp, `document.querySelector('.dsh-bots-card[data-bit-id="${scout.id}"] .dsh-bots-button-danger').click()`)

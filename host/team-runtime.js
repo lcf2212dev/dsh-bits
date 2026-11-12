@@ -33,7 +33,7 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import { readPack } from './harness.js'
-import { isOrchestratorSession } from './orchestrator.js'
+import { ORCHESTRATOR_PRESET, isOrchestratorSession } from './orchestrator.js'
 import { TeamBindingStore } from './team-bindings.js'
 import { UNGUARDED_TOOLS, guardEvent, leadMayRead, runGuard, teamToolAllowed } from './team-guard.js'
 import { leadPromptText, memberPromptText } from './team-prompt.js'
@@ -236,6 +236,38 @@ export function installTeamRuntime(ctx, deps) {
   }
 
   /**
+   * The profile's Agent preset registry, when present (effective preset reads).
+   *
+   * @returns {any | null} registry exposing `presetForSession`, or null.
+   */
+  function agentPresetsService() {
+    try {
+      const service = typeof ctx.get === 'function' ? ctx.get('agentPresets') : null
+      return service && typeof service.presetForSession === 'function' ? service : null
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Live Agent of a Session id, when it is currently open. Used by the
+   * `agent-preset/selected` hook, which reports the session id.
+   *
+   * @param {unknown} sessionId
+   * @returns {any | null}
+   */
+  function liveAgentOf(sessionId) {
+    if (typeof sessionId !== 'string' || sessionId === '') return null
+    try {
+      const agents = ctx.agents && typeof ctx.agents.list === 'function' ? ctx.agents.list() : []
+      if (!Array.isArray(agents)) return null
+      return agents.find((agent) => agent && (agent.id === sessionId || (agent.session && agent.session.id === sessionId))) || null
+    } catch {
+      return null
+    }
+  }
+
+  /**
    * Team binding of an agent, resolved live.
    *
    * @returns {null | { team: any, member: any, role: 'lead' | 'member', child: boolean, sessionId: string }}
@@ -244,7 +276,9 @@ export function installTeamRuntime(ctx, deps) {
     if (!agent || !agent.session) return null
     // The Bit mode preset is its own mode: such a chat never becomes a
     // team lead, even when its cwd is inside a bindWorkspace team directory.
-    if (isOrchestratorSession(agent)) return null
+    // Read the effective preset: a blank chat switched to Bit mode after
+    // creation records the selection in its log, not in the frozen header.
+    if (isOrchestratorSession(agent, agentPresetsService())) return null
     const sessionId = agent.session.id || agent.id
     const header = agent.session.header || {}
     const child = header.origin === 'subagent'
@@ -1152,6 +1186,25 @@ export function installTeamRuntime(ctx, deps) {
     }
   }))
   disposers.push(ctx.on('agent/disposed', ({ agent }) => uninstall(agent)))
+  // A preset picked on an already-created blank chat can turn a team agent into
+  // a Bit mode chat, or a Bit mode chat back into a team agent. The install made
+  // on `agent/created` follows the effective preset, not the frozen header, so
+  // it must be re-applied when the committed preset changes.
+  disposers.push(ctx.on('agent-preset/selected', (sessionId, presetId) => {
+    try {
+      const agent = liveAgentOf(sessionId)
+      if (!agent) return
+      const committed = typeof presetId === 'string' ? presetId.trim() : ''
+      const bitMode = committed !== '' ? committed === ORCHESTRATOR_PRESET : isOrchestratorSession(agent, agentPresetsService())
+      if (bitMode) {
+        uninstall(agent)
+        return
+      }
+      if (!installed.has(agent)) install(agent).catch((error) => noteError(`team install after preset change failed for ${agent.id}: ${messageOf(error)}`))
+    } catch (error) {
+      noteError(`team preset selection handling failed: ${messageOf(error)}`)
+    }
+  }))
 
   ready.then(() => {
     let agents = []

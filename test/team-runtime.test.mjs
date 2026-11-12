@@ -571,6 +571,55 @@ await test('team_handoff rebinds the session to the other team lead', async () =
   assert.equal(entry.bitId, 'bit-validator')
 })
 
+await test('a blank session switched to the Bit mode preset is never resolved as a team lead', async () => {
+  // DSH records a preset picked before the first turn in the session log while
+  // the creation header keeps the old preset; the guard must read the effective
+  // preset (agentPresets.presetForSession), not the frozen header.
+  const projections = new Map()
+  const originalGet = host.ctx.get
+  host.ctx.get = (name) => (name === 'agentPresets'
+    ? { presetForSession: (session) => projections.get(session && session.id) ?? null }
+    : originalGet(name))
+  try {
+    const picked = host.makeAgent('picked-standard-header', { cwd: env.workspace })
+    picked.session.header.agentPreset = 'cordis'
+    projections.set(picked.id, ORCHESTRATOR_PRESET)
+    await host.emit('agent/created', { agent: picked, source: 'startup' })
+    assert.equal(runtime.resolveSession(picked.id), null, 'the picked Bit mode session was resolved as a team lead')
+    assert.equal(host.sections.get(picked.id), undefined, 'no team prompt section on the picked session')
+    assert.equal(host.state.tools.get(picked.id), undefined, 'no team tools on the picked session')
+
+    // Positive control: the same header without the recorded Bit mode selection
+    // is a normal chat and still becomes the lead inside the bound workspace.
+    const control = host.makeAgent('control-standard-header', { cwd: env.workspace })
+    control.session.header.agentPreset = 'cordis'
+    await host.emit('agent/created', { agent: control, source: 'startup' })
+    assert.ok(runtime.resolveSession(control.id), 'a normal chat in the same workspace stopped resolving as the lead')
+    assert.ok(host.sections.get(control.id), 'the lead got its team prompt section')
+
+    // Switching that live, still-blank chat to Bit mode must drop the team
+    // install made at agent/created (prompt, team tools and restrict mask).
+    projections.set(control.id, ORCHESTRATOR_PRESET)
+    await host.emit('agent-preset/selected', control.id, ORCHESTRATOR_PRESET)
+    assert.equal(runtime.resolveSession(control.id), null)
+    assert.equal(host.sections.get(control.id), undefined, 'the team section survived the Bit mode pick')
+    assert.equal(host.state.tools.get(control.id)?.get('team_delegate') ?? undefined, undefined, 'the team tools survived the Bit mode pick')
+    assert.equal(host.state.restricts.get(control.id), undefined, 'the restrict mask survived the Bit mode pick')
+    assert.equal(runtime.diagnostics().agents.some((agent) => agent.sessionId === control.id), false, 'diagnostics still lists the team lead')
+
+    // Switching it back (still blank) re-applies the team install.
+    projections.set(control.id, 'cordis')
+    await host.emit('agent-preset/selected', control.id, 'cordis')
+    await sleep(20)
+    assert.ok(runtime.resolveSession(control.id), 'the chat did not resolve as the lead again')
+    assert.ok(host.sections.get(control.id), 'the team section was not re-installed')
+    assert.ok(host.state.tools.get(control.id)?.get('team_delegate'), 'the team tools were not re-installed')
+    assert.equal(runtime.diagnostics().agents.some((agent) => agent.sessionId === control.id), true)
+  } finally {
+    host.ctx.get = originalGet
+  }
+})
+
 await test('startMission creates a lead session in the team workspace, selects the bit route and delivers the request', async () => {
   const created = []
   const followups = []

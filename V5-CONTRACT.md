@@ -38,10 +38,14 @@ core, installing/enabling anything in a profile from a worker.
 Two model families:
 
 1. **Subscription (Claude Code, via `claude_delegate`)**
-   - Stored as `subscription/<alias>` with `alias ∈ {opus, sonnet, haiku}`.
-   - Display labels: `Claude Opus 5.5 (subscription)`, `Claude Sonnet 5.5 (subscription)`,
+   - Stored as `subscription/<alias>` with `alias ∈ {fable, opus, sonnet, haiku}`.
+   - Display labels, most capable first: `Claude Fable 5.2 (subscription)`,
+     `Claude Opus 5.5 (subscription)`, `Claude Sonnet 5.5 (subscription)`,
      `Claude Haiku 5.5 (subscription)`.
    - Efforts: `low | medium | high | xhigh | max`.
+   - `fable` requires `@dsh-burn-plugins/dsh-claude-delegate` ≥ 0.1.1 (the version that
+     accepts the alias) and Claude Code ≥ 2.1.321 (older CLIs resolve `fable` to an older
+     Fable); depending on the plan it bills usage credits instead of the included limits.
    - Runs with the worker's cwd and Claude Code tools; read-only workers pass
      `readOnly: true` (see §6).
 2. **DSH chat routes (profile LLM providers)**
@@ -71,8 +75,8 @@ export function createModelCatalog(ctx) // { list(), resolve(bit), effortFor(mod
 returns the subscription group only. Models whose efforts cannot be resolved still appear
 with the fallback effort list. `resolve("DeepSeek-V4.1-Flash")` (bare label) is accepted for
 backward compatibility/migration: match a profile model by name or id tokens; resolve to
-`<provider>/<modelId>`. `subscription/opus` resolves via the alias table; also accept a bare
-`opus`/`sonnet`/`haiku` for legacy data.
+`<provider>/<modelId>`. `subscription/<alias>` resolves via the alias table; also accept a
+bare `fable`/`opus`/`sonnet`/`haiku` for legacy data.
 
 `effortFor(model, wished)` maps aliases the way the old runtime did
 (`xhigh → xhigh|max|high`, `high → high|max`, `medium → medium|high|low`,
@@ -101,7 +105,7 @@ Persisted in `<botsRoot>/bits.json` (atomic write, tmp+rename, 0600). `botsRoot`
       "instructions": "Bit context (persona/briefing)...",
       "isOrchestrator": false,
       "model": "subscription/sonnet",
-      "effort": "high",
+      "effort": "medium",
       "workspaceDir": "/home/me/.dsh/bots/3f9a1c2b7e/workspace",
       "createdAt": "ISO",
       "updatedAt": "ISO"
@@ -169,7 +173,7 @@ missing (fallback values above). Log a summary (`N teams, M bits created`).
 
 ## 4. Bit catalog (`bits/catalog.json`, `host/catalog.js`)
 
-Schema version 2. Each of the 52 bits keeps `id, name, group, emoji, color, summary,
+Schema version 2. Each of the 53 bits keeps `id, name, group, emoji, color, summary,
 instructions` and gains:
 
 ```json
@@ -185,22 +189,22 @@ Defaults to assign (exact table — the Lead owns it, implementers must not inve
 | bit-product-owner | **true** | deepseek-account/deepseek-flash | max |
 | bit-coordinator | **true** | deepseek-account/deepseek-flash | max |
 | bit-sub-coordinator | **true** | deepseek-account/deepseek-flash | max |
-| bit-systems-analyst | false | subscription/opus | high |
-| bit-product-analyst | false | subscription/sonnet | medium |
-| bit-user-researcher | false | subscription/sonnet | medium |
-| bit-scout | false | subscription/haiku | low |
-| bit-researcher | false | subscription/sonnet | medium |
-| bit-architect | false | subscription/opus | xhigh |
-| bit-builder | false | subscription/sonnet | high |
+| bit-systems-analyst | false | subscription/opus | medium |
+| bit-product-analyst | false | subscription/sonnet | high |
+| bit-user-researcher | false | subscription/sonnet | high |
+| bit-scout | false | subscription/haiku | medium |
+| bit-researcher | false | subscription/sonnet | high |
+| bit-architect | false | subscription/fable | high |
+| bit-builder | false | subscription/sonnet | medium |
 | bit-runner | false | subscription/haiku | low |
 | bit-reviewer | false | subscription/opus | high |
-| bit-debugger | false | subscription/opus | xhigh |
-| bit-ci-triager | false | subscription/sonnet | medium |
+| bit-debugger | false | subscription/fable | high |
+| bit-ci-triager | false | subscription/sonnet | high |
 | bit-writer | false | subscription/sonnet | medium |
 | bit-qa | false | subscription/sonnet | high |
-| bit-web-tester | false | subscription/sonnet | high |
-| bit-android-tester | false | subscription/sonnet | high |
-| bit-ios-tester | false | subscription/sonnet | high |
+| bit-web-tester | false | subscription/sonnet | medium |
+| bit-android-tester | false | subscription/sonnet | medium |
+| bit-ios-tester | false | subscription/sonnet | medium |
 | bit-frontend-engineer | false | subscription/sonnet | high |
 | bit-backend-engineer | false | subscription/sonnet | high |
 | bit-android-engineer | false | subscription/sonnet | high |
@@ -208,7 +212,7 @@ Defaults to assign (exact table — the Lead owns it, implementers must not inve
 | bit-flutter-engineer | false | subscription/sonnet | high |
 | bit-react-native-engineer | false | subscription/sonnet | high |
 | bit-cloud-engineer | false | subscription/sonnet | high |
-| bit-sre | false | subscription/opus | high |
+| bit-sre | false | subscription/opus | medium |
 | bit-deployer | false | subscription/sonnet | medium |
 | bit-integration-engineer | false | subscription/sonnet | high |
 | bit-performance-engineer | false | subscription/opus | high |
@@ -221,21 +225,24 @@ Defaults to assign (exact table — the Lead owns it, implementers must not inve
 | bit-ui-designer | false | subscription/sonnet | medium |
 | bit-design-system-expert | false | subscription/sonnet | high |
 | bit-accessibility-expert | false | subscription/sonnet | medium |
+| bit-pixel-artist | false | subscription/sonnet | high |
 | bit-growth-marketer | false | subscription/sonnet | medium |
 | bit-seo-expert | false | subscription/sonnet | medium |
 | bit-copywriter | false | subscription/sonnet | medium |
-| bit-i18n | false | subscription/haiku | low |
-| bit-crm-specialist | false | subscription/haiku | low |
+| bit-i18n | false | subscription/sonnet | medium |
+| bit-crm-specialist | false | subscription/haiku | high |
 | bit-sales | false | subscription/sonnet | medium |
-| bit-sales-assistant | false | subscription/haiku | low |
+| bit-sales-assistant | false | subscription/haiku | high |
 | bit-customer-success | false | subscription/sonnet | medium |
-| bit-support | false | subscription/haiku | low |
-| bit-finance-analyst | false | subscription/sonnet | medium |
-| bit-privacy-compliance | false | subscription/opus | high |
+| bit-support | false | subscription/haiku | high |
+| bit-finance-analyst | false | subscription/sonnet | high |
+| bit-privacy-compliance | false | subscription/opus | medium |
 
 `host/catalog.js` passes the three fields through (`has`, `get`, `list`, avatars as today)
-and validates them (defaults for old files: false / subscription/sonnet / high). Nothing
-else in the catalog changes; instructions stay exactly as they are.
+and validates them (defaults for old files: false / subscription/sonnet / high). The
+`instructions` in this revision are the shipped ones: they were re-evaluated together with
+the presets (see README, "Model and effort presets"), and the catalog test keeps them
+exactly as shipped (passthrough).
 
 ---
 
@@ -361,7 +368,10 @@ export function createBitRuntime(ctx, { bits, catalog, models, log })
     `ctx.tools.execute({ calls: [{ id, name: 'claude_delegate', arguments: JSON.stringify({
     task: prompt, model: alias, effort, cwd, readOnly }) }], signal })`.
     The answer is the settled canonical `value` (a string). `readOnly: true` is passed only
-    when the member access is `read`; ad-hoc runs pass the request's `readOnly` flag.
+    when the member access is `read`; ad-hoc runs pass the request's `readOnly` flag. The
+    delegate plugin (>= 0.2.1) parses Claude Code's `stream-json` and returns the task's own
+    result event, so a background shell command that finishes after the worker answered cannot
+    replace the report with a task-notification acknowledgement.
     When the tool is unavailable/failed, throw a coded error with an actionable message
     (`BIT_DELEGATE_UNAVAILABLE`): install/enable `@dsh-burn-plugins/dsh-claude-delegate`, log in with
     `claude`.
@@ -419,6 +429,9 @@ already installed in the desktop profile) gets a small addition: an optional
 `--permission-mode plan` instead of `--dangerously-skip-permissions`; the default stays
 bypass. Update its README and keep its tool description accurate. No other behavior change;
 `@dsh-burn-plugins/dsh-bots` does not import that package — it invokes the registered tool.
+The same repository gained the `fable` model alias (Claude Fable 5.2) so the catalog default
+of `bit-architect`/`bit-debugger` runs; its README documents the Claude Code version (≥ 2.1.321)
+and the usage-credits caveat.
 
 ---
 
@@ -511,7 +524,9 @@ anywhere.
 
 - `test/store.test.mjs` — bits record, validation, persistence, migration (fixture with a
   v4 `bots.json`), workspace deletion safety.
-- `test/catalog.test.mjs` — 52 bits, new fields/types/defaults per §4, avatars/route.
+- `test/catalog.test.mjs` — 53 bits, new fields/types/defaults per §4, avatars/route.
+- `test/bit-usage.mjs --self-test` — smoke checker over a real session log: delegated bits,
+  errors, uses of another delegation tool, and `--require` gating (also documented in README).
 - `test/routes.test.mjs` — bits CRUD, catalog, avatar, models, run (worker success + refusal
   for orchestrator + model error + readonly flag reaching the runtime), no removed routes.
 - `test/teams.test.mjs` — v5 members with `bitId`, validation, lead orchestrator rule,
@@ -600,8 +615,9 @@ The bundle patch keeps the `bots` row unchanged and puts both rows in one `inser
 
 ```js
 export const ORCHESTRATOR_PRESET = 'bits-orchestrator'
-export function presetIdOfSession(session) // session.header.agentPreset trimmed; null when absent/blank
-export function isOrchestratorSession(agent) // presetIdOfSession(agent.session) === ORCHESTRATOR_PRESET
+export function presetIdOfSession(session) // creation header only: session.header.agentPreset trimmed; null when absent/blank
+export function effectivePresetIdOfSession(agent, agentPresets) // registry projection (presetForSession), else the header
+export function isOrchestratorSession(agent, agentPresets) // effectivePresetIdOfSession(...) === ORCHESTRATOR_PRESET
 export function installOrchestrator(ctx, deps) // -> { diagnostics(), dispose() }
 ```
 
@@ -609,18 +625,30 @@ export function installOrchestrator(ctx, deps) // -> { diagnostics(), dispose() 
   `index.js`. `models` is accepted for parity with the other runtimes and is not needed here:
   the catalog is the one loaded at plugin apply and `bitRuntime` performs the one-shot
   invocation.
-- **Detection is by the session header only** (`session.header.agentPreset`), never by the
-  working directory or a team binding. Sessions in any other preset are not touched at all.
-- `installOrchestrator` subscribes to `agent/created` and also sweeps `ctx.agents.list()` once at
-  install (guarded try/catch), so agents created before the hook and agents from an HMR reload
-  are covered. Each agent is instrumented once. Per agent it registers:
+- **Detection is by the session's effective preset; never by the working directory or a team
+  binding.** The creation header (`session.header.agentPreset`) is only the starting value: DSH
+  lets the user pick a preset for a session that has not started its first turn, and that pick is
+  recorded as an `agent-preset/selected` session event while the frozen header keeps the old
+  preset. The runtime therefore reads the preset registry projection
+  (`agentPresets.presetForSession(session)`, which folds the log) on every detection, falling
+  back to the header when the registry is absent or its projection throws. Sessions in any other
+  preset are not touched at all.
+- `installOrchestrator` subscribes to `agent/created`, to the registry's host event
+  `agent-preset/selected` `(sessionId, presetId)` — which DSH emits synchronously after the
+  agent is recomposed, so a Bit mode picked on an already-created blank chat is instrumented
+  before its first turn — and also sweeps `ctx.agents.list()` once at install and again when the
+  `agentPresets` service becomes available (guarded try/catch), so agents created before the
+  hook, agents from an HMR reload and agents whose recorded selection predates the plugin load
+  are covered. A selection switching a still-blank chat away from the preset uninstalls it
+  again. Each agent is instrumented once. Per agent it registers:
   - an agent-scoped system prompt section `bits:orchestrator`, order `700`,
     `interpolate: false`, with the text built once from the loaded catalog (no file I/O per
     turn, so it is stable and cache-friendly);
   - an agent-scoped `bit_delegate` tool through `agent.ctx.tools.register`.
 - `agent/disposed` uninstalls the section and the tool of that agent; `dispose()` removes the
-  remaining ones and the hooks. Errors go to `log` and `diagnostics().errors` (timestamped,
-  capped); the `agent/created` hook never throws out of the plugin.
+  remaining ones and the hooks (agent-scoped registrations outlive the registering plugin, so a
+  reload without the disposers would hit duplicate-registration errors). Errors go to `log` and
+  `diagnostics().errors` (timestamped, capped); the hooks never throw out of the plugin.
 - `index.js` installs the runtime right after `createBitRuntime(...)` inside try/catch (an
   installation failure is logged and does not stop the rest of the plugin), adds its
   `diagnostics()` to `/api/bots.diagnostics` under `orchestrator`, and calls `dispose()` in the
@@ -647,11 +675,18 @@ The text states the mode and its invariants (v5.2 makes the text a function of t
   implementation/research/review/execution to the right bits; synthesize their reports; do not
   delegate trivial replies. Orchestrator catalog characters (Manager, Product Owner,
   Coordinator, Sub-coordinator) cannot be delegated — the mode itself is the orchestrator, use
-  worker bits.
+  worker bits. The prompt also asks the orchestrator to keep planning, brief writing,
+  integration and the answer in the chat and not do the implementation itself (a one- or
+  two-line fix already fully understood is the only exception), to use the cheapest bit for each
+  job (`bit-scout` recon, `bit-architect` plans, `bit-builder`/specialists implementation,
+  `bit-runner` mechanical commands) and to verify non-trivial deliveries with a different bit
+  than the author (`bit-reviewer`, and the tester bits when the project has no automated gate):
+  a review by the same bit that implemented the change is not independent. Pixel-art visuals
+  have a dedicated worker character, `bit-pixel-artist`.
 - **Roster:** built once from the `bits/catalog.json` object already loaded by the plugin,
   grouped by catalog group (`### <group label>`), one line per **worker** character, e.g.
-  `- **Builder** (`bit-builder`) — <summary> · preset: subscription/sonnet · high`.
-  The four orchestrator characters are not part of the worker roster (48 worker entries).
+  `- **Builder** (`bit-builder`) — <summary> · preset: subscription/sonnet · medium`.
+  The four orchestrator characters are not part of the worker roster (49 worker entries).
 
 ### 12.4 Tool `bit_delegate`
 
@@ -857,6 +892,17 @@ own `<style>` (the page token block does not apply outside the Bits page) and it
 `GET /api/bots.orchestrator` load; an older host without the routes makes the chip render
 nothing.
 
+Since v5.3.2 the same component is also registered into the session header
+(`conversation.session.header.actions`, id `bots-mode-bit`, order 5, compact variant), right
+after the read-only "Bit mode" preset label. The header slot is hidden while the session is
+blank (`hideChrome`) and the hero unmounts after the first message, so the hero seat serves the
+new chat and the header seat serves an already-open conversation without ever showing twice. The
+header menu stays inside the viewport: it right-aligns when a left-aligned 340px panel would
+overflow and a right-anchored one still fits, and left-clamps otherwise (the header chip
+follows the session title and the preset label, so its position depends on the title length);
+both seats read the same global selection, and the `data-bots-mode-*` attributes (`phase`,
+`variant`, `session`, `menu`) keep the seats testable.
+
 ### 13.5 Tests
 
 - `test/orchestrator.test.mjs`: renamed heading, generic vs. bit prompt, dynamic text between
@@ -881,3 +927,122 @@ nothing.
 | `client.js` | hero chip + picker, styles, placement rule, API helpers, EN strings |
 | `cordis.patch.yml` | preset display name `Bit mode` |
 | tests / docs | renamed assertions, new store/route/visual coverage, README / this section / REVIEW addendum |
+
+---
+
+## 14. Follow-up fix (v5.3): effective preset and the full catalog on the Bits page
+
+Two defects reported by the user after exercising v5.2, both fixed here.
+
+### 14.1 Bit mode picked on an already-created chat was ignored
+
+**Symptom.** A chat that already existed (created with another preset, still before its first
+turn) was switched to **Bit mode** and then used: no bit ran, and the diagnostics reported no
+orchestrator runtime for it.
+
+**Root cause.** `isOrchestratorSession` read `session.header.agentPreset` only. The header is a
+frozen creation fact; a preset picked for a blank session is recorded as an
+`agent-preset/selected` session event and the agent is recomposed by the preset registry, so the
+session really ran in Bit mode while the plugin still classified it as its old preset. The same
+header-only check in `host/team-runtime.js` meant such a chat could also be resolved as a team
+lead.
+
+**Fix.** Detection now reads the session's effective preset through the profile's
+`agentPresets` service (`presetForSession(session)`, which folds the session log), falling back
+to the creation header. The runtime also subscribes to the preset registry's host event
+`agent-preset/selected(sessionId, presetId)` — DSH recomposes the agent before emitting it — so
+the section and `bit_delegate` are installed on a live agent as soon as Bit mode is picked, and
+removed if the still-blank chat is switched away. The install sweep (plugin activation and the
+`agentPresets` service becoming available) covers HMR reloads and recorded selections that
+predate the plugin load. `test/e2e-web.mjs` now proves the whole flow on the real host: create a
+session without a preset, select `bits-orchestrator` through the registry remote, observe
+`/api/bots.diagnostics` listing the session under `orchestrator.installed` with
+`bit_delegate`, then switch back to `standard` and observe it cleaned up.
+
+The team runtime has the mirrored problem and fix: an agent created inside a `bindWorkspace`
+team directory is installed as a team lead at `agent/created`; if that still-blank chat is then
+switched to Bit mode, the already-installed team prompt, `team_delegate`/`team_handoff` and the
+tool-restrict mask must come off. `host/team-runtime.js` therefore also listens to
+`agent-preset/selected`: a committed Bit mode preset uninstalls the agent from the team runtime
+(so diagnostics no longer lists it under `agents`), and switching back to a normal preset before
+the first turn re-applies the team install. `test/team-runtime.test.mjs` covers both directions.
+
+### 14.2 The Bits page hid the 53 catalog bits
+
+**Symptom.** With no bits created yet (or few), the Bits page showed only the stored bits / the
+"No bits yet" empty state, while the bundle ships 53 bit characters. The user asked for the page
+to show **all** bits.
+
+**Fix.** The **Bits** tab keeps the created-bit cards unchanged and renders, below them, an
+**All bits** section with every catalog character that has no stored bit yet (matched by catalog
+character id and by name): avatar, name, orchestrator/worker badge, catalog group, English
+summary and the character's preset `model · effort`, plus a **New bit** action that opens the
+create form prefilled from that character (same rules as picking it in the gallery). The section
+also renders when the store is empty, so all 53 bits are always visible; the old empty state
+stays only when the catalog itself has no characters (or is unavailable). Catalog cards use their own class
+(`dsh-bots-catalog-card`, `data-catalog-character`), so the existing `.dsh-bots-card` counts and
+actions in the visual suite are untouched.
+
+### 14.3 Tests and files of this fix
+
+| file | change |
+|---|---|
+| `host/orchestrator.js` | effective-preset detection, `agent-preset/selected` hook, `agentPresets`-ready sweep, exported `effectivePresetIdOfSession` |
+| `host/team-runtime.js` | team-lead guard reads the effective preset; `agent-preset/selected` hook uninstalls/re-applies the team install for the committed preset |
+| `test/orchestrator.test.mjs` | effective-preset projection, picked-after-creation install/uninstall, sweep, broken-registry fallback |
+| `test/team-runtime.test.mjs` | additive test: blank chat switched to Bit mode is never the team lead and loses its team install, then gets it back when switched away |
+| `test/e2e-web.mjs` | section 12/12: preset picked after session creation installs/removes the runtime |
+| `client.js` | Bits page **All bits** catalog section + prefilled create form |
+| `test/visual.mjs` | catalog section assertions + screenshot |
+| `README.md`, this section | documentation |
+
+All suites stay green (`node test/*.test.mjs`, `node test/e2e-web.mjs`) and `node --check` runs on
+every touched JS file.
+
+---
+
+## 15. Bit mode picker in an already-open conversation (v5.3.2)
+
+User request after v5.3: *"ver/escolher o bit orquestrador também numa conversa já aberta"*.
+
+**What changed.** The `ModeBitSeat` component is now registered twice in the client:
+
+- `conversation.hero.options` (as before): the hero seat of a new/blank Bit mode chat, next to the
+  mode chip.
+- `conversation.session.header.actions`, id `bots-mode-bit`, order 5 (`compact: true`): the
+  session header seat, right after DSH's read-only "Bit mode" preset label. DSH hides the session
+  header chrome while the session is blank, so a new chat shows only the hero seat and an
+  open conversation shows only the header seat.
+
+The header seat is a control and not a preset switch: changing the orchestrating bit only
+changes the global preference (`orchestrator.json`) and the next turn's prompt text; the
+session's preset, model and effort are untouched. This is legitimate mid-conversation because
+the prompt section text is rebuilt per turn, unlike DSH's own preset label which is read-only by
+design (a session's composition is fixed after its first turn).
+
+**Implementation details.** Compact chip (22px, 16px avatar) so it fits the header row. The
+header menu is rendered through a `react-dom` portal to `document.body` with viewport-fixed
+coordinates: the conversation shell clips absolutely positioned descendants (`.root {
+overflow: hidden }` and a `will-change: transform` composer stack), so an in-place menu was cut
+off under the header row. The portal keeps its outside-click/Escape handling working (clicks
+inside the menu are not treated as outside) and falls back to in-place rendering when the Host
+does not expose the shared `react-dom` module. The `--dsh-mode-*` token block is declared on the
+menu itself as well as on the seat root, because the portal leaves the themed subtree (without
+it the dropdown rendered transparent, with no border, shadow or selected-row highlight). Live
+geometry: the menu flips vertically when there is more room above, and it stays inside the
+viewport horizontally (right-align when a left-aligned 340px panel would overflow and a
+right-anchored one still fits, left-clamp otherwise — the header chip follows the session title,
+so its position depends on the title length); the seats expose `data-bots-mode-phase`,
+`data-bots-mode-variant` (`hero`/`header`), `data-bots-mode-session` and
+`data-bots-mode-menu` (`hero`/`header`) for tests. Both seats share one component, one API helper and one
+dictionary; the selection stays global to the profile (documented residual risk: changing it
+affects other Bit mode chats on their next turn).
+
+**Tests and files.** `test/visual.mjs` now starts a conversation in the Bit mode session (via the
+authenticated `session/prompt` remote), asserts the hero seat unmounts and the header seat
+appears bound to the same session with the compact chip and the selected bit, opens the header
+menu (label, 5 rows, computed surface styles, viewport containment and the
+alignment/clamp rule, plus a narrow-viewport pass) and switches the bit (clear →
+`bitId: null`, restore → the previous bit), with screenshots `bit-4-in-chat` and
+`bit-5-header-menu`. Files: `client.js` (seat variants + second registration),
+`test/visual.mjs`, `README.md`, this section.

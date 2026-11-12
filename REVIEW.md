@@ -1359,3 +1359,435 @@ description.
   upgrade should refresh or drop it, exactly as its own comment says.
 - **Legacy evidence:** bits created by the selector are normal records and appear on the Bits page;
   nothing marks them as "chosen by Bit mode" beyond the `orchestrator.json` preference.
+---
+
+## Independent review — follow-up fixes (v5.3) — 2026-11-11
+
+Independent verifier (fresh eyes, adversarial), task `task-4` on the team board. The repo was
+read-only for this review except this section; nothing was committed. Every host/Chrome instance
+this review started used a throwaway `DSH_HOME` under `/tmp` (the real `~/.dsh` and the running
+desktop app on `127.0.0.1:42733` were never touched); all spawned processes were killed, no
+listener was left behind, and no scratch file was written inside the repo. The two visual runs
+regenerated `test/screenshots/*.png` **byte-identically** (sha256 of all 45 screenshots before and
+after are equal), so the screenshots on disk match this code. The verified worktree stayed
+byte-identical for the whole review (`git diff` sha256
+`8c90628aad0e932cb6a8cd5cbbaa86045b1624db981419a3686e10dff47f0d96` at start and end), so nothing
+below is stale; `git status` is the expected 34 modified + the 2 new catalog screenshots.
+
+**Verdict: SHIP — 0 BLOCKER, 0 MAJOR, 1 MINOR, 4 NIT.** Both user-reported problems are fixed end
+to end on the real host, including the cold-restart case the Lead asked for; the MINOR (F1) is a
+team-workspace interaction of the host fix that leaves stale team state on a chat switched to Bit
+mode after creation — it does not block the reported flows.
+
+### Where the two user problems stand
+
+1. **"Selecting Bit mode on an existing blank chat used no bits" — fixed, proven on the real
+   host.** `test/e2e-web.mjs` section 12 and this review's own cold-restart probe show the whole
+   path: a blank session whose frozen header says `standard` is switched through
+   `agentPresets/select` to `bits-orchestrator`; the runtime installs the prompt section and
+   `bit_delegate` (persisted turn-1 `request/header` lists `bit_delegate`); switching back to
+   `standard` removes them. The cold case also works: after killing the host and booting a fresh
+   one on the same `DSH_HOME`, the stored projection already reads `bits-orchestrator` before any
+   Agent is live, and prompting the session resumes it with the runtime installed. The
+   effective-preset read, not the header, is what drives detection (the persisted header stayed
+   `standard` in every probe).
+2. **"The Bits page must show all 52 catalog bits" — fixed, proven in the real DOM.** A fresh
+   throwaway profile with **zero** created bits renders no "No bits yet" empty state and an
+   **All bits** grid with exactly 52 catalog cards in catalog order (avatar, name,
+   Orchestrator/Worker badge, group, summary, `model · effort`, `New bit`). Name-only duplicates
+   are suppressed: a bit created without a character but named "Scout" reduces the grid to 51 and
+   hides the catalog Scout while the created card keeps its normal Run/Edit/Delete bit actions.
+   With created bits present the existing `.dsh-bots-card` list is unchanged and the catalog
+   section sits below it (48 / 46 cards in the visual run). Clicking a catalog card's `New bit`
+   opens the create form prefilled from that character on the form step (not the gallery), and a
+   create from it persists the catalog model/effort (visual run: Architect → `subscription/fable`
+   · `high`).
+
+### Commands run by this review (all executed here)
+
+| Command | Result |
+|---|---|
+| `node test/store.test.mjs` | **PASS** — `store: 33 tests passed` |
+| `node test/catalog.test.mjs` | **PASS** — `catalog: 17 tests passed` (new "workers never delegate" test included) |
+| `node test/routes.test.mjs` | **PASS** — `routes: 36 tests passed` |
+| `node test/teams.test.mjs` | **PASS** — `teams: 46 tests passed` |
+| `node test/projects.test.mjs` | **PASS** — `projects: 31 tests passed` |
+| `node test/harness.test.mjs` | **PASS** — `harness: 9 tests passed` |
+| `node test/bit-runtime.test.mjs` | **PASS** — `bit-runtime: 13 tests passed` |
+| `node test/team-runtime.test.mjs` | **PASS** — `team-runtime: 18 tests passed` |
+| `node test/orchestrator.test.mjs` | **PASS** — `orchestrator: 21 tests passed` |
+| `node test/orchestrator-selection.test.mjs` | **PASS** — `orchestrator-selection: 14 tests passed` |
+| **unit suites total** | **238 tests passed** across 10 suites, exit 0 each |
+| `node test/e2e-web.mjs` | **PASS** — `E2E PASS`, exit 0, **12/12 sections**; section 10 roster + drift guard + preset/control greens; section 12 printed the picked blank session instrumented and cleaned up; its cleanup removed the throwaway home |
+| `node test/visual.mjs --theme dark` | **PASS** — `VISUAL DONE`, exit 0; catalog 52-tile picker, 48-card "All bits" grid, prefilled create from a card, fable/effort assertions, screenshots saved |
+| `node test/visual.mjs --theme light` | **PASS** — `VISUAL DONE`, exit 0 (same assertions) |
+| `node --check` on `client.js` + `index.js` + 8 changed `host/*.js` + 9 changed `test/*.mjs` | **PASS** — all parse |
+| `git diff --check`; JSON parse of `bits/catalog.json` + `package.json` | **PASS** — no whitespace errors; 52 bits, 7 groups, 4 orchestrators |
+| sha256 of `test/screenshots/*.png` before → after both visual runs | **PASS** — all 45 files identical (regenerated outputs match the tree; no stale screenshots) |
+| `/tmp/fix-verify/host-probes.mjs` (own fake-host adversarial probe) | **PASS — 18/18** |
+| `/tmp/fix-verify/bits-page-probe.mjs` (own catalog/DOM-source probe) | **PASS — 11/11** |
+| `/tmp/fix-verify/visual-zero-catalog.mjs` (own headless-Chrome DOM probe, zero created bits) | **PASS** — 52 cards, no empty state, name dedupe → 51, created card unchanged, prefilled form step |
+| `/tmp/fix-verify/cold-restart.mjs` (own two-boot real-host probe) | **PASS** — first-turn `request/header` contains `bit_delegate`; after restart the fresh host resumes the session and instruments it |
+| `/tmp/fix-verify/team-effective-preset.mjs` (own real-host team probe) | **PASS with finding F1** — normal chat in the bindWorkspace dir is the lead; the picked Bit mode chat is instrumented AND still listed as a team lead (evidence `/tmp/fix-verify/team-effective-preset.json`) |
+| leftover processes/listeners/temp homes after the review | **PASS** — none from this review; only the pre-existing desktop app (`127.0.0.1:42733`) and the user's own Chrome processes remain |
+
+### Independent adversarial probe coverage (written under `/tmp/fix-verify`, not in the repo)
+
+- **Effective-preset helper:** projection wins over the frozen header (both directions); absent
+  registry and throwing projection fall back to the header; non-string/blank/malformed agents are
+  inert.
+- **Install lifecycle (fake host):** standard session not instrumented; header-preset session
+  instrumented exactly once; duplicate `agent/created` and duplicate `agent-preset/selected`
+  events do not double-register; switch away uninstalls only that agent; `agent/disposed`,
+  `runtime.dispose()` and post-dispose events clean up; **plugin reinstall (dispose + new install
+  with the same live agents) re-instruments without duplicate-registration errors** (since
+  agent-scoped registrations outlive the registering plugin, the disposers are load-bearing);
+  partial install (failing tool) keeps the section and reports the error; hooks never throw out of
+  the plugin; `ctx.get`/`ctx.inject` throwing are contained.
+- **Registry timing:** the `agentPresets`-ready `ctx.inject` sweep installs a live agent whose
+  recorded selection predates the plugin load; an event for an unknown session is inert;
+  trimmed-exact-id only (`Bits-Orchestrator` and `bits-orchestrator-2` are not accepted).
+- **Real host, picked after creation:** created blank (`standard`) → selected
+  `bits-orchestrator` → diagnostics `orchestrator.installed = [{sessionId, tools:
+  ["bit_delegate"]}]`; switched back → removed (repo e2e section 12, and this review's cold
+  probe for the post-restart variant).
+- **Real host, cold restart:** host A creates a blank session, selects the preset, prompts (the
+  second `agentPresets/select` then fails `agent-preset/locked` — the turn really started), the
+  persisted log keeps `header.agentPreset: "standard"` + `agent-preset/selected`, and turn 1's
+  `request/header` lists `bit_delegate`; killing the host and booting a fresh process on the same
+  home makes `session/projections` read `agentPreset: "bits-orchestrator"` before any Agent is
+  live, and the resumed session is instrumented again.
+- **Read-only / model-effort invariant:** the changed runtime contains no `model.select`,
+  `setModel`, model/effort/session-header writes; the only `agent.model.select` in the plugin is
+  the pre-existing `startMission` lead-route selection (`host/team-runtime.js:822`), which a Bit
+  mode session never reaches because `resolve()` returns `null` first.
+- **Bits page:** `availableCatalogBits` extracted from the shipped `client.js` and run against the
+  real 52-character catalog (catalog order, character-id dedupe, case-insensitive trimmed
+  name dedupe, duplicates/blank names, all-taken → 0, first-sentence summary); source checks that
+  catalog cards use `dsh-bots-catalog-card`/`data-catalog-character` (not `.dsh-bots-card`), carry
+  only a `New bit` action, and that the created list/empty-state/catalog-section render
+  conditions match the docs.
+
+### App-semantics spot checks (installed DSH 0.2.2-rc.1, not the research report)
+
+- `AgentPresetRegistry.select` recomposes the Agent context first
+  (`recompose(agent.ctx, preset)`), then appends `agent-preset/selected`
+  (`dsh-agent-preset-registry/lib/index.js:766-786`); `recompose`/`bind` only re-point the scope
+  parent, so the Agent and `agent.ctx` identities survive.
+- The registry re-emits the committed session event on the shared host bus as
+  `agent-preset/selected(session.id, preset)` (`…preset-registry/lib/index.js:463-468`), and the
+  `agentPreset` projection is initialized from the creation header and advanced by that event
+  (`…preset-registry/lib/types/session.js:30-36`), so a cold session's stored projection is the
+  recorded selection.
+- `agent.id === agent.session.id` is enforced when an Agent is entered
+  (`dsh-agent/lib/index.js:659-663`), and `agents.list()` returns live Agents only
+  (`dsh-agent/lib/index.js:743-745`), which is what the event handler's session-id lookup relies on.
+- A cold session is resumed with the preset read from the observed projection
+  (`dsh-api-session-controller/lib/index.js:283-317`, `presetForObservation` at 459-462), i.e. the
+  same effective-preset semantics the fix uses; `session/prompt` on an existing session goes
+  through that resume path.
+- `ctx.inject(deps, callback)` is `ctx.plugin({inject, apply})` (`cordis/lib/index.js:1672-1683`):
+  the callback runs when the dependencies are available, and `ctx.on` returns a disposer used by
+  `dispose()` (`cordis/lib/index.js:951-965`), so the ready-sweep and hook teardown are sound.
+
+### Findings
+
+**0 BLOCKER, 0 MAJOR, 1 MINOR, 4 NIT.**
+
+#### F1. MINOR — a chat switched to Bit mode after creation in a `bindWorkspace` team directory keeps the team runtime's lead installation — `host/team-runtime.js:694-731,1157-1168`, `README.md:215,220`, `V5-CONTRACT.md:730-731`
+
+The v5.3 change makes `resolve()` read the effective preset (`host/team-runtime.js:257-263`), so
+the team runtime *refuses to resolve* the chat as a lead. But the team runtime installs its prompt
+section (`bits:team`), `team_delegate`/`team_handoff` tool registrations and the role's
+`tools.restrict` deny mask on `agent/created` — i.e. **before** the user picks the preset — and it
+has no `agent-preset/selected` listener to uninstall/reinstall. Agent-scoped registrations live
+until their disposers run, so after the pick the chat keeps the old team registrations while the
+orchestrator runtime also installs `bit_delegate`. Real-host repro (this review's
+`/tmp/fix-verify/team-effective-preset.mjs`, throwaway profile):
+
+1. create an orchestrator lead bit + worker bit and a team with `bindWorkspace: true` over a
+   scratch workspace;
+2. `session/create { request: { cwd: <workspace>/nested } }` → recorded `standard`; the team
+   runtime installs it as `role: "lead"` (this is the documented normal-chat behaviour);
+3. `agentPresets/select { agentId, agentPreset: "bits-orchestrator" }`;
+4. `GET /api/bots.diagnostics` now shows the session in **both** `orchestrator.installed` (with
+   `bit_delegate`, correct) **and** `agents` as `{ role: "lead", teamId, bitId }` — the team entry
+   was never removed. The positive control in the same run still lists the normal chat as lead.
+
+Impact: the chat works in Bit mode, but it also keeps the stale `team_delegate`/`team_handoff`
+tools (calling them throws `TEAM_DELEGATE_INVALID` / “team_handoff is only for the lead”), the team
+section (its per-turn text now resolves to an empty string) and the role's tool-restriction mask,
+and diagnostics/the team surface still report it as a team lead. That contradicts
+`README.md:215` (“No `team_delegate`/`team_handoff`”) and `README.md:220` / `V5-CONTRACT.md:730-731`
+(“never a team lead … gets no team prompt and no `team_delegate`/`team_handoff`”) for this one
+path. It does not block either reported user problem (the Bit mode side is correct) and it needs a
+team-managed repository plus a post-creation pick. Suggested fix (Lead owns it): listen to
+`agent-preset/selected` in `host/team-runtime.js` and `uninstall()` (or `reinstall()`) the affected
+live Agent, mirroring the orchestrator hook; a repo unit test plus the diagnostic assertion from
+this probe would lock it.
+
+#### F2. NIT — e2e section counter still prints “2/11” in a 12-section run — `test/e2e-web.mjs:409`
+
+Every other label was updated to `/12`; the boot line still says
+`2/11 boot isolated web host on port …`. Cosmetic output only (`E2E PASS` and the 12 sections are
+correct).
+
+#### F3. NIT — V5 contract table names the host event `agent-presets/selected` — `V5-CONTRACT.md:958`
+
+The actual event (and every other mention in the docs/code) is `agent-preset/selected`
+(`host/orchestrator.js:726`); the §14.3 table row has a stray hyphen. Docs typo only.
+
+#### F4. NIT — two `BIT_DELEGATE_UNAVAILABLE` messages do not mention updating the delegate plugin for `fable` — `host/bit-runtime.js:156,165` vs `:144`, `README.md:251-255`
+
+The missing-tool message and the README now say install **and update** the
+`@dsh-burn-plugins/dsh-claude-delegate` plugin (needed for `subscription/fable`, which rejects on
+older builds), but the two tool-failure messages still say only “Install/enable the … plugin”. A
+user with an outdated delegate that rejects the `fable` alias therefore gets no update hint in the
+error path that would actually fire. Message-only; no behaviour defect.
+
+#### F5. NIT — V5 §14.2 wording about the empty state is narrower than the code — `V5-CONTRACT.md:944-952` vs `client.js:6976-6980,7046`
+
+The contract says “the old empty state stays only for a host whose catalog is unavailable”; the
+code keeps it when `bits.length === 0` **and** the catalog has no characters (including a
+successfully loaded empty catalog: `const catalogSection = (catalog.phase === 'ready' &&
+!catalogHasBits) ? null : …`). The shipped catalog always has 52 characters, so this is
+theoretical; the behaviour (all bits visible when the catalog has characters; empty state only
+without them) is the one the task asked for and is what the zero-bit DOM probe observed. Docs
+wording only.
+
+### Docs and scope
+
+- README “Chats in Bit mode” paragraph, the “How to use” Bits-page paragraph and §14 of
+  `V5-CONTRACT.md` match the observed behaviour: a preset picked on a still-blank existing chat
+  runs in Bit mode from its first message and switching back before it starts removes the runtime
+  (real host); the Bits page lists created bits followed by **All bits**, including with zero
+  created bits, and the empty state is gone while catalog characters exist (real DOM); `New bit`
+  opens the prefilled form step (real DOM + visual suite); the 52-character catalog and the
+  `model · effort` defaults shown on the cards match `bits/catalog.json`.
+- The working tree also carries a catalog/Fable-5.2 rebalance (`bits/catalog.json`,
+  `host/models.js`, `host/store.js`, `host/harness.js`, `host/bit-runtime.js`,
+  `host/team-prompt.js` and their tests) that the task brief did not name. It is documented
+  (README “Model and effort presets”, V5 §1/§4) and covered by the updated suites; this review
+  cross-checked every README/V5 model/effort claim against the catalog (23 exact id/model/effort
+  spot checks all match; the README's "LLM evals" is the `bit-llm-expert` at Opus/high), the catalog instructions reference only known bits, and 0.2.2-rc.1's catalog/model
+  routes accept the values. It reads as part of the same release, not stray scope creep — no
+  defect found in it; the Lead should just confirm it is intended to ship with v5.3.
+- Added lines contain no accented Latin text and no Portuguese words (only typographic characters
+  `— · ≥ ∈ … →`); the changed code/prompt strings are English.
+- `git diff --check` is clean, added files are only the two catalog screenshots, and the visual
+  runs regenerate every screenshot byte-identically.
+
+### Residual risks
+
+- **F1's team-workspace interaction** is the one real gap; Bit mode itself is unaffected, but a
+  team-repo user who switches an existing blank chat to Bit mode will see stale team tools and a
+  “lead” row in diagnostics until the team runtime learns to uninstall on preset changes.
+- **Cold restart was proven through the `session/prompt` resume path** (the same
+  `ApiSessionAgentController.resolve()` → `agents.resume` path the UI uses to open a cold
+  session), not through a literal browser click; the plugin side is covered, but a UI-open-path
+  check over the remote bridge alone was not possible.
+- **No real model route/credential in the throwaway profile:** the turn recorded its
+  `request/header` (which lists `bit_delegate`) and then ended on the missing provider, so the
+  exact model completion was not exercised; subscription/`fable` and `claude` behaviour remain
+  untested end to end here (the sibling delegate repo at 0.2.0 documents `fable` and the same
+  Claude Code ≥ 2.1.321 gate, and the unit tests accept the alias).
+- **Projection fallback is best-effort:** if `agentPresets.presetForSession` throws, detection
+  falls back to the frozen header, which cannot see a recorded selection (documented; a broken
+  registry is not expected in a healthy profile).
+- **Global orchestrating-bit selection is unchanged** from v5.2 (one preference for every Bit
+  mode chat); it was not re-reviewed here.
+- The **`fable` cost/plan caveat** in the README is an external product claim (usage credits,
+  model lineup) that cannot be verified from this machine.
+
+### Hygiene
+
+Only this section was written to the repo. All probe scripts/evidence live outside it under
+`/tmp/fix-verify/` (`host-probes.mjs` 18/18, `bits-page-probe.mjs` 11/11,
+`visual-zero-catalog.mjs`, `cold-restart.mjs`, `team-effective-preset.mjs` +
+`team-effective-preset.json`, `worktree-start/end.diff`). Every host/Chrome process this review
+started was stopped, every throwaway home was removed, and the real `~/.dsh`/desktop app were
+never touched. No fix was applied by this verifier: F1 is reported for the Lead to decide/fix.
+---
+
+### Follow-up (v5.3.1) — re-verification of the F1/NIT fixes — 2026-11-11
+
+Re-check requested by the Lead after the fixes below; task-4 was reopened, worked and completed
+again. Read-only except this note; no commit. Only five files changed since the v5.3 review above
+(`host/team-runtime.js`, `test/team-runtime.test.mjs`, `test/e2e-web.mjs`,
+`host/bit-runtime.js`, `V5-CONTRACT.md`); `client.js`, `host/orchestrator.js`, README and the
+screenshots are untouched since that review, so the Bits-page and orchestrator evidence above
+still stands. The worktree was byte-identical for this whole re-check (`git diff` sha256
+`0f831fd92898abe98e193a9cc3c34a7c7ba6e20c63d05c2faf6e43b1e297c886`), all hosts were throwaway
+`DSH_HOME`s, and every spawned process was killed (no leftover listeners/temp homes; real `~/.dsh`
+and the desktop app untouched).
+
+**Verdict: SHIP — 0 BLOCKER, 0 MAJOR, 0 MINOR, 0 NIT.** All four NITs are fixed and the F1 MINOR
+is fixed and verified in both directions on a real host; no new defect found.
+
+#### F1 fix verified — team install follows the committed preset (`host/team-runtime.js:1189-1208`)
+
+The new `agent-preset/selected` hook (with `liveAgentOf`/`agentPresetsService` helpers) uninstalls
+the team install on a committed Bit mode preset and re-applies it on a committed normal preset
+when the Agent is not installed. Evidence:
+
+- **Own real-host probe, both directions on one live still-blank chat** (extended
+  `/tmp/fix-verify/team-effective-preset.mjs`; output `team-effective-preset.json`): create a
+  `bindWorkspace` team, create a blank session in its directory (installed as team lead), then
+  `agentPresets/select bits-orchestrator` → session is under `orchestrator.installed` with
+  `bit_delegate` and **absent from `agents`**, `errors: []`; select back to `standard` → team lead
+  entry back (`role: "lead"`) and `orchestrator.installed` no longer lists it; re-pick Bit mode →
+  team entry gone again and `bit_delegate` back. The normal-chat lead positive control stayed
+  installed throughout; a chat outside the team directory switched to another normal preset
+  (`cordis`) never got team state and reported no errors; the real `~/.dsh` was untouched.
+- **Own fake-host hook probe** (`/tmp/fix-verify/team-hook-probes.mjs`, 9/9 checks; derived from
+  the repo test's fake host): lead install at `agent/created`; Bit mode commit removes prompt
+  section, `team_delegate`, restrict mask and the diagnostics entry; duplicate Bit-mode events are
+  inert; a committed normal preset re-installs; duplicate switch-back events do not
+  double-install (install log count unchanged); blank/non-string preset ids fall back to the
+  effective projection in both directions; events for a non-team chat install nothing; unknown
+  sessions are inert; **the async install-rejection path is caught** (forced a rejection inside
+  `installGitHooks` after partial registration → handler logs `team install after preset change
+  failed for …`, no unhandled rejection); **teardown disposes the hook** (registered-listener
+  count returns to 0, later events inert) and removes the install.
+- **Repo suites:** `test/team-runtime.test.mjs` **18/18** (the extended
+  "a blank session switched to the Bit mode preset…" test now asserts lead install → Bit mode
+  pick removes section/tools/restrict/diagnostics → switch back reinstalls); `test/e2e-web.mjs`
+  → **E2E PASS, 12/12 sections**, exit 0, throwaway home removed; all other unit suites unchanged
+  and green (238 tests total: store 33, catalog 17, routes 36, teams 46, projects 31, harness 9,
+  bit-runtime 13, team-runtime 18, orchestrator 21, orchestrator-selection 14).
+- Docs: V5 §14.1 now describes the mirrored team-runtime fix, §14.3 lists the new hook, and the
+  observed behaviour matches both.
+
+#### NITs re-checked
+
+| Finding | State | Evidence |
+|---|---|---|
+| F2 e2e `2/11` counter | **fixed** | `test/e2e-web.mjs:409` prints `2/12`; full run prints 12 sections |
+| F3 V5 `agent-presets/selected` typo | **fixed** | no `agent-presets/selected` left; V5-CONTRACT.md:966/967 use `agent-preset/selected` |
+| F4 delegate-unavailable messages lack the update hint | **fixed** | `host/bit-runtime.js:156,165` now say “Install/enable (and update) …” like :144 |
+| F5 V5 §14.2 empty-state wording | **fixed** | V5-CONTRACT.md:958 now says the empty state stays “when the catalog itself has no characters (or is unavailable)”, matching `client.js:6976-6980,7046` |
+
+`node --check` on `host/team-runtime.js`, `host/bit-runtime.js`, `test/team-runtime.test.mjs`,
+`test/e2e-web.mjs` → OK; `git diff --check` clean; added lines of this fix contain no accented
+Latin text or Portuguese (only typographic `∈ ≥ — · →` in the docs).
+
+#### Residual risks (unchanged by the fix)
+
+- The cold-restart and preset flows are proven through the remote `session/prompt` resume path
+  (the same `ApiSessionAgentController.resolve → agents.resume` path the UI uses), not a literal
+  browser click; no real model completion was exercised (the throwaway profile has no LLM route),
+  so the `fable`/subscription alias end to end remains untested here.
+- The team hook was exercised on the real host for install/uninstall/re-install; the MCP remount
+  branch and the plugin-teardown path were exercised in the fake host only (the real host has no
+  MCP-equipped team in the throwaway profile) — the code path is the same `install`/`uninstall`
+  pair verified on the real host.
+- An async install rejection after partial registration leaves the partial install in place (the
+  hook reports it in diagnostics instead of crashing); only reachable through a defect in a
+  package/mount step, and it is contained.
+---
+
+### Follow-up (v5.3.2) — bit picker in an already-open conversation — 2026-11-11
+
+Re-check requested for the client-only increment that shows/switches the orchestrating bit in an
+**already-open** Bit mode conversation (second seat in `conversation.session.header.actions`,
+compact variant, `document.body` portal for the menu), after the Lead addressed one defect and the
+NITs this review found in the interim pass. Read-only except this note; no commit. Besides this section and the regenerated screenshots, only
+`client.js`, `test/visual.mjs`, `README.md` and `V5-CONTRACT.md` changed since the v5.3.1 re-check
+(host code, unit suites and the e2e are untouched); the code+docs worktree stayed byte-identical
+for this whole final pass (`git diff` without screenshots/REVIEW sha256
+`c6cdb6ae6d0482828d0469354533e84dc37817e5f984eb8810665af2ce287420`), so nothing below is stale.
+All hosts were throwaway `DSH_HOME`s; no listener/temp home was left and the real `~/.dsh` /
+desktop app were never touched.
+
+**Verdict: SHIP — 0 BLOCKER, 0 MAJOR, 0 MINOR, 1 NIT (stale comment/doc wording only).** The
+interim **F1 defect (portaled header menu rendered unstyled) is fixed and verified**, the two
+alignment/docs NITs are fixed, and no new defect was found.
+
+#### F1 (interim, fixed) — portaled header menu lost its theme tokens
+
+Before the fix the header menu was portaled to `document.body` while the `--dsh-mode-*` variables
+were declared only on `.dsh-bots-mode-root`; the live computed style was `background:
+rgba(0,0,0,0)`, `borderTopStyle: none`, `boxShadow: none`, `borderRadius: 0px`, selected-row
+background transparent (token value on the seat root was `#303136a3`, on the menu `''`), so the
+dropdown had no panel surface in either theme — visible in `dark-bit-5-header-menu.png` as rows
+painted straight over the chat. The fix declares the token block on `.dsh-bots-mode-root,
+.dsh-bots-mode-menu` (root layout properties stay on the root rule). Re-checked on the final tree
+with the same Chrome probe: the portaled header menu now computes `background:
+rgba(48,49,54,0.64)`, `border: 1px solid rgba(255,255,255,0.12)`, non-empty `boxShadow`,
+`borderRadius: 16px`, selected row `rgba(255,255,255,0.14)` — identical token values to the hero
+menu. Pixel check of the regenerated screenshots: panel fill is distinct from the page background
+in dark and light; the menu is opaque, bordered, rounded and highlighted in both themes
+(`test/screenshots/{dark,light}-bit-5-header-menu.png`). `test/visual.mjs` now pins this: it
+asserts the portaled menu's computed background is not transparent, `borderTopStyle === 'solid'`,
+non-zero radius, `boxShadow !== 'none'` and a non-transparent selected-row background.
+
+#### Functional evidence (final tree)
+
+- **Repo visual suite, both themes: PASS** (`node test/visual.mjs --theme dark` and
+  `--theme light`, exit 0, `VISUAL DONE`). Full flow: hero chip/geometry/avatar/menu unchanged;
+  pick Coordinator; a real `session/prompt` through the authenticated bridge; hero seat unmounts;
+  compact header seat appears bound to the same session (`phase=ready`, 22px chip, avatar loaded,
+  header still shows "Bit mode"); header menu opens with 5 rows and the "Orchestrating bit" label,
+  fixed position, viewport containment, style assertions above; **narrow (480×900) pass** reopens
+  the menu, asserts it stays inside the viewport and that the alignment matches the component's
+  free-space rule (both wide and narrow layouts left-align/left-clamp in this run); clearing →
+  `/api/bots.orchestrator` `bitId: null`, restoring → the previous bit; screenshots
+  `bit-4-in-chat.png` / `bit-5-header-menu.png`; the Bits-page catalog assertions
+  (48/46 cards, prefilled create, created cards) still pass in the same run.
+- **Own headless-Chrome probe** (`/tmp/fix-verify/visual-v532-probe.mjs`, final tree): hero seat
+  unchanged (hero variant, 28px, adjacent to the preset chip, 5-row in-place menu, avatar loaded);
+  header seat on the same session, compact 22px; menu is a real `document.body` portal
+  (`parentElement === body`, not inside the clipping header slot), `position: fixed`, fully
+  unclipped (hit-testing at the menu centre, last row and bottom edge returns the menu); at a
+  480px viewport it left-clamps to `left: 132px` and stays fully on screen; clear → restore
+  persists; outside mousedown closes the menu; after navigating away **no portal node and no
+  header seat remain**; a standard-mode conversation started through the UI composer shows **no
+  chip/seat** (and the standard-mode hero shows none either).
+- **Portal fallback**: `require('react-dom')` is wrapped in try/catch at the factory, every portal
+  use is guarded by `typeof createPortal === 'function' && typeof document !== 'undefined'`, and
+  the in-place `menuNode` is the fallback, so a host without the shared module cannot break the
+  bundle (the menu may be clipped there — documented). On this 0.2.2-rc.1 host `react-dom` is a
+  platform seed word and the portal was live in every run.
+- **Outside-click handler**: clicks inside the portaled menu are treated as inside
+  (`menu.contains(target)`), Escape/outside mousedown close it, and the document listeners are
+  removed in the effect cleanup (verified live; no leftovers after unmount).
+- **Docs**: README "In a conversation that is already open…" matches the observed behaviour; V5
+  §13.4/§15 now describe the chip position after the title/preset label (not a fixed right edge),
+  the right-align-or-left-clamp rule, the token-on-menu requirement and the portal rationale; the
+  global-selection caveat is unchanged and accurate.
+
+#### Findings
+
+**0 BLOCKER, 0 MAJOR, 0 MINOR, 1 NIT.**
+
+- **NIT — two stale "right edge / right alignment" leftovers contradict the corrected behaviour.**
+  `test/visual.mjs:535-536` still comments "(the header sits at the right edge, so the menu
+  right-aligns)" while the run actually left-aligns (the chip follows the session title and the
+  preset label; the assertion itself now correctly uses the free-space rule). The V5 §15 "Tests and
+  files" sentence still says the assertions cover "right alignment", while they cover the
+  alignment rule (left-clamp or right-align). Comment/doc wording only, no behaviour impact.
+
+#### Residual risks
+
+- The right-align branch stays defensive: the wide and narrow runs both land on the block-start
+  alignment, so the shipped visual suite asserts the shared free-space rule but never takes the
+  `right = …` branch; it is the same rule the component uses and the left-clamp keeps the panel on
+  screen in the observed layouts.
+- The fixed menu coordinates are computed when it opens; a window resize while it is already open
+  does not reposition it (no resize listener — same trait as the pre-existing hero menu). It closes
+  on outside click/Escape, so the stale-coordinate window is only "user resizes with the menu
+  open".
+- Hosts without `react-dom` fall back to in-place rendering, where the header menu can be clipped
+  by the conversation shell (documented). Not reachable on the pinned 0.2.2-rc.1 installation.
+- The throwaway profile has no LLM route, so the in-chat screenshot shows a failed turn; this does
+  not affect the picker (a selection change applies from the next turn and the prompt is rebuilt
+  per turn, verified in earlier rounds).
+
+#### Hygiene
+
+Only this note was written to the repo; the two visual runs regenerated `test/screenshots/*.png`
+(6 untracked: `bit-4/bit-5` and `8-catalog` dark/light; the rest tracked images were refreshed by
+the runs). All probe scripts/evidence are outside the repo under `/tmp/fix-verify/`
+(`visual-v532-probe.mjs` full DOM probe, `style-probe.mjs` computed-style probe, screenshots in
+`/tmp/fix-verify/shots/`). Every host/Chrome this review started was stopped, no listener or temp
+home remains, and the real `~/.dsh`/desktop app were untouched.

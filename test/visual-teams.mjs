@@ -582,7 +582,7 @@ async function main() {
     trim: document.querySelector('.dsh-team-inspector').scrollTop === 0,
   })`)
   assert.equal(memberView.bit, workerBit.id, 'member references the picked bit')
-  assert.ok(/Worker/.test(memberView.route) && /Claude Sonnet 5\.5 \(subscription\)/.test(memberView.route) && /high/.test(memberView.route), `read-only route in the member hero: ${memberView.route}`)
+  assert.ok(/Worker/.test(memberView.route) && /Claude Sonnet 5\.5 \(subscription\)/.test(memberView.route) && memberView.route.includes(` · ${workerBit.effort}`), `read-only route in the member hero: ${memberView.route}`)
   assert.equal(memberView.hasModelInput, false, 'no member model input')
   assert.equal(memberView.hasProviderInput, false, 'no member provider input')
   assert.equal(memberView.hasNameInput, false, 'no member name input')

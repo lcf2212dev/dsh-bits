@@ -1,11 +1,20 @@
 /**
  * Bit mode: a chat Agent preset that delegates to Bits (v5.2).
  *
- * A Session whose creation header records the `bits-orchestrator` Agent preset
- * becomes an orchestrator chat: the runtime adds one agent-scoped prompt
- * section (role, delegation rules and the worker roster of the shipped catalog)
- * and one agent-scoped tool, `bit_delegate`, which runs one worker bit one-shot
- * through the bit runtime.
+ * A Session whose *effective* Agent preset is `bits-orchestrator` becomes an
+ * orchestrator chat: the runtime adds one agent-scoped prompt section (role,
+ * delegation rules and the worker roster of the shipped catalog) and one
+ * agent-scoped tool, `bit_delegate`, which runs one worker bit one-shot through
+ * the bit runtime.
+ *
+ * The effective preset is the creation header (`session.header.agentPreset`)
+ * advanced by every `agent-preset/selected` session event: DSH lets the user
+ * pick the preset of a session that has not started its first turn yet, and
+ * that selection is recorded in the log while the frozen creation header keeps
+ * the old value. The preset registry exposes the recorded value
+ * (`agentPresets.presetForSession(session)`); the runtime reads it on install
+ * and reacts to the registry's `agent-preset/selected` host event, so a Bit mode
+ * picked on an already-created blank chat is honored before its first turn.
  *
  * The user can also pick which orchestrator bit orchestrates new chats. That
  * pick is a single global preference owned by `host/orchestrator-selection.js`;
@@ -55,10 +64,10 @@ function nameOf(bit) {
 }
 
 /**
- * The Agent preset id recorded by a Session, or `null` when none was selected.
- *
- * The creation header names the preset the Session started with; it is the
- * only preset state a profile plugin can read without the preset registry.
+ * The Agent preset id the creation header of a Session records, or `null` when
+ * none was selected. The header is a creation fact: a preset selected later
+ * lives in the session log and is read through the preset registry instead
+ * (see {@link effectivePresetIdOfSession}).
  *
  * @param {any} session live Session (`agent.session`).
  * @returns {string | null} trimmed preset id.
@@ -70,14 +79,42 @@ export function presetIdOfSession(session) {
 }
 
 /**
- * Whether an Agent is a chat of the Bit mode preset (`bits-orchestrator`).
+ * Effective (recorded) Agent preset id of a live Agent's Session, or `null`.
+ *
+ * Prefers the preset registry projection, which starts at the creation header
+ * and advances with every `agent-preset/selected` event, so a preset chosen on
+ * an already-created blank chat is returned. Falls back to the creation header
+ * when the registry is absent or cannot answer (e.g. a broken projection).
  *
  * @param {any} agent live Agent.
+ * @param {any} [agentPresets] `agentPresets` service (`presetForSession`).
+ * @returns {string | null} trimmed preset id.
+ */
+export function effectivePresetIdOfSession(agent, agentPresets = null) {
+  const session = agent && typeof agent === 'object' ? agent.session : null
+  if (agentPresets && typeof agentPresets.presetForSession === 'function') {
+    try {
+      const recorded = agentPresets.presetForSession(session)
+      const preset = typeof recorded === 'string' ? recorded.trim() : ''
+      if (preset !== '') return preset
+    } catch {
+      // A broken projection must never hide the creation header.
+    }
+  }
+  return presetIdOfSession(session)
+}
+
+/**
+ * Whether an Agent is a chat of the Bit mode preset (`bits-orchestrator`),
+ * judged by its effective preset when the registry is available.
+ *
+ * @param {any} agent live Agent.
+ * @param {any} [agentPresets] `agentPresets` service (`presetForSession`).
  * @returns {boolean}
  */
-export function isOrchestratorSession(agent) {
+export function isOrchestratorSession(agent, agentPresets = null) {
   if (!agent || typeof agent !== 'object' || !agent.session) return false
-  return presetIdOfSession(agent.session) === ORCHESTRATOR_PRESET
+  return effectivePresetIdOfSession(agent, agentPresets) === ORCHESTRATOR_PRESET
 }
 
 /**
@@ -220,6 +257,8 @@ function buildPromptText(catalog, selectedBit = null) {
     '## Work split',
     '',
     '- Answer the user directly for conversation, planning and questions; delegate implementation/research/review/execution to the right bits; synthesize their reports and state what was done. Do not delegate trivial replies.',
+    '- Use the cheapest bit that fits each job: bit-scout for lookups and recon, bit-architect for plans, bit-builder or the matching specialist for implementation (bit-pixel-artist for pixel-art visuals), bit-runner for mechanical commands, bit-reviewer for an independent review and the tester bits for tests. Keep planning, brief writing, integration and the user-facing answer in this chat; do not do the implementation here (a one- or two-line fix you already fully understand is the only exception).',
+    '- A review done by the same bit that implemented the change is not independent: for non-trivial deliveries delegate the final review (bit-reviewer) and the tests (bit-qa or a tester bit) to other bits, then integrate their evidence.',
     `- ${orchestratorRule}`,
     '',
   ].join('\n')
@@ -228,17 +267,24 @@ function buildPromptText(catalog, selectedBit = null) {
 /**
  * Install the Bit mode runtime.
  *
- * Every Agent created from now on — and every Agent already live when the
- * plugin applies (HMR, resumed Sessions) — whose Session header records the
- * `bits-orchestrator` preset gets the prompt section and the `bit_delegate`
- * tool. Other Agents are untouched. All failures are logged and reported by
- * `diagnostics()`; they never escape the hooks.
+ * Every Agent whose Session effective preset is `bits-orchestrator` — created
+ * with the preset, created blank and switched to it before the first turn, or
+ * already live when the plugin applies (HMR, resumed Sessions) — gets the
+ * prompt section and the `bit_delegate` tool. Other Agents are untouched, and a
+ * chat that switches away from the preset before its first turn is cleaned up.
+ * All failures are logged and reported by `diagnostics()`; they never escape the
+ * hooks.
+ *
+ * The effective preset is read from the `agentPresets` service projection
+ * (`presetForSession`) when present, falling back to the creation header; the
+ * registry's `agent-preset/selected` host event covers a preset picked on a
+ * blank chat after its Agent already exists.
  *
  * The prompt section text is a function evaluated per turn, so a change of the
  * global orchestrating-bit selection applies from the next turn. Without a
  * `selection` dependency the generic prompt is used, exactly as before.
  *
- * @param {any} ctx host context (`ctx.on`, `ctx.agents`, `ctx.workingDirectory`).
+ * @param {any} ctx host context (`ctx.on`, `ctx.agents`, `ctx.workingDirectory`, `ctx.get`).
  * @param {{
  *   bits: any,
  *   catalog: any,
@@ -275,6 +321,40 @@ export function installOrchestrator(ctx, deps = {}) {
     notes.push(`${new Date().toISOString()} ${message}`)
     if (notes.length > MAX_NOTES) notes.shift()
     log(message)
+  }
+
+  /**
+   * The profile's Agent preset registry, when the Host provides one. Read lazily
+   * on every detection so the runtime works before/without it (the creation
+   * header is the fallback) and so a reload picks up the live service.
+   *
+   * @returns {any | null}
+   */
+  function agentPresetsService() {
+    try {
+      const service = ctx && typeof ctx.get === 'function' ? ctx.get('agentPresets') : null
+      return service && typeof service.presetForSession === 'function' ? service : null
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Live Agent of a Session id, when it is currently open. Used by the
+   * `agent-preset/selected` hook, which reports the session id.
+   *
+   * @param {unknown} sessionId
+   * @returns {any | null}
+   */
+  function liveAgentOf(sessionId) {
+    if (typeof sessionId !== 'string' || sessionId === '') return null
+    try {
+      const agents = ctx && ctx.agents && typeof ctx.agents.list === 'function' ? ctx.agents.list() : []
+      if (!Array.isArray(agents)) return null
+      return agents.find((agent) => agent && (agent.id === sessionId || (agent.session && agent.session.id === sessionId))) || null
+    } catch {
+      return null
+    }
   }
 
   /**
@@ -539,8 +619,19 @@ export function installOrchestrator(ctx, deps = {}) {
 
   /* ------------------------------- install -------------------------------- */
 
-  function install(agent) {
-    if (disposed || !agent || installed.has(agent) || !isOrchestratorSession(agent)) return
+  /**
+   * Give one Agent the Bit mode prompt section and tool.
+   *
+   * @param {any} agent live Agent.
+   * @param {string | null} [presetId] preset reported by an event; when absent
+   *   the effective preset is read from the registry projection / creation header.
+   * @returns {void}
+   */
+  function install(agent, presetId = null) {
+    if (disposed || !agent || installed.has(agent)) return
+    const explicit = typeof presetId === 'string' ? presetId.trim() : ''
+    const effective = explicit !== '' ? explicit : effectivePresetIdOfSession(agent, agentPresetsService())
+    if (effective !== ORCHESTRATOR_PRESET) return
     const entry = { sessionId: agent.id, tools: [], disposers: [] }
     installed.set(agent, entry)
     try {
@@ -580,6 +671,21 @@ export function installOrchestrator(ctx, deps = {}) {
     }
   }
 
+  /**
+   * React to one committed preset of a live Agent: install under the Bit mode
+   * preset, drop the section/tool under any other one.
+   *
+   * @param {any} agent live Agent.
+   * @param {unknown} presetId committed preset id.
+   * @returns {void}
+   */
+  function applyPreset(agent, presetId) {
+    if (disposed || !agent) return
+    const preset = typeof presetId === 'string' ? presetId.trim() : ''
+    if (preset === ORCHESTRATOR_PRESET) install(agent, preset)
+    else if (installed.has(agent)) uninstall(agent)
+  }
+
   /** Install for Agents that were already live when the plugin applied. */
   function sweep() {
     let agents = []
@@ -614,7 +720,39 @@ export function installOrchestrator(ctx, deps = {}) {
   } catch (error) {
     noteError(`orchestrator agent/disposed hook registration failed: ${messageOf(error)}`)
   }
+  // A preset picked for an already-created blank Session is committed to the
+  // log as `agent-preset/selected` and announced by the preset registry on this
+  // host event; the creation header keeps the old value, so this hook is what
+  // makes Bit mode work on chats that existed before the pick.
+  try {
+    disposers.push(ctx.on('agent-preset/selected', (sessionId, presetId) => {
+      try {
+        applyPreset(liveAgentOf(sessionId), presetId)
+      } catch (error) {
+        noteError(`orchestrator preset selection handling failed: ${messageOf(error)}`)
+      }
+    }))
+  } catch (error) {
+    noteError(`orchestrator agent-preset/selected hook registration failed: ${messageOf(error)}`)
+  }
   sweep()
+  // The preset registry may activate after this bundle: sweep once more when it
+  // becomes available so a reload with blank Bit mode chats already open still
+  // installs them (the creation header alone cannot tell their preset).
+  try {
+    if (ctx && typeof ctx.inject === 'function') {
+      ctx.inject(['agentPresets'], () => {
+        if (disposed) return
+        try {
+          sweep()
+        } catch (error) {
+          noteError(`orchestrator preset-ready sweep failed: ${messageOf(error)}`)
+        }
+      })
+    }
+  } catch (error) {
+    noteError(`orchestrator preset-ready hook registration failed: ${messageOf(error)}`)
+  }
 
   return {
     diagnostics() {
